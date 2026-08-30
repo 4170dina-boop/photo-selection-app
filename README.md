@@ -25,9 +25,10 @@ app/gallery/[id]/page.tsx                     → דף הגלריה מצד הל�
 app/dashboard/upload/[galleryId]/page.tsx     → העלאת תמונות מצד הצלם ל-Supabase Storage
 app/dashboard/galleries/page.tsx             → רשימת גלריות עם סטטוס, % התקדמות, ופעילות אחרונה (לחיצה על שורה -> העלאה, קישור נפרד לעריכה)
 app/dashboard/galleries/new/page.tsx         → טופס יצירת גלריה חדשה (לקוחה + חבילה) + שליחת מייל אוטומטית ללקוחה
-app/dashboard/galleries/[id]/edit/page.tsx   → עריכת פרטי לקוחה/חבילה/תוקף, ומחיקת גלריה
+app/dashboard/galleries/[id]/edit/page.tsx   → עריכת פרטי לקוחה/חבילה/תוקף, מחיקת גלריה, ושליחת הזמנה מחדש
 app/api/galleries/route.ts                   → יצירת client+gallery+package בשרת, עם session הצלם (לא service key)
 app/api/galleries/[id]/route.ts              → GET/PATCH/DELETE לגלריה קיימת, עם session הצלם (לא service key)
+app/api/galleries/[id]/resend-invite/route.ts → שולחת שוב את מייל ההזמנה (קישור + קוד גישה) ללקוחה קיימת
 app/api/gallery/[id]/finish/route.ts         → "סיימתי לבחור" - נועל את הגלריה (status=completed)
 app/api/cron/tick/route.ts                   → מסמן גלריות שפג תוקפן + שולח תזכורות מייל (מופעל ע"י scheduler חיצוני)
 lib/email.ts                                 → שליחת מייל (הזמנה לגלריה + תזכורת תפוגה) דרך Resend (no-op אם אין RESEND_API_KEY)

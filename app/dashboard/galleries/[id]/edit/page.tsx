@@ -23,6 +23,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resendMessage, setResendMessage] = useState('');
   const [error, setError] = useState('');
   const [notFound, setNotFound] = useState(false);
 
@@ -77,6 +79,23 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
 
     router.push('/dashboard/galleries');
     router.refresh();
+  }
+
+  async function handleResendInvite() {
+    setResendMessage('');
+    setError('');
+    setResending(true);
+
+    const res = await fetch(`/api/galleries/${galleryId}/resend-invite`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    setResending(false);
+
+    if (!res.ok) {
+      setError(data.error ?? 'שליחת ההזמנה נכשלה');
+      return;
+    }
+
+    setResendMessage(data.emailSent ? 'ההזמנה נשלחה שוב בהצלחה' : 'שליחת המייל נכשלה - ודאו ששירות המייל מוגדר');
   }
 
   async function handleDelete() {
@@ -174,11 +193,25 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           <button type="submit" disabled={saving} style={{ ...goldButtonStyle, opacity: saving ? 0.6 : 1 }}>
             {saving ? 'שומרת...' : 'שמירת שינויים'}
           </button>
+          <button
+            type="button"
+            onClick={handleResendInvite}
+            disabled={resending}
+            style={{ ...outlineButtonStyle, opacity: resending ? 0.6 : 1 }}
+          >
+            {resending ? 'שולחת...' : 'שליחת הזמנה מחדש'}
+          </button>
           <Link href="/dashboard/galleries" style={{ ...outlineButtonStyle, textDecoration: 'none' }}>
             ביטול
           </Link>
         </div>
       </form>
+
+      {resendMessage && (
+        <p style={{ background: theme.successBg, color: theme.successText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
+          {resendMessage}
+        </p>
+      )}
 
       {error && (
         <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
