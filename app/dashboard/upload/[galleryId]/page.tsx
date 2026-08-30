@@ -11,7 +11,7 @@ interface UploadPageProps {
 interface UploadItem {
   file: File;
   previewUrl: string;
-  status: 'pending' | 'uploading' | 'done' | 'error';
+  status: 'pending' | 'uploading' | 'processing' | 'done' | 'error';
   error?: string;
 }
 
@@ -57,17 +57,28 @@ export default function UploadPage({ params }: UploadPageProps) {
 
         // ה-bucket פרטי (לא public) - שומרים את הנתיב בתוך ה-bucket, לא URL.
         // ה-URL בפועל (signed, זמני) נוצר רק כשלקוחה צופה בגלריה - ראו
-        // app/api/gallery/[id]/route.ts. כרגע שומרים את אותו נתיב גם
-        // כ-file_path וגם כ-thumbnail_path; בהמשך: Edge Function שמייצרת
-        // thumbnail אמיתי + מטביעה סימן מים.
-        const { error: dbError } = await supabase.from('photos').insert({
-          gallery_id: galleryId,
-          file_path: path,
-          thumbnail_path: path,
-          original_filename: file.name,
-        });
+        // app/api/gallery/[id]/route.ts. thumbnail_path מתחיל זהה ל-file_path
+        // (נופל בחזרה למקור אם העיבוד למטה נכשל), ומוחלף בגרסה עם סימן מים
+        // ברגע שה-route בצד שרת מסיים.
+        const { data: photo, error: dbError } = await supabase
+          .from('photos')
+          .insert({
+            gallery_id: galleryId,
+            file_path: path,
+            thumbnail_path: path,
+            original_filename: file.name,
+          })
+          .select('id')
+          .single();
 
         if (dbError) throw dbError;
+
+        setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'processing' } : it)));
+
+        // best-effort: אם ה-watermark נכשל, thumbnail_path כבר נופל בחזרה
+        // למקור (app/api/galleries/[id]/photos/[photoId]/process/route.ts
+        // פשוט לא מעדכן אותו) - לא חוסמים את ההעלאה בגלל זה.
+        await fetch(`/api/galleries/${galleryId}/photos/${photo.id}/process`, { method: 'POST' }).catch(() => {});
 
         setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'done' } : it)));
       } catch (err: any) {
@@ -165,6 +176,7 @@ export default function UploadPage({ params }: UploadPageProps) {
                 <span>
                   {item.status === 'pending' && '⋯'}
                   {item.status === 'uploading' && '↑'}
+                  {item.status === 'processing' && <span title="מטביעה סימן מים...">✨</span>}
                   {item.status === 'done' && <span style={{ color: theme.green }}>✓</span>}
                   {item.status === 'error' && <span style={{ color: theme.errorText }}>✕</span>}
                 </span>

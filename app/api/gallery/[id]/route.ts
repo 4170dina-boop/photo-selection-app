@@ -44,15 +44,17 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     (photosData ?? []).map(async (photo) => {
       const thumbPath = photo.thumbnail_path ?? photo.file_path;
 
-      const [{ data: thumbSigned }, { data: fullSigned }] = await Promise.all([
-        supabaseAdmin.storage.from('gallery-photos').createSignedUrl(thumbPath, SIGNED_URL_TTL_SECONDS),
-        supabaseAdmin.storage.from('gallery-photos').createSignedUrl(photo.file_path, SIGNED_URL_TTL_SECONDS),
-      ]);
+      const { data: thumbSigned } = await supabaseAdmin.storage
+        .from('gallery-photos')
+        .createSignedUrl(thumbPath, SIGNED_URL_TTL_SECONDS);
 
+      // thumbnailUrl ו-fullUrl מצביעים לאותה גרסה (המוקטנת/עם סימן המים) -
+      // file_path (המקור הנקי) לא נחשף ללקוחה בשום מקום, כולל מצב השוואה
+      // מוגדל; הוא משמש רק בצד שרת לצורך המסירה הסופית (app/api/galleries/[id]/selected-photos).
       return {
         id: photo.id,
         thumbnailUrl: thumbSigned?.signedUrl ?? null,
-        fullUrl: fullSigned?.signedUrl ?? null,
+        fullUrl: thumbSigned?.signedUrl ?? null,
         original_filename: photo.original_filename,
       };
     })

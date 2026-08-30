@@ -137,9 +137,24 @@ npm run dev
 האתר יעלה על http://localhost:3000
 
 ## מה עדיין חסר (השלבים הבאים)
-- יצירת thumbnails אמיתיים בגודל קטן (כרגע נשמר אותו נתיב גם ל-file_path וגם ל-thumbnail_path)
-- watermark על התמונות (עיבוד עם Sharp, בצד שרת - Edge Function מומלץ)
 - חיוב בפועל על חריגה מהחבילה (אינטגרציית סליקה)
+
+## תצוגה מקדימה עם סימן מים
+
+בעת ההעלאה (`app/dashboard/upload/[galleryId]/page.tsx`), כל תמונה עוברת גם קריאה
+ל-`POST /api/galleries/[id]/photos/[photoId]/process` - route בצד שרת שמוריד את
+המקור מ-Storage, מקטין אותו ל-2000px בצלע הארוכה ומטביע עליו סימן מים חוזר
+(שם העסק של הצלמת, ב-`lib/watermark.ts` עם Sharp) לפני שהוא נשמר כ-`thumbnail_path`
+נפרד מה-`file_path` המקורי.
+
+- `file_path` (המקור הנקי, בלי סימן מים) לא נחשף ללקוחה בשום מקום - לא בגריד
+  ולא במצב השוואה מוגדל (`app/api/gallery/[id]/route.ts` מחזיר signed URL אחד,
+  מ-`thumbnail_path`, גם ל-`thumbnailUrl` וגם ל-`fullUrl`)
+- המקור הנקי משמש רק בצד שרת, למסירה הסופית אחרי בחירה
+  (`app/api/galleries/[id]/selected-photos`)
+- ההעלאה עצמה לא נחסמת אם עיבוד סימן המים נכשל בתמונה בודדת - `thumbnail_path`
+  פשוט נשאר זהה ל-`file_path` (המצב שהיה קיים לפני הפיצ'ר), וההעלאה ממשיכה
+  לשאר הקבצים
 
 ## בדיקות אוטומטיות
 
