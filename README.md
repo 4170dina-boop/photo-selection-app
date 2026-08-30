@@ -13,7 +13,9 @@ lib/session.ts                               → חתימה/אימות של sess
 lib/gallerySession.ts                        → עטיפה משותפת לבדיקת session בכל ה-API routes של הגלריה
 middleware.ts                                → מרענן session ומגן על /dashboard/* (מפנה ל-/login אם לא מחוברים)
 app/login/page.tsx                           → מסך התחברות/הרשמה לצלם (Supabase Auth)
-app/auth/callback/route.ts                   → יעד לקישור אימות המייל אחרי הרשמה
+app/login/forgot-password/page.tsx           → בקשת קישור לאיפוס סיסמה (resetPasswordForEmail)
+app/login/reset-password/page.tsx            → קביעת סיסמה חדשה (updateUser, אחרי session מסוג recovery)
+app/auth/callback/route.ts                   → יעד לקישור אימות המייל אחרי הרשמה, וגם לקישור איפוס הסיסמה
 app/dashboard/layout.tsx                     → מעטפת לדפי הצלם (כותרת + כפתור התנתקות)
 app/api/verify-access/route.ts               → אימות קוד גישה של לקוחה (צד שרת, service key) + יצירת session חתום
 app/api/gallery/[id]/route.ts                → טעינת תמונות/בחירות/חבילה של הלקוחה (service key + signed URLs)
@@ -54,6 +56,15 @@ components/MagicButton.tsx                   → כפתור הקסם (File Syste
 אם רוצים לדלג על אימות מייל בזמן פיתוח מקומי, אפשר לכבות "Confirm email" תחת
 Authentication → Providers → Email — אז יש session מיד אחרי הרשמה, בלי הצורך
 בקישור אימות.
+
+**שחזור סיסמה**: קישור "שכחת סיסמה?" במסך ההתחברות מוביל ל-`/login/forgot-password`,
+ששולח `resetPasswordForEmail` עם `redirectTo` שמצביע חזרה ל-`/auth/callback` הקיים
+(עם `?next=/login/reset-password`) - אותו endpoint שכבר משמש לאימות הרשמה, רק עם
+יעד סיום שונה. שם, `/login/reset-password` קובע סיסמה חדשה דרך `updateUser`, כי יש
+כבר session מסוג recovery מהקוד שהוחלף. תמיד מוצגת הודעת הצלחה גנרית גם אם הכתובת
+לא רשומה, כדי לא לחשוף אילו מיילים קיימים במערכת (user enumeration). **שימו לב**:
+Supabase דוחה כתובות בדומיינים שמורים כמו `example.com` עם שגיאת `email_address_invalid`
+(אין להם שרת מייל אמיתי) - זה תקין ולא קשור לקוד; עם דומיין רגיל (gmail.com וכו') זה עובד.
 
 ## יצירת גלריה חדשה
 
@@ -125,7 +136,6 @@ npm run dev
 האתר יעלה על http://localhost:3000
 
 ## מה עדיין חסר (השלבים הבאים)
-- מסך "שכחתי סיסמה" / איפוס סיסמה לצלם
 - יצירת thumbnails אמיתיים בגודל קטן (כרגע נשמר אותו נתיב גם ל-file_path וגם ל-thumbnail_path)
 - watermark על התמונות (עיבוד עם Sharp, בצד שרת - Edge Function מומלץ)
 - חיוב בפועל על חריגה מהחבילה (אינטגרציית סליקה)

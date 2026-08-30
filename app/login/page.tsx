@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { theme, inputStyle, goldButtonStyle } from '@/lib/theme';
 
@@ -148,6 +149,12 @@ function LoginForm() {
             {loading ? 'רגע...' : mode === 'login' ? 'התחברות' : 'הרשמה'}
           </button>
         </form>
+
+        {mode === 'login' && (
+          <Link href="/login/forgot-password" style={{ display: 'block', marginTop: '1rem', fontSize: 13, color: theme.textMuted }}>
+            שכחת סיסמה?
+          </Link>
+        )}
 
         {error && (
           <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1.25rem' }}>
