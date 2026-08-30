@@ -15,12 +15,27 @@ interface UploadItem {
   error?: string;
 }
 
+// תואם ל-enforce_photo_limit ב-supabase/schema.sql - אין מקור אמת משותף אחד,
+// אז אם המספר שם משתנה צריך לעדכן גם כאן. זה רק לתצוגה מקדימה; האכיפה בפועל
+// היא ה-trigger ב-DB, לא זה.
+const FREE_PHOTO_LIMIT = 25;
+
 export default function UploadPage({ params }: UploadPageProps) {
   const { galleryId } = params;
 
   const [supabase] = useState(() => createClient());
   const [items, setItems] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [existingPhotoCount, setExistingPhotoCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    supabase
+      .from('photos')
+      .select('id', { count: 'exact', head: true })
+      .eq('gallery_id', galleryId)
+      .then(({ count }) => setExistingPhotoCount(count ?? 0));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [galleryId]);
 
   // מנקה object URLs של תצוגה מקדימה כשעוזבים את הדף, כדי לא לדלוף זיכרון
   useEffect(() => {
@@ -99,10 +114,17 @@ export default function UploadPage({ params }: UploadPageProps) {
   const doneCount = items.filter((it) => it.status === 'done').length;
   const errorCount = items.filter((it) => it.status === 'error').length;
   const allProcessed = items.length > 0 && items.every((it) => it.status === 'done' || it.status === 'error');
+  const totalPhotoCount = existingPhotoCount === null ? null : existingPhotoCount + doneCount;
 
   return (
     <div style={{ maxWidth: 900 }}>
-      <h1 style={{ fontSize: 20, marginBottom: '1.5rem' }}>העלאת תמונות לגלריה</h1>
+      <h1 style={{ fontSize: 20, marginBottom: '0.5rem' }}>העלאת תמונות לגלריה</h1>
+
+      {totalPhotoCount !== null && (
+        <p style={{ color: totalPhotoCount >= FREE_PHOTO_LIMIT ? theme.errorText : theme.textMuted, fontSize: 13, marginBottom: '1rem' }}>
+          {totalPhotoCount}/{FREE_PHOTO_LIMIT} תמונות בגלריה (חשבון חינמי)
+        </p>
+      )}
 
       <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
         <label style={{ ...goldButtonStyle, display: 'inline-block' }}>

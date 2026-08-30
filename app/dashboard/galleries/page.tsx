@@ -118,6 +118,13 @@ export default function GalleriesDashboard() {
 
   if (loading) return <p style={{ color: theme.textMuted }}>טוען...</p>;
 
+  // תואם ל-enforce_active_gallery_limit ב-supabase/schema.sql - סופר לפי הסטטוס
+  // הגולמי (לא effectiveStatus), כי זה גם מה שה-trigger בודק בפועל: גלריה שפג
+  // תוקפה אבל עוד לא סומנה 'expired' ב-DB (ה-cron עדיין לא רץ) עדיין נחשבת פעילה
+  // מבחינת ה-trigger, גם אם היא כבר מוצגת פה כ"באיחור".
+  const activeCount = rows.filter((r) => r.status !== 'completed' && r.status !== 'expired').length;
+  const freeGalleryLimit = 1;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
@@ -126,6 +133,10 @@ export default function GalleriesDashboard() {
           + גלריה חדשה
         </Link>
       </div>
+
+      <p style={{ color: activeCount >= freeGalleryLimit ? theme.errorText : theme.textMuted, fontSize: 13, marginTop: '-0.5rem' }}>
+        {activeCount}/{freeGalleryLimit} גלריות פעילות (חשבון חינמי)
+      </p>
 
       {rows.map((row) => {
         const included = row.packages?.included_photos ?? 0;
