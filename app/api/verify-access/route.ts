@@ -10,6 +10,12 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY as string
 );
 
+// הגנת brute-force על קוד הגישה (8 תווים הקסה - 16^8 צירופים, לא בטוח מספיק
+// בלי הגבלה כשה-galleryId כבר ידוע לתוקף, למשל מקישור שדלף). ננעל את הלקוחה
+// למשך LOCKOUT_MINUTES אחרי MAX_ATTEMPTS ניסיונות שגויים ברצף.
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_MINUTES = 15;
+
 export async function POST(req: NextRequest) {
   let body: { galleryId?: string; accessCode?: string };
   try {
@@ -27,7 +33,7 @@ export async function POST(req: NextRequest) {
   // שולפים את הגלריה ואת הלקוחה המשויכת אליה
   const { data: gallery, error: galleryError } = await supabaseAdmin
     .from('galleries')
-    .select('id, client_id, status, expires_at, clients(access_code)')
+    .select('id, client_id, status, expires_at, clients(id, access_code, failed_access_attempts, locked_until)')
     .eq('id', galleryId)
     .single();
 
@@ -35,11 +41,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
-  const expectedCode = (gallery as any).clients?.access_code;
+  const client = (gallery as any).clients;
+  const expectedCode = client?.access_code;
+
+  if (client?.locked_until && new Date(client.locked_until) > new Date()) {
+    return NextResponse.json({ error: 'יותר מדי ניסיונות שגויים - נסו שוב בעוד כמה דקות' }, { status: 429 });
+  }
 
   // השוואה בזמן קבוע - לא חושפת מידע על אורך/תוכן הקוד הנכון דרך תזמון התשובה
   if (!expectedCode || !safeCompare(expectedCode, accessCode)) {
+    if (client?.id) {
+      const attempts = (client.failed_access_attempts ?? 0) + 1;
+      await supabaseAdmin
+        .from('clients')
+        .update({
+          failed_access_attempts: attempts,
+          locked_until: attempts >= MAX_ATTEMPTS ? new Date(Date.now() + LOCKOUT_MINUTES * 60_000).toISOString() : null,
+        })
+        .eq('id', client.id);
+    }
     return NextResponse.json({ error: 'קוד גישה שגוי' }, { status: 401 });
+  }
+
+  if (client?.id && (client.failed_access_attempts ?? 0) > 0) {
+    await supabaseAdmin.from('clients').update({ failed_access_attempts: 0, locked_until: null }).eq('id', client.id);
   }
 
   if (gallery.expires_at && new Date(gallery.expires_at) < new Date()) {

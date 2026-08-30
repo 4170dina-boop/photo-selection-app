@@ -19,6 +19,8 @@ create table clients (
   full_name text not null,
   email text not null,
   access_code text unique not null,
+  failed_access_attempts int default 0,
+  locked_until timestamptz,
   created_at timestamptz default now()
 );
 
@@ -141,6 +143,10 @@ create policy "photographers see own sync jobs" on sync_jobs
 -- file_path/thumbnail_path (נתיב ב-bucket פרטי), מריצים גם את זה:
 -- alter table photos rename column file_url to file_path;
 -- alter table photos rename column thumbnail_url to thumbnail_path;
+
+-- אם כבר הרצת גרסה קודמת בלי הגנת brute-force על קוד הגישה, מריצים גם את זה:
+-- alter table clients add column if not exists failed_access_attempts int default 0;
+-- alter table clients add column if not exists locked_until timestamptz;
 
 -- מעדכן אוטומטית את "פעילות אחרונה" בגלריה בכל בחירה/ביטול בחירה של לקוחה,
 -- ומעביר את הסטטוס ל-in_progress באירוע הבחירה הראשון (draft/sent -> in_progress).
