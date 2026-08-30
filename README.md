@@ -140,7 +140,23 @@ npm run dev
 - יצירת thumbnails אמיתיים בגודל קטן (כרגע נשמר אותו נתיב גם ל-file_path וגם ל-thumbnail_path)
 - watermark על התמונות (עיבוד עם Sharp, בצד שרת - Edge Function מומלץ)
 - חיוב בפועל על חריגה מהחבילה (אינטגרציית סליקה)
-- בדיקות אוטומטיות ל-API routes ולזרימת ה-upload/select
+
+## בדיקות אוטומטיות
+
+```bash
+npm test
+```
+
+מריץ את חבילת ה-Vitest (`vitest.config.mts`). הבדיקות מתמקדות בלוגיקה הטהורה
+והכי רגישה מבחינת אבטחה - לא בדקות end-to-end מול Supabase אמיתי (זה כבר נבדק
+ידנית לאורך הפרויקט):
+
+- `lib/session.test.ts` - חתימה/אימות של session tokens: round-trip תקין, דחיית
+  טוקן שנבדק מול galleryId אחר, תפוגה, שיבוש חתימה/payload, וסוד שגוי
+- `lib/galleryAccess.test.ts` - `checkGalleryWritable` עם מוק ל-Supabase: מותר/אסור
+  לכתוב לפי סטטוס ותוקף, כולל מקרה הקצה של גלריה שגם הושלמה וגם פג תוקפה
+- `lib/email.test.ts` - `lib/email.ts` עם `fetch` מדומה: דילוג שקט כשאין
+  `RESEND_API_KEY`, שליחה מוצלחת, וטיפול בתשובת שגיאה מ-Resend
 
 ## כפתור הקסם - תוקן מיקום + נוסף ZIP fallback
 
