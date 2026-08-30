@@ -37,6 +37,7 @@ lib/theme.ts                                 → פלטת הצבעים המשו�
 vercel.json                                  → תזמון Vercel Cron ל-/api/cron/tick (פעם ביום)
 components/MagicButton.tsx                   → כפתור הקסם (File System Access API) + ZIP fallback, בדף העריכה של הצלמת
 app/api/galleries/[id]/selected-photos/route.ts → signed URLs לתמונות שסומנו "נבחר" (לצלמת המחוברת, לא ללקוחה)
+app/api/galleries/[id]/selections-export/route.ts → הורדת CSV (שם קובץ + הערה) של התמונות שנבחרו - למסירה למעבדת הדפסה
 ```
 
 ## התחברות צלם (Supabase Auth)

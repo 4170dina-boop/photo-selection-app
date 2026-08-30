@@ -225,6 +225,12 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           מיון אוטומטי מול תיקייה מקומית (Chrome/Edge), או הורדת כל התמונות שנבחרו כקובץ ZIP אחד.
         </p>
         <MagicButton galleryId={galleryId} />
+        <a
+          href={`/api/galleries/${galleryId}/selections-export`}
+          style={{ display: 'inline-block', marginTop: '0.75rem', color: theme.textMuted, fontSize: 13, textDecoration: 'underline' }}
+        >
+          הורדת רשימת הבחירה כקובץ CSV
+        </a>
       </div>
 
       <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
