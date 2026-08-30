@@ -249,10 +249,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           background: 'rgba(15,22,38,0.92)',
         }}
       >
-        <button style={goldButtonStyle}>
-          ✨ כפתור הקסם
-        </button>
-
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', fontSize: 14 }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: theme.green, display: 'inline-block' }} />

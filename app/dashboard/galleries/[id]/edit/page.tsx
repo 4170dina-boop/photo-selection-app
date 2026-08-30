@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
+import MagicButton from '@/components/MagicButton';
 
 interface EditGalleryPageProps {
   params: { id: string };
@@ -185,7 +186,15 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         </p>
       )}
 
-      <div style={{ marginTop: '3rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
+      <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
+        <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.5rem' }}>תמונות שנבחרו</h2>
+        <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '1rem' }}>
+          מיון אוטומטי מול תיקייה מקומית (Chrome/Edge), או הורדת כל התמונות שנבחרו כקובץ ZIP אחד.
+        </p>
+        <MagicButton galleryId={galleryId} />
+      </div>
+
+      <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
         <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '0.75rem' }}>
           מחיקת גלריה מוחקת לצמיתות את כל התמונות, הבחירות, ופרטי הלקוחה - אי אפשר לשחזר.
         </p>

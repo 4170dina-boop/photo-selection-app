@@ -34,7 +34,8 @@ lib/email.ts                                 → שליחת מייל (הזמנה
 lib/galleryAccess.ts                         → בדיקה משותפת: אסור לערוך גלריה שהושלמה/פג תוקפה
 lib/theme.ts                                 → פלטת הצבעים המשותפת (טוקנים + סגנונות input/button) - כל הדפים משתמשים בה
 vercel.json                                  → תזמון Vercel Cron ל-/api/cron/tick (פעם ביום)
-components/MagicButton.tsx                   → כפתור הקסם (File System Access API)
+components/MagicButton.tsx                   → כפתור הקסם (File System Access API) + ZIP fallback, בדף העריכה של הצלמת
+app/api/galleries/[id]/selected-photos/route.ts → signed URLs לתמונות שסומנו "נבחר" (לצלמת המחוברת, לא ללקוחה)
 ```
 
 ## התחברות צלם (Supabase Auth)
@@ -139,8 +140,23 @@ npm run dev
 - יצירת thumbnails אמיתיים בגודל קטן (כרגע נשמר אותו נתיב גם ל-file_path וגם ל-thumbnail_path)
 - watermark על התמונות (עיבוד עם Sharp, בצד שרת - Edge Function מומלץ)
 - חיוב בפועל על חריגה מהחבילה (אינטגרציית סליקה)
-- fallback להורדת ZIP לכפתור הקסם בדפדפנים שלא תומכים ב-File System Access API (כרגע רק הודעת "לא נתמך")
 - בדיקות אוטומטיות ל-API routes ולזרימת ה-upload/select
+
+## כפתור הקסם - תוקן מיקום + נוסף ZIP fallback
+
+`components/MagicButton.tsx` היה קיים מההתחלה אבל **לא היה מחובר לשום דף** - בדף
+הלקוחה (`app/gallery/[id]/page.tsx`) היה כפתור מקושט זהה חזותית שלא עשה כלום.
+זו הייתה גם טעות מיקום: הפיצ'ר דורש מהמשתמש לבחור תיקיית מקור *במחשב שלו* עם
+כל התמונות המקוריות - רלוונטי לצלמת (יש לה את הקבצים המקוריים), לא ללקוחה.
+
+- הכפתור המקושט הוסר מדף הלקוחה
+- `MagicButton` האמיתי חובר לדף העריכה של הצלמת (`app/dashboard/galleries/[id]/edit/page.tsx`)
+- נוסף **ZIP fallback** לדפדפנים בלי File System Access API (Safari/Firefox): כפתור
+  שמוריד את כל התמונות שסומנו "נבחר" כקובץ ZIP אחד, דרך `app/api/galleries/[id]/selected-photos/route.ts`
+  (מחזיר signed URLs זמניים - הצלמת לא הייתה יכולה בעבר לגשת בכלל לתמונות שלה
+  מחוץ לזמן ההעלאה, כי ה-bucket פרטי ואין policy שמאפשרת לה קריאה ישירה)
+- שני המסלולים (File System Access + ZIP) עכשיו מסננים רק תמונות בסטטוס `selected`
+  (לא `maybe`) - זו הייתה גם באג קטן בגרסה הקודמת
 
 ## מה תוקן (אבטחה)
 - session token חתום (HMAC) במקום base64 גולמי - ראו "איך הגישה של הלקוחה עובדת עכשיו" למעלה
