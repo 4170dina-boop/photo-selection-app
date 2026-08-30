@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { theme, goldButtonStyle } from '@/lib/theme';
 
@@ -27,13 +28,29 @@ export default function UploadPage({ params }: UploadPageProps) {
   const [items, setItems] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [existingPhotoCount, setExistingPhotoCount] = useState<number | null>(null);
+  const [checkingOwnership, setCheckingOwnership] = useState(true);
+  const [notFound, setNotFound] = useState(false);
 
+  // מוודאים שהגלריה שייכת לצלמת המחוברת (אותו דפוס כמו דף העריכה) לפני שמציגים
+  // את ממשק ההעלאה - בלי זה, כל צלמת יכולה לנווט לפי galleryId של גלריה של
+  // צלמת אחרת ולראות ממשק העלאה שלא באמת עובד (ה-RLS חוסם את הכתיבה בפועל,
+  // אבל בלי הבדיקה הזו זה מרגיש שבור במקום שיגיד בבירור "לא נמצא").
   useEffect(() => {
-    supabase
-      .from('photos')
-      .select('id', { count: 'exact', head: true })
-      .eq('gallery_id', galleryId)
-      .then(({ count }) => setExistingPhotoCount(count ?? 0));
+    (async () => {
+      const res = await fetch(`/api/galleries/${galleryId}`);
+      if (!res.ok) {
+        setNotFound(true);
+        setCheckingOwnership(false);
+        return;
+      }
+      setCheckingOwnership(false);
+
+      const { count } = await supabase
+        .from('photos')
+        .select('id', { count: 'exact', head: true })
+        .eq('gallery_id', galleryId);
+      setExistingPhotoCount(count ?? 0);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [galleryId]);
 
@@ -115,6 +132,19 @@ export default function UploadPage({ params }: UploadPageProps) {
   const errorCount = items.filter((it) => it.status === 'error').length;
   const allProcessed = items.length > 0 && items.every((it) => it.status === 'done' || it.status === 'error');
   const totalPhotoCount = existingPhotoCount === null ? null : existingPhotoCount + doneCount;
+
+  if (checkingOwnership) return <p style={{ color: theme.textMuted }}>טוען...</p>;
+
+  if (notFound) {
+    return (
+      <div>
+        <p style={{ color: theme.errorText, marginBottom: '1rem' }}>הגלריה לא נמצאה.</p>
+        <Link href="/dashboard/galleries" style={{ color: theme.textMuted }}>
+          חזרה לרשימת הגלריות
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 900 }}>
