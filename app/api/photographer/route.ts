@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 
   const { data: photographer, error } = await supabase
     .from('photographers')
-    .select('business_name, watermark_text')
+    .select('business_name, watermark_text, brand_color')
     .eq('auth_user_id', user.id)
     .single();
 
@@ -40,7 +40,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'לא מחוברת' }, { status: 401 });
   }
 
-  let body: { watermarkText?: string | null };
+  let body: { watermarkText?: string | null; brandColor?: string | null };
   try {
     body = await req.json();
   } catch {
@@ -53,7 +53,16 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: `הטקסט ארוך מדי (מקסימום ${WATERMARK_TEXT_MAX_LENGTH} תווים)` }, { status: 400 });
   }
 
-  const { error } = await supabase.from('photographers').update({ watermark_text: watermarkText }).eq('auth_user_id', user.id);
+  const brandColor = body.brandColor?.trim() || null;
+
+  if (brandColor && !/^#[0-9a-fA-F]{6}$/.test(brandColor)) {
+    return NextResponse.json({ error: 'צבע מותג לא תקין' }, { status: 400 });
+  }
+
+  const { error } = await supabase
+    .from('photographers')
+    .update({ watermark_text: watermarkText, brand_color: brandColor ?? '#000000' })
+    .eq('auth_user_id', user.id);
 
   if (error) {
     return NextResponse.json({ error: 'עדכון הפרופיל נכשל' }, { status: 500 });

@@ -14,6 +14,18 @@ interface GalleryPhoto {
   original_filename: string;
 }
 
+// בוחר טקסט כהה/בהיר לפי בהירות צבע המותג, כדי שכפתורים יישארו קריאים
+// גם אם הצלמת בוחרת צבע מותג כהה (ולא רק את הגוון הבהיר של הפלטה המקורית).
+function contrastTextColor(hex: string): string {
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return theme.goldText;
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? theme.goldText : '#ffffff';
+}
+
 export default function GalleryPage({ params }: GalleryPageProps) {
   const galleryId = params.id;
 
@@ -24,6 +36,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [galleryStatus, setGalleryStatus] = useState<string>('sent');
   const [finishing, setFinishing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [brandColor, setBrandColor] = useState<string | null>(null);
 
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
@@ -77,6 +90,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     );
     setPackageInfo(data.package ?? null);
     setGalleryStatus(data.status ?? 'sent');
+    setBrandColor(data.brandColor ?? null);
 
     setAuthorized(true);
     setCheckingAuth(false);
@@ -239,6 +253,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     ? Math.min(100, Math.round((selectedCount / packageInfo.included) * 100))
     : 0;
 
+  // "צבע מותג": אם הצלמת לא הגדירה אחד בהגדרות, נשארים עם הפלטה המקורית
+  // (theme.gold/goldBright) - ראו app/api/gallery/[id]/route.ts.
+  const accent = brandColor ?? theme.goldBright;
+  const accentSolid = brandColor ?? theme.gold;
+  const accentText = brandColor ? contrastTextColor(brandColor) : theme.goldText;
+  const primaryButtonStyle = brandColor
+    ? { ...goldButtonStyle, background: brandColor, color: accentText }
+    : goldButtonStyle;
+
   return (
     <div style={{ background: theme.bg, minHeight: '100vh', color: theme.text, direction: 'rtl', fontFamily: theme.fontSans }}>
       <div
@@ -255,7 +278,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             אולי
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: theme.goldBright, display: 'inline-block' }} />
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: accent, display: 'inline-block' }} />
             נבחר
           </span>
         </div>
@@ -264,15 +287,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           <div style={{ textAlign: 'right' }}>
             <div>
               נבחרו במסגרת החבילה{' '}
-              <b style={{ color: theme.goldBright, fontFamily: theme.fontSerif }}>{packageInfo?.included ?? 0}</b> / {selectedCount}
+              <b style={{ color: accent, fontFamily: theme.fontSerif }}>{packageInfo?.included ?? 0}</b> / {selectedCount}
             </div>
             <div style={{ fontSize: 12, color: theme.textFaint }}>{maybeCount} תמונות "אולי"</div>
           </div>
           <div
             style={{
               width: 44, height: 44, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 12, fontWeight: 'bold', color: theme.goldBright, fontFamily: theme.fontSerif,
-              background: `conic-gradient(${theme.gold} ${progressPct}%, ${theme.panelInput} ${progressPct}%)`,
+              fontSize: 12, fontWeight: 'bold', color: accent, fontFamily: theme.fontSerif,
+              background: `conic-gradient(${accentSolid} ${progressPct}%, ${theme.panelInput} ${progressPct}%)`,
             }}
           >
             <div style={{ width: 34, height: 34, borderRadius: '50%', background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -322,7 +345,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             disabled={finishing || selectedCount === 0}
             title={selectedCount === 0 ? 'בחרי לפחות תמונה אחת קודם' : undefined}
             style={{
-              ...goldButtonStyle,
+              ...primaryButtonStyle,
               display: 'block', margin: '0.75rem auto 0',
               opacity: finishing || selectedCount === 0 ? 0.5 : 1,
             }}
@@ -400,13 +423,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           const borderColor = isComparing
             ? theme.compare
             : status === 'selected'
-            ? theme.goldBright
+            ? accent
             : status === 'maybe'
             ? theme.green
             : 'transparent';
 
-          const heartBg = status === 'selected' ? theme.goldBright : status === 'maybe' ? theme.green : 'rgba(10,10,11,0.6)';
+          const heartBg = status === 'selected' ? accent : status === 'maybe' ? theme.green : 'rgba(10,10,11,0.6)';
           const heartFilled = status !== undefined;
+          const heartColor = status === 'selected' ? accentText : heartFilled ? theme.goldText : '#fff';
 
           return (
             <div
@@ -441,7 +465,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   title="לחיצה: מחזור בין אולי / נבחר / כלום"
                   style={{
                     position: 'absolute', top: 8, left: 8, zIndex: 1,
-                    background: heartBg, border: '1px solid rgba(255,255,255,0.3)', color: heartFilled ? theme.goldText : '#fff',
+                    background: heartBg, border: '1px solid rgba(255,255,255,0.3)', color: heartColor,
                     borderRadius: '50%', width: 30, height: 30,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
                   }}

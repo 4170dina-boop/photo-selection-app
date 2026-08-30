@@ -3,9 +3,12 @@
 import { useEffect, useState } from 'react';
 import { theme, inputStyle, goldButtonStyle } from '@/lib/theme';
 
+const DEFAULT_BRAND_COLOR = '#c98f89'; // theme.gold - הגוון הקבוע, מוצג כברירת מחדל בבורר הצבע
+
 export default function SettingsPage() {
   const [businessName, setBusinessName] = useState('');
   const [watermarkText, setWatermarkText] = useState('');
+  const [brandColor, setBrandColor] = useState(DEFAULT_BRAND_COLOR);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -18,6 +21,9 @@ export default function SettingsPage() {
         const data = await res.json();
         setBusinessName(data.business_name ?? '');
         setWatermarkText(data.watermark_text ?? '');
+        // '#000000' הוא ברירת המחדל של העמודה (=טרם הוגדר) - מציגים את גוון
+        // הפלטה המקורי בבורר הצבע במקום שחור, כך שמה שרואים תואם למה שהלקוחה רואה כרגע
+        setBrandColor(data.brand_color && data.brand_color !== '#000000' ? data.brand_color : DEFAULT_BRAND_COLOR);
       }
       setLoading(false);
     })();
@@ -32,7 +38,7 @@ export default function SettingsPage() {
     const res = await fetch('/api/photographer', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ watermarkText }),
+      body: JSON.stringify({ watermarkText, brandColor }),
     });
 
     setSaving(false);
@@ -66,6 +72,22 @@ export default function SettingsPage() {
           <span style={{ color: theme.textFaint, fontSize: 12 }}>
             הטקסט שיוטבע על כל תמונה שהלקוחה רואה בגלריה (עד 60 תווים). אם משאירים ריק - יוצג
             {businessName ? ` "${businessName}"` : ' שם העסק'} כברירת מחדל.
+          </span>
+        </label>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          צבע מותג
+          <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+            <input
+              type="color"
+              value={brandColor}
+              onChange={(e) => setBrandColor(e.target.value)}
+              style={{ width: 44, height: 36, padding: 2, background: theme.panelInput, border: `1px solid ${theme.border}`, borderRadius: 4, cursor: 'pointer' }}
+            />
+            <span style={{ color: theme.textFaint, fontSize: 12 }}>{brandColor}</span>
+          </div>
+          <span style={{ color: theme.textFaint, fontSize: 12 }}>
+            צבע ההדגשה (לב הבחירה, פס ההתקדמות, הכפתורים) שהלקוחה רואה בדף הגלריה שלה.
           </span>
         </label>
 
