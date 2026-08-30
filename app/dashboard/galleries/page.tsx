@@ -125,10 +125,24 @@ export default function GalleriesDashboard() {
   const activeCount = rows.filter((r) => r.status !== 'completed' && r.status !== 'expired').length;
   const freeGalleryLimit = 1;
 
+  // סכום חריגות מכל הגלריות יחד - אותו חישוב שכל שורה עושה בנפרד, ראו למטה
+  const totalOverage = rows.reduce((sum, row) => {
+    const included = row.packages?.included_photos ?? 0;
+    const overageCount = Math.max(0, row.selectedCount - included);
+    return sum + overageCount * (row.packages?.extra_photo_price ?? 0);
+  }, 0);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-        <h1 style={{ fontSize: 20, margin: 0 }}>הגלריות שלי</h1>
+        <div>
+          <h1 style={{ fontSize: 20, margin: 0 }}>הגלריות שלי</h1>
+          {totalOverage > 0 && (
+            <p style={{ color: theme.gold, fontSize: 13, margin: '0.25rem 0 0' }}>
+              סה"כ חריגה מכל הגלריות: ₪{totalOverage}
+            </p>
+          )}
+        </div>
         <Link href="/dashboard/galleries/new" style={{ ...goldButtonStyle, textDecoration: 'none' }}>
           + גלריה חדשה
         </Link>
