@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { signSession, safeCompare } from '@/lib/session';
 import { SESSION_MAX_AGE_MS } from '@/lib/gallerySession';
+import { isLockedOut, afterFailedAttempt, clearedLockoutState } from '@/lib/accessLockout';
 
 // שימו לב: כאן (ורק כאן, בצד שרת) משתמשים ב-service_role key, לא ב-anon key.
 // ה-service key חייב להישאר בסביבת השרת בלבד ולעולם לא להגיע לדפדפן.
@@ -9,12 +10,6 @@ const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
   process.env.SUPABASE_SERVICE_ROLE_KEY as string
 );
-
-// הגנת brute-force על קוד הגישה (8 תווים הקסה - 16^8 צירופים, לא בטוח מספיק
-// בלי הגבלה כשה-galleryId כבר ידוע לתוקף, למשל מקישור שדלף). ננעל את הלקוחה
-// למשך LOCKOUT_MINUTES אחרי MAX_ATTEMPTS ניסיונות שגויים ברצף.
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_MINUTES = 15;
 
 export async function POST(req: NextRequest) {
   let body: { galleryId?: string; accessCode?: string };
@@ -44,27 +39,20 @@ export async function POST(req: NextRequest) {
   const client = (gallery as any).clients;
   const expectedCode = client?.access_code;
 
-  if (client?.locked_until && new Date(client.locked_until) > new Date()) {
+  if (isLockedOut(client)) {
     return NextResponse.json({ error: 'יותר מדי ניסיונות שגויים - נסו שוב בעוד כמה דקות' }, { status: 429 });
   }
 
   // השוואה בזמן קבוע - לא חושפת מידע על אורך/תוכן הקוד הנכון דרך תזמון התשובה
   if (!expectedCode || !safeCompare(expectedCode, accessCode)) {
     if (client?.id) {
-      const attempts = (client.failed_access_attempts ?? 0) + 1;
-      await supabaseAdmin
-        .from('clients')
-        .update({
-          failed_access_attempts: attempts,
-          locked_until: attempts >= MAX_ATTEMPTS ? new Date(Date.now() + LOCKOUT_MINUTES * 60_000).toISOString() : null,
-        })
-        .eq('id', client.id);
+      await supabaseAdmin.from('clients').update(afterFailedAttempt(client)).eq('id', client.id);
     }
     return NextResponse.json({ error: 'קוד גישה שגוי' }, { status: 401 });
   }
 
   if (client?.id && (client.failed_access_attempts ?? 0) > 0) {
-    await supabaseAdmin.from('clients').update({ failed_access_attempts: 0, locked_until: null }).eq('id', client.id);
+    await supabaseAdmin.from('clients').update(clearedLockoutState).eq('id', client.id);
   }
 
   if (gallery.expires_at && new Date(gallery.expires_at) < new Date()) {
