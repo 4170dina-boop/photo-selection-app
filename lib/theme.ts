@@ -1,50 +1,66 @@
 import type { CSSProperties } from 'react';
 
-// פלטת הצבעים הכהה-זהב מדף הגלריה של הלקוחה (app/gallery/[id]/page.tsx) -
-// כאן כדי שדפי הדשבורד של הצלם ישתמשו באותה שפה עיצובית, במקום ה-CSS
-// ברירת המחדל הלבן/שחור שהיה שם קודם.
+// פלטת "דינה שוורץ" - נייבי כהה + ורוד-פודרה אל אפרסק, serif אלגנטי לכותרות.
+// מבוססת על עיצוב רפרנס שהתקבל מהמשתמשת (לא סגנון ה-gold/dark-gold המקורי).
 export const theme = {
-  bg: '#161210',
-  panel: '#221c17',
-  panelHover: '#2a221b',
-  border: '#3a322a',
-  borderLight: '#4a4136',
-  text: '#e8ddc7',
-  textMuted: '#a89b85',
-  gold: '#d9b45c',
-  goldText: '#1a1512',
-  green: '#5cc98a',
-  errorBg: '#4a1f1f',
-  errorText: '#e88',
-  successBg: '#1f3a24',
-  successText: '#8fd9a0',
-  warningBg: '#3a2a17',
-  warningText: '#e0b567',
+  bg: '#0f1626',
+  panel: '#161c2d',
+  panelInput: '#1b2236',
+  border: 'rgba(232,224,210,0.11)',
+  borderLight: 'rgba(232,224,210,0.22)',
+  text: '#efe8db',
+  textMuted: 'rgba(239,232,219,0.62)',
+  textFaint: 'rgba(239,232,219,0.38)',
+  gold: '#c98f89',
+  goldBright: '#e3b3ac',
+  goldText: '#20120f',
+  green: '#7fae86',
+  compare: '#8fa8c9',
+  errorBg: 'rgba(181,96,108,0.14)',
+  errorText: '#d98a96',
+  successBg: 'rgba(127,174,134,0.12)',
+  successText: '#9bc6a2',
+  warningBg: 'rgba(201,143,137,0.14)',
+  warningText: '#e3b3ac',
+  fontSerif: 'var(--font-serif), serif',
+  fontSans: 'var(--font-sans), sans-serif',
 } as const;
 
 export const inputStyle: CSSProperties = {
-  padding: '0.6rem',
-  background: theme.bg,
+  padding: '0.65rem 0.85rem',
+  background: theme.panelInput,
   color: theme.text,
   border: `1px solid ${theme.border}`,
-  borderRadius: 6,
+  borderRadius: 4,
+  fontFamily: theme.fontSans,
+  fontSize: 14,
 };
 
 export const goldButtonStyle: CSSProperties = {
-  background: theme.gold,
+  background: `linear-gradient(135deg, ${theme.goldBright}, ${theme.gold})`,
   color: theme.goldText,
   border: 'none',
-  borderRadius: 8,
-  padding: '0.6rem 1.2rem',
-  fontWeight: 'bold',
+  borderRadius: 4,
+  padding: '0.7rem 1.3rem',
+  fontWeight: 700,
+  fontFamily: theme.fontSans,
+  fontSize: 13.5,
   cursor: 'pointer',
 };
 
 export const outlineButtonStyle: CSSProperties = {
   background: 'transparent',
-  border: `1px solid ${theme.borderLight}`,
-  color: theme.text,
-  borderRadius: 8,
-  padding: '0.5rem 1rem',
+  border: `1px solid ${theme.border}`,
+  color: theme.textMuted,
+  borderRadius: 4,
+  padding: '0.6rem 1.1rem',
+  fontFamily: theme.fontSans,
+  fontSize: 13.5,
+  fontWeight: 700,
   cursor: 'pointer',
+};
+
+export const headingStyle: CSSProperties = {
+  fontFamily: theme.fontSerif,
+  fontWeight: 500,
 };

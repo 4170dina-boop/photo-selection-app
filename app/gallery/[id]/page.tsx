@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { theme, inputStyle, goldButtonStyle } from '@/lib/theme';
+import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 
 interface GalleryPageProps {
   params: { id: string };
@@ -240,29 +240,26 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     : 0;
 
   return (
-    <div style={{ background: '#161210', minHeight: '100vh', color: '#e8ddc7', direction: 'rtl' }}>
+    <div style={{ background: theme.bg, minHeight: '100vh', color: theme.text, direction: 'rtl', fontFamily: theme.fontSans }}>
       <div
         style={{
+          position: 'sticky', top: 0, zIndex: 50, backdropFilter: 'blur(12px)',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '1rem 1.5rem', borderBottom: '1px solid #2a241f', flexWrap: 'wrap', gap: '1rem',
+          padding: '1rem 1.5rem', borderBottom: `1px solid ${theme.border}`, flexWrap: 'wrap', gap: '1rem',
+          background: 'rgba(15,22,38,0.92)',
         }}
       >
-        <button
-          style={{
-            background: '#d9b45c', color: '#1a1512', border: 'none', borderRadius: 8,
-            padding: '0.6rem 1.2rem', fontWeight: 'bold', cursor: 'pointer',
-          }}
-        >
+        <button style={goldButtonStyle}>
           ✨ כפתור הקסם
         </button>
 
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', fontSize: 14 }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#5cc98a', display: 'inline-block' }} />
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: theme.green, display: 'inline-block' }} />
             אולי
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#d9b45c', display: 'inline-block' }} />
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: theme.goldBright, display: 'inline-block' }} />
             נבחר
           </span>
         </div>
@@ -271,18 +268,18 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           <div style={{ textAlign: 'right' }}>
             <div>
               נבחרו במסגרת החבילה{' '}
-              <b style={{ color: '#d9b45c' }}>{packageInfo?.included ?? 0}</b> / {selectedCount}
+              <b style={{ color: theme.goldBright, fontFamily: theme.fontSerif }}>{packageInfo?.included ?? 0}</b> / {selectedCount}
             </div>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>{maybeCount} תמונות "אולי"</div>
+            <div style={{ fontSize: 12, color: theme.textFaint }}>{maybeCount} תמונות "אולי"</div>
           </div>
           <div
             style={{
               width: 44, height: 44, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 12, fontWeight: 'bold', color: '#d9b45c',
-              background: `conic-gradient(#d9b45c ${progressPct}%, #2a241f ${progressPct}%)`,
+              fontSize: 12, fontWeight: 'bold', color: theme.goldBright, fontFamily: theme.fontSerif,
+              background: `conic-gradient(${theme.gold} ${progressPct}%, ${theme.panelInput} ${progressPct}%)`,
             }}
           >
-            <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#161210', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 34, height: 34, borderRadius: '50%', background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {progressPct}%
             </div>
           </div>
@@ -290,24 +287,24 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       </div>
 
       {overIncluded > 0 && (
-        <div style={{ padding: '0.5rem 1.5rem', background: '#3a2a17', color: '#e0b567', fontSize: 14 }}>
+        <div style={{ padding: '0.5rem 1.5rem', background: theme.warningBg, color: theme.warningText, fontSize: 14 }}>
           עברת ב-{overIncluded} תמונות מהחבילה — עלות נוספת: {extraCost.toFixed(2)} ₪
         </div>
       )}
 
       {actionError && (
-        <div style={{ padding: '0.5rem 1.5rem', background: '#4a1f1f', color: '#e88', fontSize: 14 }}>
+        <div style={{ padding: '0.5rem 1.5rem', background: theme.errorBg, color: theme.errorText, fontSize: 14 }}>
           {actionError}
         </div>
       )}
 
       {galleryStatus === 'completed' && (
-        <div style={{ padding: '0.5rem 1.5rem', background: '#1f3a24', color: '#8fd9a0', fontSize: 14, textAlign: 'center' }}>
+        <div style={{ padding: '0.5rem 1.5rem', background: theme.successBg, color: theme.successText, fontSize: 14, textAlign: 'center' }}>
           ✓ הבחירה נשלחה. אפשר עדיין לצפות בתמונות, אבל לא לשנות את הבחירה.
         </div>
       )}
 
-      <p style={{ textAlign: 'center', fontSize: 13, opacity: 0.6, padding: '0.75rem 0 0' }}>
+      <p style={{ textAlign: 'center', fontSize: 13, color: theme.textFaint, padding: '0.75rem 0 0' }}>
         תמונות מוגנות בסימן מים · הורדה וגרירה חסומות בגלריה האמיתית
       </p>
 
@@ -317,14 +314,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             setCompareMode((prev) => !prev);
             setCompareIds([]);
           }}
-          style={{
-            background: 'transparent', border: '1px solid #4a4136', color: '#e8ddc7',
-            borderRadius: 8, padding: '0.4rem 0.9rem', cursor: 'pointer', marginTop: '0.5rem',
-          }}
+          style={{ ...outlineButtonStyle, marginTop: '0.5rem' }}
         >
           {compareMode ? 'צאי ממצב השוואה' : '⇄ השוואה בין 2 תמונות'}
         </button>
-        {compareMode && <span style={{ marginRight: '0.5rem', fontSize: 13 }}>בחרי שתי תמונות להשוואה ({compareIds.length}/2)</span>}
+        {compareMode && <span style={{ marginRight: '0.5rem', fontSize: 13, color: theme.textMuted }}>בחרי שתי תמונות להשוואה ({compareIds.length}/2)</span>}
 
         {galleryStatus !== 'completed' && (
           <button
@@ -332,8 +326,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             disabled={finishing || selectedCount === 0}
             title={selectedCount === 0 ? 'בחרי לפחות תמונה אחת קודם' : undefined}
             style={{
-              display: 'block', margin: '0.75rem auto 0', background: '#d9b45c', color: '#1a1512',
-              border: 'none', borderRadius: 8, padding: '0.5rem 1.2rem', fontWeight: 'bold', cursor: 'pointer',
+              ...goldButtonStyle,
+              display: 'block', margin: '0.75rem auto 0',
+              opacity: finishing || selectedCount === 0 ? 0.5 : 1,
             }}
           >
             {finishing ? 'שולחת...' : 'סיימתי לבחור ✓'}
@@ -360,7 +355,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 alt=""
                 draggable={false}
                 onContextMenu={(e) => e.preventDefault()}
-                style={{ maxHeight: '90vh', maxWidth: '45%', objectFit: 'contain', borderRadius: 8 }}
+                style={{ maxHeight: '90vh', maxWidth: '45%', objectFit: 'contain', borderRadius: 6 }}
               />
             );
           })}
@@ -372,19 +367,19 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => setNoteEditingId(null)}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ background: '#221c17', color: '#e8ddc7', padding: '1rem', borderRadius: 8, width: 300, border: '1px solid #3a322a' }}>
-            <p>הערה לתמונה</p>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: theme.panel, color: theme.text, padding: '1.25rem', borderRadius: 10, width: 320, border: `1px solid ${theme.border}` }}>
+            <p style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.75rem' }}>הערה לתמונה</p>
             <textarea
               value={noteDraft}
               onChange={(e) => setNoteDraft(e.target.value)}
               rows={3}
-              style={{ width: '100%', background: '#161210', color: '#e8ddc7', border: '1px solid #3a322a', borderRadius: 4 }}
+              style={{ ...inputStyle, width: '100%' }}
               placeholder="למשל: את זו רוצה בשחור-לבן"
               autoFocus
             />
-            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-              <button onClick={saveNote} style={{ background: '#d9b45c', border: 'none', borderRadius: 6, padding: '0.4rem 0.8rem', cursor: 'pointer' }}>שמירה</button>
-              <button onClick={() => setNoteEditingId(null)} style={{ background: 'transparent', border: '1px solid #4a4136', color: '#e8ddc7', borderRadius: 6, padding: '0.4rem 0.8rem', cursor: 'pointer' }}>ביטול</button>
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+              <button onClick={saveNote} style={{ ...goldButtonStyle, padding: '0.5rem 1rem' }}>שמירה</button>
+              <button onClick={() => setNoteEditingId(null)} style={{ ...outlineButtonStyle, padding: '0.5rem 1rem' }}>ביטול</button>
             </div>
           </div>
         </div>
@@ -404,14 +399,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           const hasNote = !!notes[photo.id];
 
           const borderColor = isComparing
-            ? '#4aa8d9'
+            ? theme.compare
             : status === 'selected'
-            ? '#d9b45c'
+            ? theme.goldBright
             : status === 'maybe'
-            ? '#5cc98a'
-            : '#2e2822';
+            ? theme.green
+            : 'transparent';
 
-          const heartBg = status === 'selected' ? '#d9b45c' : status === 'maybe' ? '#5cc98a' : 'rgba(0,0,0,0.55)';
+          const heartBg = status === 'selected' ? theme.goldBright : status === 'maybe' ? theme.green : 'rgba(10,10,11,0.6)';
           const heartFilled = status !== undefined;
 
           return (
@@ -423,16 +418,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 position: 'relative',
                 cursor: compareMode || galleryStatus !== 'completed' ? 'pointer' : 'default',
                 border: `2px solid ${borderColor}`,
-                borderRadius: 10,
+                borderRadius: 6,
                 overflow: 'hidden',
-                background: '#221c17',
+                background: theme.panel,
               }}
             >
               <div
                 style={{
                   position: 'absolute', top: 8, right: 8, zIndex: 1,
-                  background: 'rgba(0,0,0,0.55)', color: '#e8ddc7', fontSize: 11,
-                  padding: '2px 8px', borderRadius: 12,
+                  background: 'rgba(0,0,0,0.45)', color: '#fff', fontSize: 10,
+                  padding: '2px 7px', borderRadius: 10,
                 }}
               >
                 {photo.original_filename}
@@ -447,7 +442,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   title="לחיצה: מחזור בין אולי / נבחר / כלום"
                   style={{
                     position: 'absolute', top: 8, left: 8, zIndex: 1,
-                    background: heartBg, borderRadius: '50%', width: 30, height: 30,
+                    background: heartBg, border: '1px solid rgba(255,255,255,0.3)', color: heartFilled ? theme.goldText : '#fff',
+                    borderRadius: '50%', width: 30, height: 30,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
                   }}
                 >
@@ -469,7 +465,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   title="הוסיפי הערה"
                   style={{
                     position: 'absolute', bottom: 8, left: 8,
-                    background: hasNote ? '#e0b567' : 'rgba(255,255,255,0.85)',
+                    background: hasNote ? theme.goldBright : 'rgba(255,255,255,0.85)',
                     border: 'none', borderRadius: '50%', width: 28, height: 28, cursor: 'pointer',
                   }}
                 >
