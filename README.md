@@ -21,14 +21,16 @@ app/api/gallery/[id]/selection/route.ts      → סימון אולי/נבחר/ה
 app/api/gallery/[id]/note/route.ts           → שמירת הערה לתמונה (צד שרת, אחרי אימות session)
 app/gallery/[id]/page.tsx                     → דף הגלריה מצד הלקוחה (קוד גישה → בחירה → ספירה מול חבילה)
 app/dashboard/upload/[galleryId]/page.tsx     → העלאת תמונות מצד הצלם ל-Supabase Storage
-app/dashboard/galleries/page.tsx             → רשימת גלריות עם סטטוס, % התקדמות, ופעילות אחרונה (לחיצה על שורה -> העלאה)
-app/dashboard/galleries/new/page.tsx         → טופס יצירת גלריה חדשה (לקוחה + חבילה)
+app/dashboard/galleries/page.tsx             → רשימת גלריות עם סטטוס, % התקדמות, ופעילות אחרונה (לחיצה על שורה -> העלאה, קישור נפרד לעריכה)
+app/dashboard/galleries/new/page.tsx         → טופס יצירת גלריה חדשה (לקוחה + חבילה) + שליחת מייל אוטומטית ללקוחה
+app/dashboard/galleries/[id]/edit/page.tsx   → עריכת פרטי לקוחה/חבילה/תוקף, ומחיקת גלריה
 app/api/galleries/route.ts                   → יצירת client+gallery+package בשרת, עם session הצלם (לא service key)
+app/api/galleries/[id]/route.ts              → GET/PATCH/DELETE לגלריה קיימת, עם session הצלם (לא service key)
 app/api/gallery/[id]/finish/route.ts         → "סיימתי לבחור" - נועל את הגלריה (status=completed)
 app/api/cron/tick/route.ts                   → מסמן גלריות שפג תוקפן + שולח תזכורות מייל (מופעל ע"י scheduler חיצוני)
-lib/email.ts                                 → שליחת מייל תזכורת דרך Resend (no-op אם אין RESEND_API_KEY)
+lib/email.ts                                 → שליחת מייל (הזמנה לגלריה + תזכורת תפוגה) דרך Resend (no-op אם אין RESEND_API_KEY)
 lib/galleryAccess.ts                         → בדיקה משותפת: אסור לערוך גלריה שהושלמה/פג תוקפה
-lib/theme.ts                                 → פלטת הצבעים הכהה-זהב המשותפת (טוקנים + סגנונות input/button)
+lib/theme.ts                                 → פלטת הצבעים המשותפת (טוקנים + סגנונות input/button) - כל הדפים משתמשים בה
 vercel.json                                  → תזמון Vercel Cron ל-/api/cron/tick (פעם ביום)
 components/MagicButton.tsx                   → כפתור הקסם (File System Access API)
 ```
@@ -66,9 +68,18 @@ Authentication → Providers → Email — אז יש session מיד אחרי ה�
 3. יוצר `gallery` (סטטוס `sent`) ו-`package` תחתיה
 4. אם שלב כלשהו נכשל - מוחק את מה שכבר נוצר, כדי לא להשאיר רשומות יתומות
 
-בסיום מוצג קישור לגלריה (`/gallery/{id}`) וקוד הגישה, עם כפתור העתקה וקישור ישיר
-להעלאת תמונות. כל שורה ברשימת הגלריות (`/dashboard/galleries`) לחיצה עליה
-מובילה לדף ההעלאה של אותה גלריה.
+בסיום, אם `RESEND_API_KEY` מוגדר, נשלח ללקוחה מייל אוטומטי עם הקישור והקוד
+(`sendGalleryInviteEmail` ב-`lib/email.ts`) - זו קריאת best-effort, כישלון שליחה
+לא מבטל את יצירת הגלריה. המסך מציג באנר ירוק "נשלח אוטומטית" או באנר עם הוראה
+לשליחה ידנית, לפי `emailSent` שחוזר מה-API. בכל מקרה גם מוצג קישור לגלריה
+(`/gallery/{id}`) וקוד הגישה, עם כפתור העתקה וקישור ישיר להעלאת תמונות.
+
+כל שורה ברשימת הגלריות (`/dashboard/galleries`) לחיצה עליה מובילה לדף ההעלאה של
+אותה גלריה; קישור "✎ עריכה" נפרד (עם `stopPropagation` כדי לא להפעיל גם את
+הניווט להעלאה) מוביל ל-`/dashboard/galleries/{id}/edit`, שם אפשר לערוך את פרטי
+הלקוחה/החבילה/תוקף (`PATCH /api/galleries/{id}`) או למחוק את הגלריה כליל
+(`DELETE /api/galleries/{id}` - מוחק גם את קבצי ה-Storage בפועל, לא רק את
+השורות ב-DB, ומוחק גם את שורת ה-`client` הקשורה).
 
 ## איך הגישה של הלקוחה עובדת עכשיו (אחרי תיקון אבטחה)
 
@@ -114,9 +125,7 @@ npm run dev
 האתר יעלה על http://localhost:3000
 
 ## מה עדיין חסר (השלבים הבאים)
-- עריכה/מחיקה של גלריה קיימת, ועריכת פרטי לקוחה אחרי היצירה
 - מסך "שכחתי סיסמה" / איפוס סיסמה לצלם
-- שליחת המייל/קישור ללקוחה בפועל (כרגע הצלם מעתיק את הקישור והקוד ידנית ושולח בעצמו)
 - יצירת thumbnails אמיתיים בגודל קטן (כרגע נשמר אותו נתיב גם ל-file_path וגם ל-thumbnail_path)
 - watermark על התמונות (עיבוד עם Sharp, בצד שרת - Edge Function מומלץ)
 - חיוב בפועל על חריגה מהחבילה (אינטגרציית סליקה)

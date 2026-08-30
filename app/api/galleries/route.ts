@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
+import { sendGalleryInviteEmail } from '@/lib/email';
 
 // יוצר גלריה חדשה (client + gallery + package) עבור הצלם המחובר.
 // רץ דרך לקוח השרת עם ה-session של הצלם (לא service key) - כך RLS הקיים
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest) {
 
   const { data: photographer, error: photographerError } = await supabase
     .from('photographers')
-    .select('id, reminder_days_default')
+    .select('id, business_name, reminder_days_default')
     .eq('auth_user_id', user.id)
     .single();
 
@@ -108,5 +109,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'יצירת החבילה נכשלה' }, { status: 500 });
   }
 
-  return NextResponse.json({ galleryId: gallery.id, accessCode });
+  // שליחת המייל היא best-effort: כישלון שליחה לא אמור לבטל את יצירת הגלריה -
+  // הצלם עדיין רואה את הקישור והקוד במסך ויכול לשלוח ידנית אם emailSent=false.
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
+  const { sent: emailSent } = await sendGalleryInviteEmail({
+    to: clientEmail.trim(),
+    clientName: clientName.trim(),
+    businessName: photographer.business_name,
+    galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
+    accessCode,
+  });
+
+  return NextResponse.json({ galleryId: gallery.id, accessCode, emailSent });
 }

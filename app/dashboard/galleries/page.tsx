@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { theme, goldButtonStyle } from '@/lib/theme';
 
@@ -20,6 +21,7 @@ interface GalleryRow {
 }
 
 export default function GalleriesDashboard() {
+  const router = useRouter();
   const [supabase] = useState(() => createClient());
   const [rows, setRows] = useState<GalleryRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -132,14 +134,14 @@ export default function GalleriesDashboard() {
         const color = statusColor(status);
 
         return (
-          <Link
+          <div
             key={row.id}
-            href={`/dashboard/upload/${row.id}`}
+            onClick={() => router.push(`/dashboard/upload/${row.id}`)}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '1rem', background: theme.panel, border: `1px solid ${theme.border}`,
               borderRadius: 10, gap: '1rem', flexWrap: 'wrap',
-              color: 'inherit', textDecoration: 'none',
+              color: 'inherit', textDecoration: 'none', cursor: 'pointer',
             }}
           >
             <span
@@ -165,7 +167,15 @@ export default function GalleriesDashboard() {
               <div style={{ fontWeight: 'bold' }}>{row.clients?.full_name ?? 'ללא שם'}</div>
               <div style={{ fontSize: 13, color: theme.textMuted }}>{formatActivity(row)}</div>
             </div>
-          </Link>
+
+            <Link
+              href={`/dashboard/galleries/${row.id}/edit`}
+              onClick={(e) => e.stopPropagation()}
+              style={{ color: theme.textMuted, fontSize: 13, textDecoration: 'none' }}
+            >
+              ✎ עריכה
+            </Link>
+          </div>
         );
       })}
 

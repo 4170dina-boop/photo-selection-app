@@ -7,6 +7,7 @@ import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/th
 interface CreatedGallery {
   galleryId: string;
   accessCode: string;
+  emailSent: boolean;
 }
 
 export default function NewGalleryPage() {
@@ -56,7 +57,16 @@ export default function NewGalleryPage() {
     return (
       <div style={{ maxWidth: 480 }}>
         <h1 style={{ fontSize: 20, marginBottom: '1rem', color: theme.gold }}>✓ הגלריה נוצרה!</h1>
-        <p style={{ marginBottom: '1rem', color: theme.textMuted }}>שלחי ללקוחה את הקישור והקוד הבאים:</p>
+
+        {created.emailSent ? (
+          <p style={{ background: theme.successBg, color: theme.successText, padding: '0.6rem 1rem', borderRadius: 8, marginBottom: '1rem' }}>
+            ✓ מייל עם הקישור והקוד נשלח אוטומטית ללקוחה
+          </p>
+        ) : (
+          <p style={{ background: theme.warningBg, color: theme.warningText, padding: '0.6rem 1rem', borderRadius: 8, marginBottom: '1rem' }}>
+            לא הצלחנו לשלוח מייל אוטומטי (שירות המייל לא מוגדר או נכשל) - שלחי ללקוחה ידנית את הקישור והקוד:
+          </p>
+        )}
 
         <div style={{ background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10, padding: '1.25rem', marginBottom: '1rem' }}>
           <div style={{ marginBottom: '1rem' }}>
