@@ -16,7 +16,7 @@ interface GalleryRow {
   clients: { full_name: string } | null;
   // packages.gallery_id הוא unique, אז PostgREST מחזיר יחס 1:1 - אובייקט בודד, לא מערך
   // (בניגוד ל-clients שגם הוא אובייקט בודד אבל מהצד "הרבים" של הקשר - גם לא מערך)
-  packages: { included_photos: number } | null;
+  packages: { included_photos: number; extra_photo_price: number } | null;
   selectedCount: number;
 }
 
@@ -35,7 +35,7 @@ export default function GalleriesDashboard() {
 
     const { data: galleries } = await supabase
       .from('galleries')
-      .select('id, status, expires_at, last_activity_at, last_reminder_sent_at, sent_at, clients(full_name), packages(included_photos)')
+      .select('id, status, expires_at, last_activity_at, last_reminder_sent_at, sent_at, clients(full_name), packages(included_photos, extra_photo_price)')
       .order('created_at', { ascending: false });
 
     if (!galleries) {
@@ -144,6 +144,12 @@ export default function GalleriesDashboard() {
         const status = effectiveStatus(row);
         const color = statusColor(status);
 
+        // הכנה לחיוב בפועל (עדיין לא מומש - ראו README, "מה עדיין חסר") - כרגע
+        // רק מציגה לצלמת כמה חריגה יש וכמה זה שווה, לפי extra_photo_price של החבילה
+        const overageCount = Math.max(0, row.selectedCount - included);
+        const overagePrice = row.packages?.extra_photo_price ?? 0;
+        const overageTotal = overageCount * overagePrice;
+
         return (
           <div
             key={row.id}
@@ -181,6 +187,11 @@ export default function GalleriesDashboard() {
                 <span>{pct}%</span>
                 <span>נבחרו {row.selectedCount}/{included}</span>
               </div>
+              {overageCount > 0 && (
+                <div style={{ fontSize: 12, color: theme.gold, marginTop: '0.15rem' }}>
+                  חריגה: {overageCount} תמונות{overagePrice > 0 ? ` (₪${overageTotal})` : ''}
+                </div>
+              )}
             </div>
 
             <div style={{ textAlign: 'right' }}>
