@@ -28,7 +28,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
 
   const { data: photographer } = await supabase
     .from('photographers')
-    .select('id, business_name')
+    .select('id, business_name, watermark_text')
     .eq('auth_user_id', user.id)
     .single();
 
@@ -69,7 +69,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   let watermarked: Buffer;
   try {
     const originalBuffer = Buffer.from(await original.arrayBuffer());
-    watermarked = await createWatermarkedPreview(originalBuffer, photographer.business_name);
+    const watermarkText = photographer.watermark_text?.trim() || photographer.business_name;
+    watermarked = await createWatermarkedPreview(originalBuffer, watermarkText);
   } catch (err) {
     // לא מפילים את כל ההעלאה בגלל תמונה בעייתית אחת - thumbnail_path נשאר
     // כמו שהוא (זהה ל-file_path, כמו שנקבע בהעלאה), פשוט בלי סימן מים.

@@ -351,7 +351,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 alt=""
                 draggable={false}
                 onContextMenu={(e) => e.preventDefault()}
-                style={{ maxHeight: '90vh', maxWidth: '45%', objectFit: 'contain', borderRadius: 6 }}
+                style={{
+                  maxHeight: '90vh', maxWidth: '45%', objectFit: 'contain', borderRadius: 6,
+                  WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
+                }}
               />
             );
           })}
@@ -452,7 +455,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 src={photo.thumbnailUrl ?? ''}
                 alt=""
                 draggable={false}
-                style={{ width: '100%', display: 'block', pointerEvents: 'none', aspectRatio: '3/4', objectFit: 'cover' }}
+                style={{
+                  width: '100%', display: 'block', pointerEvents: 'none', aspectRatio: '3/4', objectFit: 'cover',
+                  WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
+                }}
               />
 
               {status && (

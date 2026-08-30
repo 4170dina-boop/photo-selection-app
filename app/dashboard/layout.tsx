@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { theme, outlineButtonStyle } from '@/lib/theme';
@@ -24,9 +25,14 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         }}
       >
         <span style={{ fontWeight: 'bold', color: theme.gold }}>✨ אזור צלמים</span>
-        <button onClick={handleSignOut} style={outlineButtonStyle}>
-          התנתקות
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          <Link href="/dashboard/settings" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+            הגדרות
+          </Link>
+          <button onClick={handleSignOut} style={outlineButtonStyle}>
+            התנתקות
+          </button>
+        </div>
       </div>
 
       <div style={{ padding: '1.5rem', maxWidth: 900, margin: '0 auto' }}>{children}</div>

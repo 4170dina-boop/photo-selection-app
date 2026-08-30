@@ -7,6 +7,7 @@ export interface Photographer {
   logo_url: string | null;
   brand_color: string;
   reminder_days_default: number;
+  watermark_text: string | null;
 }
 
 export interface Gallery {

@@ -10,6 +10,7 @@ create table photographers (
   logo_url text,
   brand_color text default '#000000',
   reminder_days_default int default 5,
+  watermark_text text,
   created_at timestamptz default now()
 );
 
@@ -147,6 +148,9 @@ create policy "photographers see own sync jobs" on sync_jobs
 -- אם כבר הרצת גרסה קודמת בלי הגנת brute-force על קוד הגישה, מריצים גם את זה:
 -- alter table clients add column if not exists failed_access_attempts int default 0;
 -- alter table clients add column if not exists locked_until timestamptz;
+
+-- אם כבר הרצת גרסה קודמת בלי טקסט מותאם אישית לסימן המים, מריצים גם את זה:
+-- alter table photographers add column if not exists watermark_text text;
 
 -- מעדכן אוטומטית את "פעילות אחרונה" בגלריה בכל בחירה/ביטול בחירה של לקוחה,
 -- ומעביר את הסטטוס ל-in_progress באירוע הבחירה הראשון (draft/sent -> in_progress).
