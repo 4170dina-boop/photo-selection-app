@@ -84,3 +84,27 @@ export async function sendGalleryInviteEmail(params: GalleryInviteParams): Promi
     `
   );
 }
+
+interface SelectionCompleteParams {
+  to: string;
+  clientName: string;
+  selectedCount: number;
+  dashboardUrl: string;
+}
+
+// מודיעה לצלמת שלקוחה סיימה לבחור - נשלחת מ-app/api/gallery/[id]/finish, לצד
+// עדכון סטטוס הגלריה. בלי זה לצלמת אין שום דרך לדעת שהבחירה הסתיימה חוץ
+// מלהיכנס ולבדוק ידנית.
+export async function sendSelectionCompleteEmail(params: SelectionCompleteParams): Promise<SendResult> {
+  return sendEmail(
+    params.to,
+    `${params.clientName} סיימה לבחור תמונות`,
+    `
+      <div dir="rtl" style="font-family: sans-serif; line-height: 1.6;">
+        <p>היי,</p>
+        <p>${params.clientName} סיימה לבחור תמונות בגלריה - נבחרו ${params.selectedCount} תמונות.</p>
+        <p><a href="${params.dashboardUrl}">צפייה בבחירה ובהורדת התמונות</a></p>
+      </div>
+    `
+  );
+}

@@ -78,4 +78,26 @@ describe('lib/email', () => {
     expect(result.sent).toBe(false);
     expect(result.error).toBe('rate limited');
   });
+
+  it('sends a selection-complete notification to the photographer with the selected count and dashboard link', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    const { sendSelectionCompleteEmail } = await import('./email');
+    const result = await sendSelectionCompleteEmail({
+      to: 'photographer@example.com',
+      clientName: 'לקוחה',
+      selectedCount: 12,
+      dashboardUrl: 'http://localhost/dashboard/galleries/1/edit',
+    });
+
+    expect(result.sent).toBe(true);
+    const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string);
+    expect(body.to).toBe('photographer@example.com');
+    expect(body.html).toContain('12');
+    expect(body.html).toContain('http://localhost/dashboard/galleries/1/edit');
+  });
 });
