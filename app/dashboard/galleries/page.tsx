@@ -147,7 +147,16 @@ export default function GalleriesDashboard() {
         return (
           <div
             key={row.id}
+            role="button"
+            tabIndex={0}
+            aria-label={`מעבר להעלאת תמונות לגלריה של ${row.clients?.full_name ?? 'ללא שם'}`}
             onClick={() => router.push(`/dashboard/upload/${row.id}`)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                router.push(`/dashboard/upload/${row.id}`);
+              }
+            }}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '1rem', background: theme.panel, border: `1px solid ${theme.border}`,
