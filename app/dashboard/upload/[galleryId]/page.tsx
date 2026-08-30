@@ -82,8 +82,13 @@ export default function UploadPage({ params }: UploadPageProps) {
 
         setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'done' } : it)));
       } catch (err: any) {
+        // מגבלת חשבון חינמי (טריגר enforce_photo_limit ב-DB) - ראו supabase/schema.sql
+        const message: string = err.message ?? 'שגיאה לא ידועה';
+        const displayMessage = message.includes('LIMIT_PHOTOS')
+          ? 'חשבון חינמי מוגבל ל-25 תמונות בגלריה'
+          : message;
         setItems((prev) =>
-          prev.map((it, idx) => (idx === i ? { ...it, status: 'error', error: err.message ?? 'שגיאה לא ידועה' } : it))
+          prev.map((it, idx) => (idx === i ? { ...it, status: 'error', error: displayMessage } : it))
         );
       }
     }

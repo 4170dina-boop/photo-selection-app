@@ -152,6 +152,9 @@ create policy "photographers see own sync jobs" on sync_jobs
 -- אם כבר הרצת גרסה קודמת בלי טקסט מותאם אישית לסימן המים, מריצים גם את זה:
 -- alter table photographers add column if not exists watermark_text text;
 
+-- אם כבר הרצת גרסה קודמת בלי מגבלת חשבון חינמי, מריצים גם את הטריגרים
+-- שמוגדרים למטה (enforce_active_gallery_limit, enforce_photo_limit) בנפרד.
+
 -- מעדכן אוטומטית את "פעילות אחרונה" בגלריה בכל בחירה/ביטול בחירה של לקוחה,
 -- ומעביר את הסטטוס ל-in_progress באירוע הבחירה הראשון (draft/sent -> in_progress).
 -- מעבר ל-completed הוא פעולה מפורשת של הלקוחה (app/api/gallery/[id]/finish/route.ts),
@@ -190,6 +193,53 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_photographer();
+
+-- מגבלת חשבון חינמי (עדיין אין מנוי בתשלום לצלמות - ראו README): גלריה פעילה
+-- אחת בכל רגע נתון, ועד 25 תמונות בגלריה. מספיק כדי לנסות את המערכת, לא מספיק
+-- כדי לנהל איתה עסק צילום אמיתי. אכיפה ברמת ה-DB (טריגר, לא רק בקוד ה-API) כדי
+-- שאי אפשר יהיה לעקוף את זה דרך קריאה ישירה ל-Supabase.
+create or replace function enforce_active_gallery_limit()
+returns trigger as $$
+declare
+  active_count int;
+begin
+  select count(*) into active_count
+  from galleries
+  where photographer_id = new.photographer_id
+    and status not in ('completed', 'expired');
+
+  if active_count >= 1 then
+    raise exception 'LIMIT_ACTIVE_GALLERY: חשבון חינמי מוגבל לגלריה פעילה אחת - השלימי או מחקי גלריה קיימת כדי ליצור חדשה';
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger trg_enforce_active_gallery_limit
+before insert on galleries
+for each row execute function enforce_active_gallery_limit();
+
+create or replace function enforce_photo_limit()
+returns trigger as $$
+declare
+  photo_count int;
+begin
+  select count(*) into photo_count
+  from photos
+  where gallery_id = new.gallery_id;
+
+  if photo_count >= 25 then
+    raise exception 'LIMIT_PHOTOS: חשבון חינמי מוגבל ל-25 תמונות בגלריה';
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger trg_enforce_photo_limit
+before insert on photos
+for each row execute function enforce_photo_limit();
 
 -- Storage: bucket לתמונות הגלריה
 -- מריצים את זה, או יוצרים ידנית ב-Dashboard > Storage > New bucket (שם: gallery-photos, פרטי!)

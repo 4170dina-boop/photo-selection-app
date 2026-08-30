@@ -94,6 +94,15 @@ export async function POST(req: NextRequest) {
 
   if (galleryError || !gallery) {
     await supabase.from('clients').delete().eq('id', client.id);
+
+    // מגבלת חשבון חינמי (טריגר enforce_active_gallery_limit ב-DB) - ראו supabase/schema.sql
+    if (galleryError?.message?.includes('LIMIT_ACTIVE_GALLERY')) {
+      return NextResponse.json(
+        { error: 'חשבון חינמי מוגבל לגלריה פעילה אחת בכל רגע נתון - השלימי או מחקי גלריה קיימת כדי ליצור חדשה' },
+        { status: 402 }
+      );
+    }
+
     return NextResponse.json({ error: 'יצירת הגלריה נכשלה' }, { status: 500 });
   }
 
