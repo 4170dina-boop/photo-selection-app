@@ -33,7 +33,9 @@ export const inputStyle: CSSProperties = {
   border: `1px solid ${theme.border}`,
   borderRadius: 4,
   fontFamily: theme.fontSans,
-  fontSize: 14,
+  // 16px ולא פחות - מתחת לזה iOS Safari מזום אוטומטית פנימה בפוקוס על השדה,
+  // מה שממש מפריע בהזנת קוד גישה או הערה מהנייד
+  fontSize: 16,
 };
 
 export const goldButtonStyle: CSSProperties = {
