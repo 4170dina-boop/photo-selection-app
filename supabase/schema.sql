@@ -96,6 +96,11 @@ create table packages (
   gallery_id uuid references galleries(id) on delete cascade not null unique,
   included_photos int not null default 0,
   extra_photo_price numeric(10,2) default 0,
+  -- מחיר החבילה עצמה (לא לתמונה נוספת) - מה שהצלמת גובה בפועל על הגלריה,
+  -- בנפרד מ-amount_charged (שנשאר ריק עד שיש אינטגרציית סליקה אמיתית, ראו README).
+  -- בלי השדה הזה דוח ההכנסות בדשבורד (app/dashboard/galleries/page.tsx) יכול
+  -- להראות רק חריגות, לא את ההכנסה האמיתית מהחבילות עצמן.
+  base_price numeric(10,2) default 0,
   amount_charged numeric(10,2) default 0
 );
 
@@ -198,6 +203,9 @@ create policy "photographers see own sync jobs" on sync_jobs
 
 -- אם כבר הרצת גרסה קודמת בלי ציון חדות לתמונות, מריצים גם את זה:
 -- alter table photos add column if not exists sharpness_score numeric;
+
+-- אם כבר הרצת גרסה קודמת בלי מחיר חבילה בסיסי, מריצים גם את זה:
+-- alter table packages add column if not exists base_price numeric(10,2) default 0;
 
 -- אם כבר הרצת גרסה קודמת בלי שיתוף גלריה משפחתי (gallery_participants),
 -- מריצים את כל הבלוק הזה - כולל backfill לגלריות/בחירות קיימות, כדי שלכל

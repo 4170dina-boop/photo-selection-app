@@ -36,7 +36,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error } = await supabase
     .from('galleries')
-    .select('id, expires_at, reminder_days, clients(full_name, email), packages(included_photos, extra_photo_price)')
+    .select('id, expires_at, reminder_days, clients(full_name, email), packages(included_photos, base_price, extra_photo_price)')
     .eq('id', params.id)
     .single();
 
@@ -66,6 +66,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     clientName?: string;
     clientEmail?: string;
     includedPhotos?: number;
+    basePrice?: number;
     extraPhotoPrice?: number;
     expiresAt?: string | null;
   };
@@ -75,7 +76,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'גוף בקשה לא תקין' }, { status: 400 });
   }
 
-  const { clientName, clientEmail, includedPhotos, extraPhotoPrice, expiresAt } = body;
+  const { clientName, clientEmail, includedPhotos, basePrice, extraPhotoPrice, expiresAt } = body;
 
   if (!clientName?.trim() || !clientEmail?.trim() || includedPhotos == null || includedPhotos < 0) {
     return NextResponse.json({ error: 'חסרים פרטים (שם לקוחה, אימייל ומספר תמונות בחבילה)' }, { status: 400 });
@@ -101,7 +102,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { error: packageError } = await supabase
     .from('packages')
-    .update({ included_photos: includedPhotos, extra_photo_price: extraPhotoPrice ?? 0 })
+    .update({ included_photos: includedPhotos, base_price: basePrice ?? 0, extra_photo_price: extraPhotoPrice ?? 0 })
     .eq('gallery_id', gallery.id);
 
   if (packageError) {

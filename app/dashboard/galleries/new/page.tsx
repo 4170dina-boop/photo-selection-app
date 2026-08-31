@@ -14,6 +14,7 @@ export default function NewGalleryPage() {
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
   const [includedPhotos, setIncludedPhotos] = useState('30');
+  const [basePrice, setBasePrice] = useState('0');
   const [extraPhotoPrice, setExtraPhotoPrice] = useState('0');
   const [expiresAt, setExpiresAt] = useState('');
 
@@ -34,6 +35,7 @@ export default function NewGalleryPage() {
         clientName,
         clientEmail,
         includedPhotos: Number(includedPhotos),
+        basePrice: Number(basePrice),
         extraPhotoPrice: Number(extraPhotoPrice),
         expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
       }),
@@ -137,6 +139,18 @@ export default function NewGalleryPage() {
             onChange={(e) => setIncludedPhotos(e.target.value)}
             style={inputStyle}
             required
+          />
+        </label>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          מחיר החבילה (₪)
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={basePrice}
+            onChange={(e) => setBasePrice(e.target.value)}
+            style={inputStyle}
           />
         </label>
 

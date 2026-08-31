@@ -17,6 +17,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
   const [includedPhotos, setIncludedPhotos] = useState('');
+  const [basePrice, setBasePrice] = useState('');
   const [extraPhotoPrice, setExtraPhotoPrice] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
 
@@ -47,6 +48,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setClientName(data.clients?.full_name ?? '');
     setClientEmail(data.clients?.email ?? '');
     setIncludedPhotos(String(data.packages?.included_photos ?? 0));
+    setBasePrice(String(data.packages?.base_price ?? 0));
     setExtraPhotoPrice(String(data.packages?.extra_photo_price ?? 0));
     setExpiresAt(data.expires_at ? data.expires_at.slice(0, 10) : '');
     setLoading(false);
@@ -64,6 +66,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         clientName,
         clientEmail,
         includedPhotos: Number(includedPhotos),
+        basePrice: Number(basePrice),
         extraPhotoPrice: Number(extraPhotoPrice),
         expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
       }),
@@ -164,6 +167,18 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
             onChange={(e) => setIncludedPhotos(e.target.value)}
             style={inputStyle}
             required
+          />
+        </label>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          מחיר החבילה (₪)
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={basePrice}
+            onChange={(e) => setBasePrice(e.target.value)}
+            style={inputStyle}
           />
         </label>
 

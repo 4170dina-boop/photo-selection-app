@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
     clientName?: string;
     clientEmail?: string;
     includedPhotos?: number;
+    basePrice?: number;
     extraPhotoPrice?: number;
     expiresAt?: string;
     reminderDays?: number;
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'גוף בקשה לא תקין' }, { status: 400 });
   }
 
-  const { clientName, clientEmail, includedPhotos, extraPhotoPrice, expiresAt, reminderDays } = body;
+  const { clientName, clientEmail, includedPhotos, basePrice, extraPhotoPrice, expiresAt, reminderDays } = body;
 
   if (!clientName?.trim() || !clientEmail?.trim() || includedPhotos == null || includedPhotos < 0) {
     return NextResponse.json({ error: 'חסרים פרטים (שם לקוחה, אימייל ומספר תמונות בחבילה)' }, { status: 400 });
@@ -109,6 +110,7 @@ export async function POST(req: NextRequest) {
   const { error: packageError } = await supabase.from('packages').insert({
     gallery_id: gallery.id,
     included_photos: includedPhotos,
+    base_price: basePrice ?? 0,
     extra_photo_price: extraPhotoPrice ?? 0,
   });
 

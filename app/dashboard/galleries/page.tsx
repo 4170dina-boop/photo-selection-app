@@ -17,7 +17,7 @@ interface GalleryRow {
   clients: { full_name: string } | null;
   // packages.gallery_id הוא unique, אז PostgREST מחזיר יחס 1:1 - אובייקט בודד, לא מערך
   // (בניגוד ל-clients שגם הוא אובייקט בודד אבל מהצד "הרבים" של הקשר - גם לא מערך)
-  packages: { included_photos: number; extra_photo_price: number } | null;
+  packages: { included_photos: number; base_price: number; extra_photo_price: number } | null;
   selectedCount: number;
 }
 
@@ -36,7 +36,7 @@ export default function GalleriesDashboard() {
 
     const { data: galleries } = await supabase
       .from('galleries')
-      .select('id, status, expires_at, last_activity_at, last_reminder_sent_at, sent_at, owner_participant_id, clients(full_name), packages(included_photos, extra_photo_price)')
+      .select('id, status, expires_at, last_activity_at, last_reminder_sent_at, sent_at, owner_participant_id, clients(full_name), packages(included_photos, base_price, extra_photo_price)')
       .order('created_at', { ascending: false });
 
     if (!galleries) {
@@ -135,14 +135,20 @@ export default function GalleriesDashboard() {
     return sum + overageCount * (row.packages?.extra_photo_price ?? 0);
   }, 0);
 
+  // מחיר החבילות עצמן - נספר על כל הגלריות (לא רק פעילות), כי בדרך כלל
+  // גובים על החבילה בזמן ההזמנה, לא רק כשהיא מסתיימת.
+  const totalBasePrice = rows.reduce((sum, row) => sum + (row.packages?.base_price ?? 0), 0);
+  const totalRevenue = totalBasePrice + totalOverage;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
         <div>
           <h1 style={{ fontSize: 20, margin: 0 }}>הגלריות שלי</h1>
-          {totalOverage > 0 && (
+          {totalRevenue > 0 && (
             <p style={{ color: theme.gold, fontSize: 13, margin: '0.25rem 0 0' }}>
-              סה"כ חריגה מכל הגלריות: ₪{totalOverage}
+              סה"כ הכנסה: ₪{totalRevenue}
+              {totalOverage > 0 && ` (מתוכה חריגות: ₪${totalOverage})`}
             </p>
           )}
         </div>
@@ -204,6 +210,11 @@ export default function GalleriesDashboard() {
                 <span>{pct}%</span>
                 <span>נבחרו {row.selectedCount}/{included}</span>
               </div>
+              {!!row.packages?.base_price && (
+                <div style={{ fontSize: 12, color: theme.textMuted, marginTop: '0.15rem' }}>
+                  מחיר חבילה: ₪{row.packages.base_price}
+                </div>
+              )}
               {overageCount > 0 && (
                 <div style={{ fontSize: 12, color: theme.gold, marginTop: '0.15rem' }}>
                   חריגה: {overageCount} תמונות{overagePrice > 0 ? ` (₪${overageTotal})` : ''}
