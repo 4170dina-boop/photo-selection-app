@@ -65,6 +65,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [enlargedId, setEnlargedId] = useState<string | null>(null);
 
   const [authorized, setAuthorized] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -280,11 +281,18 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     );
   }
 
-  async function cycleStatus(photoId: string) {
+  function cycleStatus(photoId: string) {
     if (galleryStatus === 'completed' || !myParticipant) return; // הבחירה כבר נשלחה - נעול לעריכה
-
     const current = myMarks[photoId]?.status; // undefined | 'maybe' | 'selected'
     const next = current === undefined ? 'maybe' : current === 'maybe' ? 'selected' : null;
+    return setPhotoStatus(photoId, next);
+  }
+
+  // מופרד מ-cycleStatus כדי שגם מצב ההשוואה יוכל לקבוע ישירות "נבחר" על תמונה
+  // ספציפית, בלי לעבור דרך הריצה של אולי->נבחר->כלום.
+  async function setPhotoStatus(photoId: string, next: 'maybe' | 'selected' | null) {
+    if (galleryStatus === 'completed' || !myParticipant) return;
+    const current = myMarks[photoId]?.status;
 
     const res = await fetch(`/api/gallery/${galleryId}/selection`, {
       method: 'POST',
@@ -461,11 +469,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', fontSize: 14 }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: theme.green, display: 'inline-block' }} />
-            אולי
+            אולי ({maybeCount})
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: accent, display: 'inline-block' }} />
-            נבחר
+            נבחר ({mySelectedCount})
           </span>
           {myParticipant && (
             <span style={{ color: theme.textFaint, fontSize: 12 }}>
@@ -517,6 +525,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </span>
         )}
       </div>
+
+      <p style={{ textAlign: 'center', fontSize: 12, color: theme.textFaint, padding: '0.5rem 1.5rem 0' }}>
+        לחיצה ראשונה על תמונה = <span style={{ color: theme.green }}>אולי</span> · לחיצה שנייה = <span style={{ color: accent }}>נבחר</span> · לחיצה שלישית מבטלת
+      </p>
 
       {overIncluded > 0 && (
         <div style={{ padding: '0.5rem 1.5rem', background: theme.warningBg, color: theme.warningText, fontSize: 14 }}>
@@ -582,26 +594,102 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           }}
           onClick={() => setCompareIds([])}
         >
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setCompareMode(false);
+              setCompareIds([]);
+            }}
+            title="יציאה ממצב השוואה"
+            style={{
+              position: 'absolute', top: 16, insetInlineEnd: 16, zIndex: 51,
+              width: 40, height: 40, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+              background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 18, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            ✕
+          </button>
+
           {compareIds.map((id) => {
             const photo = photos.find((p) => p.id === id);
             if (!photo || !photo.fullUrl) return null;
             return (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              <div
                 key={id}
-                src={photo.fullUrl}
-                alt=""
-                draggable={false}
-                onContextMenu={(e) => e.preventDefault()}
-                style={{
-                  maxHeight: '90vh', maxWidth: '45%', objectFit: 'contain', borderRadius: 6,
-                  WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
-                }}
-              />
+                onClick={(e) => e.stopPropagation()}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem', maxWidth: '45%' }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={photo.fullUrl}
+                  alt=""
+                  draggable={false}
+                  onContextMenu={(e) => e.preventDefault()}
+                  style={{
+                    maxHeight: '80vh', maxWidth: '100%', objectFit: 'contain', borderRadius: 6,
+                    WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
+                  }}
+                />
+                {galleryStatus !== 'completed' && myParticipant && (
+                  <button
+                    onClick={async () => {
+                      await setPhotoStatus(id, 'selected');
+                      setCompareMode(false);
+                      setCompareIds([]);
+                    }}
+                    style={{ ...primaryButtonStyle, padding: '0.5rem 1.25rem' }}
+                  >
+                    בחרי את זו ✓
+                  </button>
+                )}
+              </div>
             );
           })}
         </div>
       )}
+
+      {enlargedId && (() => {
+        const photo = photos.find((p) => p.id === enlargedId);
+        if (!photo?.fullUrl) return null;
+        return (
+          <div
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 50,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem',
+            }}
+            onClick={() => setEnlargedId(null)}
+          >
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setEnlargedId(null);
+              }}
+              title="סגירה"
+              style={{
+                position: 'absolute', top: 16, insetInlineEnd: 16, zIndex: 51,
+                width: 40, height: 40, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 18, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              ✕
+            </button>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={photo.fullUrl}
+              alt=""
+              draggable={false}
+              onClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.preventDefault()}
+              style={{
+                maxHeight: '90vh', maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
+                WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
+              }}
+            />
+          </div>
+        );
+      })()}
 
       {noteEditingId && (
         <div
@@ -680,13 +768,31 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 <div
                   title="הערכה אוטומטית לפי חדות - לא תמיד מדויקת, בדקי בעצמך"
                   style={{
-                    position: 'absolute', bottom: 8, right: 8, zIndex: 1,
+                    position: 'absolute', bottom: compareMode ? 8 : 32, right: 8, zIndex: 1,
                     background: theme.warningBg, color: theme.warningText, fontSize: 10,
                     padding: '2px 7px', borderRadius: 10,
                   }}
                 >
-                  ייתכן שמטושטשת
+                  ייתכן שמטושטשת (הערכה אוטומטית)
                 </div>
+              )}
+
+              {!compareMode && photo.thumbnailUrl && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEnlargedId(photo.id);
+                  }}
+                  title="הגדלת תמונה"
+                  style={{
+                    position: 'absolute', bottom: 8, right: 8, zIndex: 1,
+                    background: 'rgba(0,0,0,0.45)', border: 'none', color: '#fff',
+                    borderRadius: '50%', width: 26, height: 26, cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13,
+                  }}
+                >
+                  🔍
+                </button>
               )}
 
               {othersMarks.length > 0 && (
