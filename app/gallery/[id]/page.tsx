@@ -343,19 +343,23 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     return (
       <div style={{ minHeight: '100vh', background: theme.bg, color: theme.text, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <form onSubmit={handleSubmitCode} style={{ maxWidth: 320, width: '100%', direction: 'rtl', textAlign: 'center', padding: '2rem' }}>
-          <p style={{ marginBottom: '1.25rem', color: theme.gold, fontSize: 18 }}>✨ הזיני את קוד הגישה שקיבלת</p>
+          <label htmlFor="access-code" style={{ display: 'block', marginBottom: '1.25rem', color: theme.gold, fontSize: 18 }}>
+            ✨ הזיני את קוד הגישה שקיבלת
+          </label>
           <input
+            id="access-code"
             type="text"
             value={codeInput}
             onChange={(e) => setCodeInput(e.target.value)}
             style={{ ...inputStyle, width: '100%', marginBottom: '0.75rem', textAlign: 'center', fontSize: 18, letterSpacing: 1 }}
+            aria-describedby={authError ? 'access-code-error' : undefined}
             autoFocus
           />
           <button type="submit" style={{ ...goldButtonStyle, width: '100%' }}>
             כניסה לגלריה
           </button>
           {authError && (
-            <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.6rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
+            <p id="access-code-error" role="alert" style={{ background: theme.errorBg, color: theme.errorText, padding: '0.6rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
               {authError}
             </p>
           )}
@@ -388,8 +392,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             </>
           ) : (
             <>
-              <p style={{ color: theme.textMuted, marginBottom: '0.75rem', fontSize: 14 }}>איך קוראים לך?</p>
+              <label htmlFor="guest-name" style={{ display: 'block', color: theme.textMuted, marginBottom: '0.75rem', fontSize: 14 }}>
+                איך קוראים לך?
+              </label>
               <input
+                id="guest-name"
                 type="text"
                 value={guestNameInput}
                 onChange={(e) => setGuestNameInput(e.target.value)}
@@ -632,7 +639,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setActionError('');
   }
 
-  function toggleCompareSelect(photoId: string, e: React.MouseEvent) {
+  function toggleCompareSelect(photoId: string, e: React.SyntheticEvent) {
     e.stopPropagation();
     setCompareIds((prev) => {
       if (prev.includes(photoId)) return prev.filter((id) => id !== photoId);
@@ -817,7 +824,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       </div>
 
       {(isOffline || pendingCount > 0) && (
-        <div style={{ padding: '0.5rem 1.5rem', background: theme.warningBg, color: theme.warningText, fontSize: 13, textAlign: 'center' }}>
+        <div role="status" aria-live="polite" style={{ padding: '0.5rem 1.5rem', background: theme.warningBg, color: theme.warningText, fontSize: 13, textAlign: 'center' }}>
           {isOffline && '📴 אין חיבור לאינטרנט - '}
           {pendingCount > 0
             ? `${pendingCount} שינויים ממתינים ויישלחו אוטומטית כשהחיבור יחזור.`
@@ -864,7 +871,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       )}
 
       {actionError && (
-        <div style={{ padding: '0.5rem 1.5rem', background: theme.errorBg, color: theme.errorText, fontSize: 14 }}>
+        <div role="alert" style={{ padding: '0.5rem 1.5rem', background: theme.errorBg, color: theme.errorText, fontSize: 14 }}>
           {actionError}
         </div>
       )}
@@ -925,6 +932,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
       {compareMode && compareIds.length === 2 && (
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="השוואת תמונות"
           style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 50,
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2rem',
@@ -994,6 +1004,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         const hasNext = currentIndex < photos.length - 1;
         return (
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`תצוגה מוגדלת: ${photo.original_filename}`}
             style={{
               position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 50,
               display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem',
@@ -1064,7 +1077,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             <img
               ref={enlargedImgRef}
               src={photo.fullUrl}
-              alt=""
+              alt={photo.original_filename}
               draggable={false}
               onClick={(e) => {
                 e.stopPropagation();
@@ -1088,9 +1101,18 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => setNoteEditingId(null)}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ background: theme.panel, color: theme.text, padding: '1.25rem', borderRadius: 10, width: 320, border: `1px solid ${theme.border}` }}>
-            <p style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.75rem' }}>הערה לתמונה</p>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="note-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: theme.panel, color: theme.text, padding: '1.25rem', borderRadius: 10, width: 320, border: `1px solid ${theme.border}` }}
+          >
+            <label htmlFor="note-text" id="note-dialog-title" style={{ display: 'block', fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.75rem' }}>
+              הערה לתמונה
+            </label>
             <textarea
+              id="note-text"
               value={noteDraft}
               onChange={(e) => setNoteDraft(e.target.value)}
               rows={3}
@@ -1159,10 +1181,29 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           const heartFilled = status !== undefined;
           const heartColor = status === 'selected' ? accentText : heartFilled ? theme.goldText : '#fff';
 
+          // תיאור נגיש למקלדת/קורא מסך - אותה פעולה שקורה בקליק עכבר, כדי
+          // שבחירת תמונות תהיה אפשרית גם בלי עכבר (לא רק אלמנטים עם onClick).
+          const statusLabel = status === 'selected' ? 'נבחרה' : status === 'maybe' ? 'מסומנת כאולי' : 'לא מסומנת';
+          const cardActionLabel = compareMode
+            ? `${photo.original_filename}, ${isComparing ? 'נבחרה להשוואה' : 'לא נבחרה להשוואה'}`
+            : `${photo.original_filename}, ${statusLabel}`;
+
+          function handleCardKeyDown(e: React.KeyboardEvent) {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            e.preventDefault();
+            if (compareMode) toggleCompareSelect(photo.id, e);
+            else cycleStatus(photo.id);
+          }
+
           return (
             <div
               key={photo.id}
+              role="button"
+              tabIndex={0}
+              aria-pressed={compareMode ? isComparing : status === 'selected'}
+              aria-label={cardActionLabel}
               onClick={(e) => (compareMode ? toggleCompareSelect(photo.id, e) : cycleStatus(photo.id))}
+              onKeyDown={handleCardKeyDown}
               onContextMenu={(e) => e.preventDefault()} // חסימת קליק ימני - הרתעה בלבד, לא הגנה אמיתית
               style={{
                 position: 'relative',
@@ -1237,7 +1278,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
               {!compareMode && (
                 <div
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${statusLabel} - לחיצה תעבור לסטטוס הבא`}
                   onClick={(e) => {
+                    e.stopPropagation();
+                    cycleStatus(photo.id);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return;
+                    e.preventDefault();
                     e.stopPropagation();
                     cycleStatus(photo.id);
                   }}
@@ -1256,7 +1306,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={photo.thumbnailUrl ?? ''}
-                alt=""
+                alt={`${photo.original_filename} - ${statusLabel}`}
                 draggable={false}
                 style={{
                   width: '100%', display: 'block', pointerEvents: 'none', aspectRatio: '3/4', objectFit: 'cover',
