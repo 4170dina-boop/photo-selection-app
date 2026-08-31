@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 
@@ -17,6 +17,19 @@ export default function NewGalleryPage() {
   const [basePrice, setBasePrice] = useState('0');
   const [extraPhotoPrice, setExtraPhotoPrice] = useState('0');
   const [expiresAt, setExpiresAt] = useState('');
+
+  // ממלאים את השדות מברירות המחדל שהצלמת הגדירה בהגדרות (app/dashboard/settings/page.tsx),
+  // כדי שלא תצטרך להקליד את אותם מספרים בכל גלריה - עדיין אפשר לשנות פה לפני היצירה.
+  useEffect(() => {
+    (async () => {
+      const res = await fetch('/api/photographer');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.default_included_photos != null) setIncludedPhotos(String(data.default_included_photos));
+      if (data.default_base_price != null) setBasePrice(String(data.default_base_price));
+      if (data.default_extra_photo_price != null) setExtraPhotoPrice(String(data.default_extra_photo_price));
+    })();
+  }, []);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');

@@ -14,6 +14,9 @@ export default function SettingsPage() {
   const [watermarkText, setWatermarkText] = useState('');
   const [brandColor, setBrandColor] = useState(DEFAULT_BRAND_COLOR);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [defaultIncludedPhotos, setDefaultIncludedPhotos] = useState('30');
+  const [defaultBasePrice, setDefaultBasePrice] = useState('0');
+  const [defaultExtraPhotoPrice, setDefaultExtraPhotoPrice] = useState('0');
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoError, setLogoError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -30,6 +33,9 @@ export default function SettingsPage() {
         setBusinessName(data.business_name ?? '');
         setWatermarkText(data.watermark_text ?? '');
         setLogoUrl(data.logo_url ?? null);
+        setDefaultIncludedPhotos(String(data.default_included_photos ?? 30));
+        setDefaultBasePrice(String(data.default_base_price ?? 0));
+        setDefaultExtraPhotoPrice(String(data.default_extra_photo_price ?? 0));
         // '#000000' הוא ברירת המחדל של העמודה (=טרם הוגדר) - מציגים את גוון
         // הפלטה המקורי בבורר הצבע במקום שחור, כך שמה שרואים תואם למה שהלקוחה רואה כרגע
         setBrandColor(data.brand_color && data.brand_color !== '#000000' ? data.brand_color : DEFAULT_BRAND_COLOR);
@@ -115,7 +121,13 @@ export default function SettingsPage() {
     const res = await fetch('/api/photographer', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ watermarkText, brandColor }),
+      body: JSON.stringify({
+        watermarkText,
+        brandColor,
+        defaultIncludedPhotos: Number(defaultIncludedPhotos),
+        defaultBasePrice: Number(defaultBasePrice),
+        defaultExtraPhotoPrice: Number(defaultExtraPhotoPrice),
+      }),
     });
 
     setSaving(false);
@@ -206,6 +218,50 @@ export default function SettingsPage() {
             צבע ההדגשה (לב הבחירה, פס ההתקדמות, הכפתורים) שהלקוחה רואה בדף הגלריה שלה.
           </span>
         </label>
+
+        <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '1rem', marginTop: '0.25rem' }}>
+          <p style={{ fontSize: 14, marginBottom: '0.75rem' }}>חבילת ברירת מחדל לגלריה חדשה</p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              תמונות כלולות בחבילה
+              <input
+                type="number"
+                min={0}
+                value={defaultIncludedPhotos}
+                onChange={(e) => setDefaultIncludedPhotos(e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              מחיר החבילה (₪)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={defaultBasePrice}
+                onChange={(e) => setDefaultBasePrice(e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              מחיר לתמונה נוספת (₪)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={defaultExtraPhotoPrice}
+                onChange={(e) => setDefaultExtraPhotoPrice(e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+          </div>
+          <span style={{ color: theme.textFaint, fontSize: 12, display: 'block', marginTop: '0.5rem' }}>
+            הערכים האלה ימלאו אוטומטית את טופס "גלריה חדשה" - אפשר תמיד לשנות אותם לגלריה ספציפית.
+          </span>
+        </div>
 
         <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', alignItems: 'center' }}>
           <button type="submit" disabled={saving} style={{ ...goldButtonStyle, opacity: saving ? 0.6 : 1 }}>

@@ -11,6 +11,12 @@ create table photographers (
   brand_color text default '#000000',
   reminder_days_default int default 5,
   watermark_text text,
+  -- ברירות המחדל שממלאות אוטומטית את טופס "גלריה חדשה" (app/dashboard/galleries/new/page.tsx) -
+  -- כדי שצלמת עם חבילה קבועה לא תצטרך להקליד את אותם מספרים בכל גלריה.
+  -- ניתנות לשינוי בכל גלריה בודדת בנפרד, אלה רק ערכי פתיחה.
+  default_included_photos int default 30 not null,
+  default_base_price numeric(10,2) default 0 not null,
+  default_extra_photo_price numeric(10,2) default 0 not null,
   -- true = פטורה ממגבלות החשבון החינמי (enforce_active_gallery_limit,
   -- enforce_photo_limit למטה) - מסומן ידנית ע"י מנהלת המערכת (ראו
   -- app/dashboard/admin/page.tsx) אחרי שצלמת שילמה על מנוי, לא ניתן להגדרה
@@ -215,6 +221,11 @@ create policy "photographers see own sync jobs" on sync_jobs
 
 -- אם כבר הרצת גרסה קודמת בלי מחיר חבילה בסיסי, מריצים גם את זה:
 -- alter table packages add column if not exists base_price numeric(10,2) default 0;
+
+-- אם כבר הרצת גרסה קודמת בלי ברירות מחדל לחבילה חדשה, מריצים גם את זה:
+-- alter table photographers add column if not exists default_included_photos int default 30 not null;
+-- alter table photographers add column if not exists default_base_price numeric(10,2) default 0 not null;
+-- alter table photographers add column if not exists default_extra_photo_price numeric(10,2) default 0 not null;
 
 -- אם כבר הרצת גרסה קודמת בלי הערות פרטיות של הצלמת על הגלריה, מריצים גם את זה:
 -- alter table galleries add column if not exists photographer_notes text;

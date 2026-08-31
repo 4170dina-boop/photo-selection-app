@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-// פרופיל הצלמת המחוברת - כרגע רק watermark_text (הטקסט שמוטבע על תצוגות
-// התמונות בגלריית הלקוחה, ראו lib/watermark.ts). רץ עם session הצלם (לא
-// service key), כך שה-RLS הקיים דואג מעצמו שאי אפשר לגעת בפרופיל של צלם אחר.
+// פרופיל הצלמת המחוברת - watermark_text (מוטבע על תצוגות התמונות, ראו
+// lib/watermark.ts), brand_color, logo_url, וברירות המחדל למילוי אוטומטי
+// של טופס גלריה חדשה (app/dashboard/galleries/new/page.tsx). רץ עם session
+// הצלם (לא service key), כך שה-RLS הקיים דואג שאי אפשר לגעת בפרופיל צלם אחר.
 
 const WATERMARK_TEXT_MAX_LENGTH = 60;
 
@@ -19,7 +20,7 @@ export async function GET(req: NextRequest) {
 
   const { data: photographer, error } = await supabase
     .from('photographers')
-    .select('id, business_name, watermark_text, brand_color, logo_url')
+    .select('id, business_name, watermark_text, brand_color, logo_url, default_included_photos, default_base_price, default_extra_photo_price')
     .eq('auth_user_id', user.id)
     .single();
 
@@ -40,7 +41,14 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'לא מחוברת' }, { status: 401 });
   }
 
-  let body: { watermarkText?: string | null; brandColor?: string | null; logoUrl?: string | null };
+  let body: {
+    watermarkText?: string | null;
+    brandColor?: string | null;
+    logoUrl?: string | null;
+    defaultIncludedPhotos?: number;
+    defaultBasePrice?: number;
+    defaultExtraPhotoPrice?: number;
+  };
   try {
     body = await req.json();
   } catch {
@@ -65,6 +73,25 @@ export async function PATCH(req: NextRequest) {
   // ההגדרות לא שולח את השדה הזה בכלל, כדי לא לדרוס בטעות לוגו קיים ב-null.
   if ('logoUrl' in body) {
     update.logo_url = body.logoUrl?.trim() || null;
+  }
+
+  if (body.defaultIncludedPhotos != null) {
+    if (body.defaultIncludedPhotos < 0) {
+      return NextResponse.json({ error: 'מספר תמונות ברירת מחדל לא יכול להיות שלילי' }, { status: 400 });
+    }
+    update.default_included_photos = body.defaultIncludedPhotos;
+  }
+  if (body.defaultBasePrice != null) {
+    if (body.defaultBasePrice < 0) {
+      return NextResponse.json({ error: 'מחיר ברירת מחדל לא יכול להיות שלילי' }, { status: 400 });
+    }
+    update.default_base_price = body.defaultBasePrice;
+  }
+  if (body.defaultExtraPhotoPrice != null) {
+    if (body.defaultExtraPhotoPrice < 0) {
+      return NextResponse.json({ error: 'מחיר ברירת מחדל לא יכול להיות שלילי' }, { status: 400 });
+    }
+    update.default_extra_photo_price = body.defaultExtraPhotoPrice;
   }
 
   const { error } = await supabase
