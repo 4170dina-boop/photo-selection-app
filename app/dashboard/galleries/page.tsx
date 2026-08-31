@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { theme, goldButtonStyle } from '@/lib/theme';
+import { theme, goldButtonStyle, inputStyle, outlineButtonStyle } from '@/lib/theme';
 
 interface GalleryRow {
   id: string;
@@ -26,6 +26,8 @@ export default function GalleriesDashboard() {
   const [supabase] = useState(() => createClient());
   const [rows, setRows] = useState<GalleryRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'expired'>('all');
 
   useEffect(() => {
     loadGalleries();
@@ -140,6 +142,17 @@ export default function GalleriesDashboard() {
   const totalBasePrice = rows.reduce((sum, row) => sum + (row.packages?.base_price ?? 0), 0);
   const totalRevenue = totalBasePrice + totalOverage;
 
+  // חיפוש/סינון על מה שכבר נטען - אין קריאת API נוספת, רשימת הגלריות של צלמת
+  // בודדת קטנה מספיק שסינון בצד לקוח מספיק. הכותרת (הכנסה, X/1 פעילות) נשארת
+  // מחושבת על כל הגלריות תמיד, לא רק על התוצאה המסוננת - זה סיכום כללי, לא "לפי מסך".
+  const filteredRows = rows.filter((row) => {
+    const status = effectiveStatus(row);
+    const bucket = status === 'draft' || status === 'sent' ? 'pending' : status;
+    const matchesStatus = statusFilter === 'all' || bucket === statusFilter;
+    const matchesSearch = !searchQuery.trim() || (row.clients?.full_name ?? '').toLowerCase().includes(searchQuery.trim().toLowerCase());
+    return matchesStatus && matchesSearch;
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
@@ -161,7 +174,42 @@ export default function GalleriesDashboard() {
         {activeCount}/{freeGalleryLimit} גלריות פעילות (חשבון חינמי)
       </p>
 
-      {rows.map((row) => {
+      {rows.length > 0 && (
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.25rem' }}>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="חיפוש לפי שם לקוחה..."
+            style={{ ...inputStyle, flex: 1, minWidth: 180 }}
+          />
+          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+            {(
+              [
+                ['all', 'הכל'],
+                ['pending', 'ממתין לפתיחה'],
+                ['in_progress', 'בבחירה'],
+                ['completed', 'הושלם'],
+                ['expired', 'באיחור'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => setStatusFilter(value)}
+                style={{
+                  ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12,
+                  borderColor: statusFilter === value ? theme.gold : theme.border,
+                  color: statusFilter === value ? theme.gold : theme.textMuted,
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {filteredRows.map((row) => {
         const included = row.packages?.included_photos ?? 0;
         const pct = included > 0 ? Math.min(100, Math.round((row.selectedCount / included) * 100)) : 0;
         const status = effectiveStatus(row);
@@ -239,6 +287,9 @@ export default function GalleriesDashboard() {
       })}
 
       {rows.length === 0 && <p style={{ color: theme.textMuted }}>עדיין אין גלריות.</p>}
+      {rows.length > 0 && filteredRows.length === 0 && (
+        <p style={{ color: theme.textMuted }}>אין גלריות שתואמות לחיפוש/סינון.</p>
+      )}
     </div>
   );
 }
