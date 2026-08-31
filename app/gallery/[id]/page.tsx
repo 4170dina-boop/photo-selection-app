@@ -50,7 +50,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [photos, setPhotos] = useState<GalleryPhoto[]>([]);
   const [myMarks, setMyMarks] = useState<Record<string, { status: 'maybe' | 'selected'; note: string | null }>>({});
   const [allMarks, setAllMarks] = useState<Record<string, Mark[]>>({});
-  const [packageInfo, setPackageInfo] = useState<{ included: number; extraPrice: number } | null>(null);
+  const [packageInfo, setPackageInfo] = useState<{ included: number; extraPrice: number; basePrice: number } | null>(null);
   const [ownerSelectedCount, setOwnerSelectedCount] = useState(0);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [galleryStatus, setGalleryStatus] = useState<string>('sent');
@@ -65,6 +65,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
 
+  const [viewFilter, setViewFilter] = useState<'all' | 'selected' | 'maybe'>('all');
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [enlargedId, setEnlargedId] = useState<string | null>(null);
@@ -509,9 +510,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const overIncluded = packageInfo ? Math.max(0, ownerSelectedCount - packageInfo.included) : 0;
   const remaining = packageInfo ? Math.max(0, packageInfo.included - ownerSelectedCount) : 0;
   const extraCost = packageInfo ? overIncluded * packageInfo.extraPrice : 0;
+  const totalEstimate = packageInfo ? packageInfo.basePrice + extraCost : 0;
   const progressPct = packageInfo && packageInfo.included > 0
     ? Math.min(100, Math.round((ownerSelectedCount / packageInfo.included) * 100))
     : 0;
+  // סינון תצוגה בלבד ("הצג רק בחירות שלי") - לא נוגע בנתונים עצמם, רק
+  // באיזה תת-קבוצה מוצגת בגריד. עוזר לסקור לפני "סיימתי לבחור" בגלריות גדולות.
+  const visiblePhotos = viewFilter === 'all' ? photos : photos.filter((p) => myStatuses[p.id] === viewFilter);
   const owner = participants.find((p) => p.isOwner);
   const isOwner = myParticipant?.isOwner ?? false;
 
@@ -666,6 +671,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             {remaining > 0 && <> · נשארו לך עוד <b style={{ color: accent }}>{remaining}</b> במסגרת החבילה</>}
           </span>
         )}
+        {packageInfo && packageInfo.basePrice > 0 && (
+          <span>
+            סה״כ משוער לחבילה: <b style={{ color: accent }}>{Math.round(totalEstimate)} ₪</b>
+            {overIncluded > 0 && (
+              <span style={{ color: theme.textFaint }}> ({Math.round(packageInfo.basePrice)} ₪ חבילה + {Math.round(extraCost)} ₪ תוספת)</span>
+            )}
+          </span>
+        )}
         {expiresAt && (
           <span>
             ניתן לבחור עד <b style={{ color: theme.text }}>{new Date(expiresAt).toLocaleDateString('he-IL')}</b>
@@ -679,7 +692,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
       {overIncluded > 0 && (
         <div style={{ padding: '0.5rem 1.5rem', background: theme.warningBg, color: theme.warningText, fontSize: 14 }}>
-          עברת ב-{overIncluded} תמונות מהחבילה — עלות נוספת: {extraCost.toFixed(2)} ₪
+          עברת ב-{overIncluded} תמונות מהחבילה — עלות נוספת: {Math.round(extraCost)} ₪
         </div>
       )}
 
@@ -926,6 +939,33 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </div>
       )}
 
+      <div style={{ display: 'flex', gap: '0.5rem', padding: '0 1.5rem 0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+        {([
+          { key: 'all' as const, label: `הכל (${photos.length})` },
+          { key: 'selected' as const, label: `נבחרו (${mySelectedCount})` },
+          { key: 'maybe' as const, label: `אולי (${maybeCount})` },
+        ]).map((f) => (
+          <button
+            key={f.key}
+            onClick={() => setViewFilter(f.key)}
+            style={{
+              ...outlineButtonStyle, padding: '0.3rem 0.9rem', fontSize: 12,
+              borderColor: viewFilter === f.key ? accent : theme.border,
+              color: viewFilter === f.key ? accent : theme.textMuted,
+              background: viewFilter === f.key ? `${accent}22` : 'transparent',
+            }}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {visiblePhotos.length === 0 && (
+        <p style={{ textAlign: 'center', color: theme.textFaint, fontSize: 13, padding: '1rem' }}>
+          אין תמונות להצגה בסינון הזה.
+        </p>
+      )}
+
       <div
         style={{
           display: 'grid',
@@ -934,7 +974,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           padding: '0 1.5rem 1.5rem',
         }}
       >
-        {photos.map((photo) => {
+        {visiblePhotos.map((photo) => {
           const status = myStatuses[photo.id]; // undefined | 'maybe' | 'selected'
           const isComparing = compareIds.includes(photo.id);
           const hasNote = !!myMarks[photo.id]?.note;

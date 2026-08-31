@@ -48,7 +48,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const [{ data: photosData }, { data: selectionsData }, { data: packageData }, { data: participantsData }] = await Promise.all([
     supabaseAdmin.from('photos').select('id, file_path, thumbnail_path, original_filename').eq('gallery_id', galleryId),
     supabaseAdmin.from('selections').select('photo_id, participant_id, note, status').eq('gallery_id', galleryId),
-    supabaseAdmin.from('packages').select('included_photos, extra_photo_price').eq('gallery_id', galleryId).single(),
+    supabaseAdmin.from('packages').select('included_photos, extra_photo_price, base_price').eq('gallery_id', galleryId).single(),
     supabaseAdmin.from('gallery_participants').select('id, display_name, is_owner').eq('gallery_id', galleryId),
   ]);
 
@@ -132,7 +132,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     myMarks,
     allMarks,
     ownerSelectedCount,
-    package: packageData ? { included: packageData.included_photos, extraPrice: packageData.extra_photo_price } : null,
+    package: packageData
+      ? { included: packageData.included_photos, extraPrice: packageData.extra_photo_price, basePrice: packageData.base_price }
+      : null,
     brandColor: brandColor && brandColor !== '#000000' ? brandColor : null,
     photographerName,
     photographerLogo,
