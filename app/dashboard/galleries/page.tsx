@@ -142,6 +142,19 @@ export default function GalleriesDashboard() {
   const totalBasePrice = rows.reduce((sum, row) => sum + (row.packages?.base_price ?? 0), 0);
   const totalRevenue = totalBasePrice + totalOverage;
 
+  // גלריות שדורשות תשומת לב עכשיו: תוקף מתקרב (עד 3 ימים) והלקוחה עדיין לא
+  // סיימה לבחור - לא כולל גלריות שכבר פגו (אלה כבר "באיחור", אין מה לדחוף שם)
+  // או שהושלמו. ממוינות מהדחוף ביותר, כדי שהצלמת תדע את מי לדחוף קודם
+  // (עם "🔔 שליחת תזכורת עכשיו" בדף העריכה, ראו app/api/galleries/[id]/send-reminder).
+  const ATTENTION_WINDOW_DAYS = 3;
+  const urgentRows = rows
+    .filter((row) => {
+      if (!row.expires_at || effectiveStatus(row) === 'completed' || effectiveStatus(row) === 'expired') return false;
+      const daysLeft = (new Date(row.expires_at).getTime() - Date.now()) / 86400000;
+      return daysLeft >= 0 && daysLeft <= ATTENTION_WINDOW_DAYS;
+    })
+    .sort((a, b) => new Date(a.expires_at!).getTime() - new Date(b.expires_at!).getTime());
+
   // חיפוש/סינון על מה שכבר נטען - אין קריאת API נוספת, רשימת הגלריות של צלמת
   // בודדת קטנה מספיק שסינון בצד לקוח מספיק. הכותרת (הכנסה, X/1 פעילות) נשארת
   // מחושבת על כל הגלריות תמיד, לא רק על התוצאה המסוננת - זה סיכום כללי, לא "לפי מסך".
@@ -173,6 +186,28 @@ export default function GalleriesDashboard() {
       <p style={{ color: activeCount >= freeGalleryLimit ? theme.errorText : theme.textMuted, fontSize: 13, marginTop: '-0.5rem' }}>
         {activeCount}/{freeGalleryLimit} גלריות פעילות (חשבון חינמי)
       </p>
+
+      {urgentRows.length > 0 && (
+        <div style={{ background: theme.warningBg, border: `1px solid ${theme.warningText}`, borderRadius: 10, padding: '0.85rem 1rem' }}>
+          <p style={{ color: theme.warningText, fontSize: 13, fontWeight: 'bold', margin: '0 0 0.5rem' }}>
+            ⚠️ דורש תשומת לב - תוקף מתקרב
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+            {urgentRows.map((row) => {
+              const daysLeft = Math.ceil((new Date(row.expires_at!).getTime() - Date.now()) / 86400000);
+              const daysLabel = daysLeft <= 0 ? 'פג היום' : daysLeft === 1 ? 'נשאר יום אחד' : `נשארו ${daysLeft} ימים`;
+              return (
+                <div key={row.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', fontSize: 13 }}>
+                  <span>{row.clients?.full_name ?? 'ללא שם'} - {daysLabel}, נבחרו {row.selectedCount}/{row.packages?.included_photos ?? 0}</span>
+                  <Link href={`/dashboard/galleries/${row.id}/edit`} style={{ color: theme.warningText, textDecoration: 'underline', whiteSpace: 'nowrap' }}>
+                    שליחת תזכורת ←
+                  </Link>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {rows.length > 0 && (
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.25rem' }}>
