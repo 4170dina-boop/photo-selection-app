@@ -22,6 +22,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [extraPhotoPrice, setExtraPhotoPrice] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [photographerNotes, setPhotographerNotes] = useState('');
+  const [reminderDays, setReminderDays] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -58,6 +59,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setExtraPhotoPrice(String(data.packages?.extra_photo_price ?? 0));
     setExpiresAt(data.expires_at ? data.expires_at.slice(0, 10) : '');
     setPhotographerNotes(data.photographer_notes ?? '');
+    setReminderDays(data.reminder_days != null ? String(data.reminder_days) : '');
     setLoading(false);
   }
 
@@ -77,6 +79,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         extraPhotoPrice: Number(extraPhotoPrice),
         expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
         photographerNotes,
+        reminderDays: reminderDays ? Number(reminderDays) : null,
       }),
     });
 
@@ -248,6 +251,18 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
             type="date"
             value={expiresAt}
             onChange={(e) => setExpiresAt(e.target.value)}
+            style={inputStyle}
+          />
+        </label>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          ימים לפני תפוגה לשליחת תזכורת (אופציונלי)
+          <input
+            type="number"
+            min={1}
+            value={reminderDays}
+            onChange={(e) => setReminderDays(e.target.value)}
+            placeholder="ברירת המחדל שלך מ-ההגדרות"
             style={inputStyle}
           />
         </label>

@@ -70,6 +70,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     extraPhotoPrice?: number;
     expiresAt?: string | null;
     photographerNotes?: string | null;
+    reminderDays?: number | null;
   };
   try {
     body = await req.json();
@@ -77,7 +78,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'גוף בקשה לא תקין' }, { status: 400 });
   }
 
-  const { clientName, clientEmail, includedPhotos, basePrice, extraPhotoPrice, expiresAt, photographerNotes } = body;
+  const { clientName, clientEmail, includedPhotos, basePrice, extraPhotoPrice, expiresAt, photographerNotes, reminderDays } = body;
+
+  if (reminderDays != null && reminderDays < 1) {
+    return NextResponse.json({ error: 'מספר ימי התזכורת חייב להיות לפחות 1' }, { status: 400 });
+  }
 
   if (!clientName?.trim() || !clientEmail?.trim() || includedPhotos == null || includedPhotos < 0) {
     return NextResponse.json({ error: 'חסרים פרטים (שם לקוחה, אימייל ומספר תמונות בחבילה)' }, { status: 400 });
@@ -94,7 +99,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { error: galleryError } = await supabase
     .from('galleries')
-    .update({ expires_at: expiresAt || null, photographer_notes: photographerNotes?.trim() || null })
+    .update({ expires_at: expiresAt || null, photographer_notes: photographerNotes?.trim() || null, reminder_days: reminderDays || null })
     .eq('id', gallery.id);
 
   if (galleryError) {

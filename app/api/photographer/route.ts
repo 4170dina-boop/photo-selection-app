@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
 
   const { data: photographer, error } = await supabase
     .from('photographers')
-    .select('id, business_name, watermark_text, brand_color, logo_url, default_included_photos, default_base_price, default_extra_photo_price')
+    .select('id, business_name, watermark_text, brand_color, logo_url, default_included_photos, default_base_price, default_extra_photo_price, reminder_days_default')
     .eq('auth_user_id', user.id)
     .single();
 
@@ -48,6 +48,7 @@ export async function PATCH(req: NextRequest) {
     defaultIncludedPhotos?: number;
     defaultBasePrice?: number;
     defaultExtraPhotoPrice?: number;
+    reminderDaysDefault?: number;
   };
   try {
     body = await req.json();
@@ -92,6 +93,12 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'מחיר ברירת מחדל לא יכול להיות שלילי' }, { status: 400 });
     }
     update.default_extra_photo_price = body.defaultExtraPhotoPrice;
+  }
+  if (body.reminderDaysDefault != null) {
+    if (body.reminderDaysDefault < 1) {
+      return NextResponse.json({ error: 'מספר ימי התזכורת חייב להיות לפחות 1' }, { status: 400 });
+    }
+    update.reminder_days_default = body.reminderDaysDefault;
   }
 
   const { error } = await supabase
