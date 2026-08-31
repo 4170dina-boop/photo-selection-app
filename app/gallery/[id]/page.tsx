@@ -57,6 +57,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [finishing, setFinishing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [brandColor, setBrandColor] = useState<string | null>(null);
+  const [photographerName, setPhotographerName] = useState<string | null>(null);
+  const [showWelcome, setShowWelcome] = useState(false);
 
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
@@ -127,11 +129,26 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setExpiresAt(data.expiresAt ?? null);
     setGalleryStatus(data.status ?? 'sent');
     setBrandColor(data.brandColor ?? null);
+    setPhotographerName(data.photographerName ?? null);
     setMyParticipant(data.myParticipant ?? null);
     setParticipants(data.participants ?? []);
 
+    // שער פתיחה: מוצג פעם אחת לכל משתתף/ת בכל גלריה (נשמר ב-localStorage,
+    // לא ב-DB - זו רק נוחות תצוגה, לא מידע קריטי ששווה טבלה/עמודה בשבילו).
+    if (typeof window !== 'undefined' && data.myParticipant) {
+      const seenKey = `gallery_welcome_seen_${galleryId}_${data.myParticipant.id}`;
+      setShowWelcome(!localStorage.getItem(seenKey));
+    }
+
     setCheckingAuth(false);
     setLoading(false);
+  }
+
+  function dismissWelcome() {
+    if (typeof window !== 'undefined' && myParticipant) {
+      localStorage.setItem(`gallery_welcome_seen_${galleryId}_${myParticipant.id}`, '1');
+    }
+    setShowWelcome(false);
   }
 
   async function handleSubmitCode(e: React.FormEvent) {
@@ -393,6 +410,43 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const primaryButtonStyle = brandColor
     ? { ...goldButtonStyle, background: brandColor, color: accentText }
     : goldButtonStyle;
+
+  if (showWelcome) {
+    return (
+      <div style={{ minHeight: '100vh', background: theme.bg, color: theme.text, display: 'flex', alignItems: 'center', justifyContent: 'center', direction: 'rtl', fontFamily: theme.fontSans, padding: '1.5rem' }}>
+        <div style={{ maxWidth: 380, width: '100%', textAlign: 'center' }}>
+          {photographerName && (
+            <p style={{ color: accent, fontSize: 14, marginBottom: '0.5rem', letterSpacing: 0.5 }}>✨ {photographerName}</p>
+          )}
+          <p style={{ fontSize: 22, fontFamily: theme.fontSerif, marginBottom: '0.75rem' }}>
+            ברוכה הבאה{myParticipant ? `, ${myParticipant.displayName}` : ''}!
+          </p>
+          <p style={{ color: theme.textMuted, fontSize: 14, marginBottom: '1.5rem', lineHeight: 1.6 }}>
+            הגלריה מוכנה לבחירה
+            {packageInfo ? ` - יש לך ${packageInfo.included} תמונות במסגרת החבילה` : ''}
+            {expiresAt ? `, עד ${new Date(expiresAt).toLocaleDateString('he-IL')}` : ''}.
+          </p>
+          <div
+            style={{
+              textAlign: 'right', background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10,
+              padding: '1rem 1.25rem', marginBottom: '1.5rem', fontSize: 13, color: theme.textMuted,
+              display: 'flex', flexDirection: 'column', gap: '0.5rem',
+            }}
+          >
+            <span>♥ לחיצה על תמונה = "אולי", לחיצה נוספת = "נבחר"</span>
+            <span>⇄ אפשר להשוות בין שתי תמונות זו לצד זו</span>
+            <span>✎ אפשר להוסיף הערה אישית לכל תמונה</span>
+            {!isOwner && (
+              <span>👀 הבחירות שלך כאן הן קלט לדיון - רק {owner?.displayName ?? 'הלקוחה הראשית'} יכולה לסיים בפועל</span>
+            )}
+          </div>
+          <button onClick={dismissWelcome} style={{ ...primaryButtonStyle, width: '100%' }}>
+            בואי נתחיל ✨
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ background: theme.bg, minHeight: '100vh', color: theme.text, direction: 'rtl', fontFamily: theme.fontSans }}>

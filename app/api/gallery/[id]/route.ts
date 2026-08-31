@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error: galleryError } = await supabaseAdmin
     .from('galleries')
-    .select('id, status, expires_at, owner_participant_id, clients(full_name), photographers(brand_color)')
+    .select('id, status, expires_at, owner_participant_id, clients(full_name), photographers(brand_color, business_name)')
     .eq('id', galleryId)
     .single();
 
@@ -92,6 +92,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // '#000000' הוא ערך ברירת המחדל של העמודה - צלמת שלא הגדירה צבע מותג
   // מפורש עדיין מקבלת את הפלטה הקבועה (theme.gold) בצד הלקוח, לא שחור.
   const brandColor = (gallery as any).photographers?.brand_color;
+  const photographerName = (gallery as any).photographers?.business_name ?? null;
 
   const participants = (participantsData ?? []).map((p) => ({
     id: p.id,
@@ -132,6 +133,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     ownerSelectedCount,
     package: packageData ? { included: packageData.included_photos, extraPrice: packageData.extra_photo_price } : null,
     brandColor: brandColor && brandColor !== '#000000' ? brandColor : null,
+    photographerName,
     expiresAt: gallery.expires_at,
   });
 }
