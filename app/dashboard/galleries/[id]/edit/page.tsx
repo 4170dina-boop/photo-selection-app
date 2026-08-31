@@ -21,6 +21,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [basePrice, setBasePrice] = useState('');
   const [extraPhotoPrice, setExtraPhotoPrice] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
+  const [photographerNotes, setPhotographerNotes] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -56,6 +57,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setBasePrice(String(data.packages?.base_price ?? 0));
     setExtraPhotoPrice(String(data.packages?.extra_photo_price ?? 0));
     setExpiresAt(data.expires_at ? data.expires_at.slice(0, 10) : '');
+    setPhotographerNotes(data.photographer_notes ?? '');
     setLoading(false);
   }
 
@@ -74,6 +76,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         basePrice: Number(basePrice),
         extraPhotoPrice: Number(extraPhotoPrice),
         expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+        photographerNotes,
       }),
     });
 
@@ -246,6 +249,17 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
             value={expiresAt}
             onChange={(e) => setExpiresAt(e.target.value)}
             style={inputStyle}
+          />
+        </label>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          הערות פרטיות (רק את רואה, לא הלקוחה)
+          <textarea
+            value={photographerNotes}
+            onChange={(e) => setPhotographerNotes(e.target.value)}
+            placeholder="למשל: צולם בגן החורשה, ביקשה הדגשה על התמונות בשחור-לבן"
+            rows={3}
+            style={{ ...inputStyle, resize: 'vertical' }}
           />
         </label>
 

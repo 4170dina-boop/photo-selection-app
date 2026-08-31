@@ -45,6 +45,10 @@ create table galleries (
   -- שכל שאילתת "כמה נבחרו בפועל" (חיוב, ייצוא, דוחות) תדע בלי חיפוש נוסף
   -- אילו selections הן ה"רשמיות" (של הבעלים) לעומת קלט של בני משפחה אחרים.
   owner_participant_id uuid,
+  -- הערות פרטיות של הצלמת על הגלריה/הלקוחה (למשל מיקום הצילום, בקשות מיוחדות) -
+  -- לא נחשף בשום API שהלקוחה נגישה אליו (app/api/gallery/[id]/*), רק דרך
+  -- app/api/galleries/[id]/route.ts שרץ עם session הצלם.
+  photographer_notes text,
   created_at timestamptz default now()
 );
 
@@ -211,6 +215,9 @@ create policy "photographers see own sync jobs" on sync_jobs
 
 -- אם כבר הרצת גרסה קודמת בלי מחיר חבילה בסיסי, מריצים גם את זה:
 -- alter table packages add column if not exists base_price numeric(10,2) default 0;
+
+-- אם כבר הרצת גרסה קודמת בלי הערות פרטיות של הצלמת על הגלריה, מריצים גם את זה:
+-- alter table galleries add column if not exists photographer_notes text;
 
 -- אם כבר הרצת גרסה קודמת בלי חשבונות "ללא הגבלה" (is_unlimited), מריצים גם את זה:
 -- alter table photographers add column if not exists is_unlimited boolean default false not null;
