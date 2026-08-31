@@ -26,15 +26,36 @@ const HEBREW_MONTHS = [
   'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר',
 ];
 
+interface StorageUsage {
+  totalGB: number;
+  freeLimitGB: number;
+  percentUsed: number;
+  galleryCount: number;
+}
+
 export default function ReportsPage() {
   const [supabase] = useState(() => createClient());
   const [months, setMonths] = useState<MonthGroup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null);
+  const [storageLoading, setStorageLoading] = useState(true);
 
   useEffect(() => {
     loadReport();
+    loadStorageUsage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function loadStorageUsage() {
+    setStorageLoading(true);
+    try {
+      const res = await fetch('/api/photographer/storage-usage');
+      if (res.ok) setStorageUsage(await res.json());
+    } catch {
+      // שקט - זה widget משני, לא חוסם את שאר הדוח אם נכשל
+    }
+    setStorageLoading(false);
+  }
 
   async function loadReport() {
     setLoading(true);
@@ -98,8 +119,54 @@ export default function ReportsPage() {
 
   const grandTotal = months.reduce((sum, m) => sum + m.basePriceSum + m.overageSum, 0);
 
+  const storageColor =
+    storageUsage && storageUsage.percentUsed >= 80
+      ? theme.warningText
+      : storageUsage && storageUsage.percentUsed >= 100
+      ? theme.errorText
+      : theme.gold;
+
   return (
     <div>
+      {!storageLoading && storageUsage && (
+        <div
+          style={{
+            background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10,
+            padding: '1rem 1.25rem', marginBottom: '1.5rem',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <span style={{ fontWeight: 'bold' }}>📦 אחסון תמונות (חשבון חינמי)</span>
+            <span style={{ color: storageColor, fontSize: 13 }}>
+              {storageUsage.totalGB.toFixed(2)} / {storageUsage.freeLimitGB} GB ({storageUsage.percentUsed}%)
+            </span>
+          </div>
+          <div
+            role="progressbar"
+            aria-label="אחוז ניצול מכסת האחסון החינמית"
+            aria-valuenow={storageUsage.percentUsed}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            style={{ background: theme.border, borderRadius: 4, height: 6, overflow: 'hidden', marginTop: '0.6rem' }}
+          >
+            <div style={{ width: `${Math.min(100, storageUsage.percentUsed)}%`, background: storageColor, height: '100%' }} />
+          </div>
+          <p style={{ color: theme.textFaint, fontSize: 12, marginTop: '0.6rem', marginBottom: 0 }}>
+            {storageUsage.galleryCount} גלריות בסה״כ. בתוכנית החינמית של Supabase אין חיוב אוטומטי על חריגה - השירות עלול להיות
+            מוגבל עד לאיפוס החודשי, לא חשבונית בהפתעה. לא כולל תעבורה (הורדת תמונות ע״י לקוחות) - למספרים המלאים, ראו{' '}
+            <a
+              href="https://supabase.com/dashboard/org/mahledermeqmnbveccnx/usage"
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: theme.textMuted, textDecoration: 'underline' }}
+            >
+              דשבורד Supabase
+            </a>
+            .
+          </p>
+        </div>
+      )}
+
       <h1 style={{ fontSize: 20, marginBottom: '0.5rem' }}>דוח הכנסות חודשי</h1>
       <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '1.5rem' }}>
         מקובץ לפי חודש יצירת הגלריה. חריגה מהחבילה מחושבת לפי מספר התמונות שנבחרו
