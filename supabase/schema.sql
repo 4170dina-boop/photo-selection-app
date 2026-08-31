@@ -11,6 +11,11 @@ create table photographers (
   brand_color text default '#000000',
   reminder_days_default int default 5,
   watermark_text text,
+  -- true = פטורה ממגבלות החשבון החינמי (enforce_active_gallery_limit,
+  -- enforce_photo_limit למטה) - מסומן ידנית ע"י מנהלת המערכת (ראו
+  -- app/dashboard/admin/page.tsx) אחרי שצלמת שילמה על מנוי, לא ניתן להגדרה
+  -- עצמית ע"י הצלמת עצמה (ראו protect_is_unlimited בהמשך הקובץ).
+  is_unlimited boolean default false not null,
   created_at timestamptz default now()
 );
 
@@ -207,6 +212,9 @@ create policy "photographers see own sync jobs" on sync_jobs
 -- אם כבר הרצת גרסה קודמת בלי מחיר חבילה בסיסי, מריצים גם את זה:
 -- alter table packages add column if not exists base_price numeric(10,2) default 0;
 
+-- אם כבר הרצת גרסה קודמת בלי חשבונות "ללא הגבלה" (is_unlimited), מריצים גם את זה:
+-- alter table photographers add column if not exists is_unlimited boolean default false not null;
+
 -- אם כבר הרצת גרסה קודמת בלי שיתוף גלריה משפחתי (gallery_participants),
 -- מריצים את כל הבלוק הזה - כולל backfill לגלריות/בחירות קיימות, כדי שלכל
 -- גלריה יהיה participant "בעלים" (לפי שם הלקוחה הרשומה) ולכל selection קיים
@@ -288,7 +296,13 @@ create or replace function enforce_active_gallery_limit()
 returns trigger as $$
 declare
   active_count int;
+  unlimited boolean;
 begin
+  select is_unlimited into unlimited from photographers where id = new.photographer_id;
+  if unlimited then
+    return new;
+  end if;
+
   select count(*) into active_count
   from galleries
   where photographer_id = new.photographer_id
@@ -310,7 +324,16 @@ create or replace function enforce_photo_limit()
 returns trigger as $$
 declare
   photo_count int;
+  unlimited boolean;
 begin
+  select p.is_unlimited into unlimited
+  from galleries g join photographers p on p.id = g.photographer_id
+  where g.id = new.gallery_id;
+
+  if unlimited then
+    return new;
+  end if;
+
   select count(*) into photo_count
   from photos
   where gallery_id = new.gallery_id;
@@ -326,6 +349,24 @@ $$ language plpgsql;
 create trigger trg_enforce_photo_limit
 before insert on photos
 for each row execute function enforce_photo_limit();
+
+-- מונע מצלמת לסמן את עצמה כ"ללא הגבלה" - ה-RLS "photographers see own row"
+-- (for all) מאפשר לה לעדכן את השורה שלה בעצמה, אז בלי ההגנה הזו כל אחת
+-- הייתה יכולה לפתוח את קונסולת הדפדפן ולעקוף את מגבלת החשבון החינמי בעצמה.
+-- רק עדכון עם מפתח service_role (ראו app/api/admin/*) יכול לשנות את השדה הזה.
+create or replace function protect_is_unlimited()
+returns trigger as $$
+begin
+  if new.is_unlimited is distinct from old.is_unlimited and current_setting('role', true) <> 'service_role' then
+    new.is_unlimited := old.is_unlimited;
+  end if;
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger trg_protect_is_unlimited
+before update on photographers
+for each row execute function protect_is_unlimited();
 
 -- Storage: bucket לתמונות הגלריה
 -- מריצים את זה, או יוצרים ידנית ב-Dashboard > Storage > New bucket (שם: gallery-photos, פרטי!)
