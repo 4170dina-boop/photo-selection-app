@@ -59,10 +59,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'תוקף הגלריה פג' }, { status: 410 });
   }
 
-  // session token חתום (HMAC) - לא ניתן לזייף/לשנות בלי SESSION_SECRET שנשאר בצד שרת
+  // session token חתום (HMAC) - לא ניתן לזייף/לשנות בלי SESSION_SECRET שנשאר בצד שרת.
+  // participantId עדיין null בשלב הזה - קוד הגישה נכון פותח את הגלריה, אבל
+  // "מי בפועל נכנס/ת עכשיו" (הבעלים הרשומה או בן משפחה אחר) נקבע בשלב הבא,
+  // ראו app/api/gallery/[id]/identify/route.ts.
   const sessionToken = signSession({
     galleryId,
     clientId: gallery.client_id,
+    participantId: null,
     iat: Date.now(),
   });
 

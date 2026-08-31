@@ -39,7 +39,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id, clients(full_name)')
+    .select('id, owner_participant_id, clients(full_name)')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
@@ -48,10 +48,13 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
+  // רק בחירות הבעלים (שיתוף גלריה משפחתי) - זו הרשימה הרשמית למסירה,
+  // קלט של בני משפחה אחרים לא נכלל בייצוא הזה.
   const { data: selections } = await supabaseAdmin
     .from('selections')
     .select('note, photos(original_filename)')
     .eq('gallery_id', params.id)
+    .eq('participant_id', gallery.owner_participant_id)
     .eq('status', 'selected');
 
   const rows = (selections ?? [])

@@ -15,6 +15,18 @@ interface GalleryPhoto {
   possiblyBlurry: boolean;
 }
 
+interface Participant {
+  id: string;
+  displayName: string;
+  isOwner: boolean;
+}
+
+interface Mark {
+  participantId: string;
+  displayName: string;
+  status: string;
+}
+
 // בוחר טקסט כהה/בהיר לפי בהירות צבע המותג, כדי שכפתורים יישארו קריאים
 // גם אם הצלמת בוחרת צבע מותג כהה (ולא רק את הגוון הבהיר של הפלטה המקורית).
 function contrastTextColor(hex: string): string {
@@ -27,13 +39,20 @@ function contrastTextColor(hex: string): string {
   return luminance > 0.6 ? theme.goldText : '#ffffff';
 }
 
+// ראשי תיבות קצרים לתג "מי בחר מה" - שם מלא לא נכנס בעיגול קטן
+function initials(name: string): string {
+  return name.trim().charAt(0).toUpperCase() || '?';
+}
+
 export default function GalleryPage({ params }: GalleryPageProps) {
   const galleryId = params.id;
 
   const [photos, setPhotos] = useState<GalleryPhoto[]>([]);
-  const [statuses, setStatuses] = useState<Record<string, 'maybe' | 'selected'>>({});
-  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [myMarks, setMyMarks] = useState<Record<string, { status: 'maybe' | 'selected'; note: string | null }>>({});
+  const [allMarks, setAllMarks] = useState<Record<string, Mark[]>>({});
   const [packageInfo, setPackageInfo] = useState<{ included: number; extraPrice: number } | null>(null);
+  const [ownerSelectedCount, setOwnerSelectedCount] = useState(0);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [galleryStatus, setGalleryStatus] = useState<string>('sent');
   const [finishing, setFinishing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -50,6 +69,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [codeInput, setCodeInput] = useState('');
   const [authError, setAuthError] = useState('');
   const [actionError, setActionError] = useState('');
+
+  // שיתוף גלריה משפחתי: אחרי קוד גישה תקין, עוד לא ידוע מי בפועל נכנס/ת
+  const [needsIdentity, setNeedsIdentity] = useState(false);
+  const [registeredName, setRegisteredName] = useState<string | null>(null);
+  const [myParticipant, setMyParticipant] = useState<Participant | null>(null);
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [joiningAsGuest, setJoiningAsGuest] = useState(false);
+  const [guestNameInput, setGuestNameInput] = useState('');
+  const [identifying, setIdentifying] = useState(false);
+  const [identityError, setIdentityError] = useState('');
 
   useEffect(() => {
     loadGallery();
@@ -79,21 +108,28 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
 
     const data = await res.json();
+    setAuthorized(true);
 
+    if (data.needsIdentity) {
+      setNeedsIdentity(true);
+      setRegisteredName(data.registeredName ?? null);
+      setCheckingAuth(false);
+      setLoading(false);
+      return;
+    }
+
+    setNeedsIdentity(false);
     setPhotos(data.photos ?? []);
-    setStatuses(
-      Object.fromEntries(
-        (data.selections ?? []).map((s: any) => [s.photo_id, (s.status as 'maybe' | 'selected') ?? 'selected'])
-      )
-    );
-    setNotes(
-      Object.fromEntries((data.selections ?? []).filter((s: any) => s.note).map((s: any) => [s.photo_id, s.note as string]))
-    );
+    setMyMarks(data.myMarks ?? {});
+    setAllMarks(data.allMarks ?? {});
     setPackageInfo(data.package ?? null);
+    setOwnerSelectedCount(data.ownerSelectedCount ?? 0);
+    setExpiresAt(data.expiresAt ?? null);
     setGalleryStatus(data.status ?? 'sent');
     setBrandColor(data.brandColor ?? null);
+    setMyParticipant(data.myParticipant ?? null);
+    setParticipants(data.participants ?? []);
 
-    setAuthorized(true);
     setCheckingAuth(false);
     setLoading(false);
   }
@@ -114,6 +150,27 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       const data = await res.json();
       setAuthError(data.error ?? 'שגיאה באימות');
     }
+  }
+
+  async function confirmIdentity(body: { asOwner: true } | { displayName: string }) {
+    setIdentityError('');
+    setIdentifying(true);
+
+    const res = await fetch(`/api/gallery/${galleryId}/identify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    setIdentifying(false);
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setIdentityError(data.error ?? 'ההצטרפות נכשלה, נסי שוב');
+      return;
+    }
+
+    await loadGallery();
   }
 
   if (checkingAuth) {
@@ -149,10 +206,67 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     );
   }
 
-  async function cycleStatus(photoId: string) {
-    if (galleryStatus === 'completed') return; // הבחירה כבר נשלחה - נעול לעריכה
+  if (needsIdentity) {
+    return (
+      <div style={{ minHeight: '100vh', background: theme.bg, color: theme.text, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ maxWidth: 340, width: '100%', direction: 'rtl', textAlign: 'center', padding: '2rem' }}>
+          <p style={{ marginBottom: '1.5rem', color: theme.gold, fontSize: 18, fontFamily: theme.fontSerif }}>
+            👋 היי{registeredName ? `, ${registeredName}` : ''}!
+          </p>
 
-    const current = statuses[photoId]; // undefined | 'maybe' | 'selected'
+          {!joiningAsGuest ? (
+            <>
+              <p style={{ color: theme.textMuted, marginBottom: '1.25rem', fontSize: 14 }}>מי נכנס/ת עכשיו לגלריה?</p>
+              <button
+                onClick={() => confirmIdentity({ asOwner: true })}
+                disabled={identifying}
+                style={{ ...goldButtonStyle, width: '100%', opacity: identifying ? 0.6 : 1, marginBottom: '0.6rem' }}
+              >
+                {identifying ? 'רגע...' : `כן, זאת אני${registeredName ? ` (${registeredName})` : ''}`}
+              </button>
+              <button onClick={() => setJoiningAsGuest(true)} style={{ ...outlineButtonStyle, width: '100%' }}>
+                לא, אני מישהי אחרת
+              </button>
+            </>
+          ) : (
+            <>
+              <p style={{ color: theme.textMuted, marginBottom: '0.75rem', fontSize: 14 }}>איך קוראים לך?</p>
+              <input
+                type="text"
+                value={guestNameInput}
+                onChange={(e) => setGuestNameInput(e.target.value)}
+                placeholder="למשל: סבתא רותי"
+                style={{ ...inputStyle, width: '100%', marginBottom: '0.75rem', textAlign: 'center' }}
+                maxLength={40}
+                autoFocus
+              />
+              <button
+                onClick={() => confirmIdentity({ displayName: guestNameInput })}
+                disabled={identifying || !guestNameInput.trim()}
+                style={{ ...goldButtonStyle, width: '100%', opacity: identifying || !guestNameInput.trim() ? 0.6 : 1, marginBottom: '0.6rem' }}
+              >
+                {identifying ? 'מצטרפת...' : 'הצטרפות לגלריה'}
+              </button>
+              <button onClick={() => setJoiningAsGuest(false)} style={{ ...outlineButtonStyle, width: '100%' }}>
+                חזרה
+              </button>
+            </>
+          )}
+
+          {identityError && (
+            <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.6rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
+              {identityError}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  async function cycleStatus(photoId: string) {
+    if (galleryStatus === 'completed' || !myParticipant) return; // הבחירה כבר נשלחה - נעול לעריכה
+
+    const current = myMarks[photoId]?.status; // undefined | 'maybe' | 'selected'
     const next = current === undefined ? 'maybe' : current === 'maybe' ? 'selected' : null;
 
     const res = await fetch(`/api/gallery/${galleryId}/selection`, {
@@ -167,24 +281,36 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
     setActionError('');
 
-    const nextStatuses = { ...statuses };
-    if (next === null) {
-      delete nextStatuses[photoId];
-      setNotes((prev) => {
-        const { [photoId]: _, ...rest } = prev;
-        return rest;
-      });
-    } else {
-      nextStatuses[photoId] = next;
+    setMyMarks((prev) => {
+      const nextMarks = { ...prev };
+      if (next === null) {
+        delete nextMarks[photoId];
+      } else {
+        nextMarks[photoId] = { status: next, note: prev[photoId]?.note ?? null };
+      }
+      return nextMarks;
+    });
+
+    // מעדכנים גם את התג המשותף (allMarks) מקומית, כדי שבני משפחה אחרים שכבר
+    // רואים את המסך הזה לא יראו תג ישן שלי - בלי לטעון מחדש את כל הגלריה.
+    setAllMarks((prev) => {
+      const others = (prev[photoId] ?? []).filter((m) => m.participantId !== myParticipant.id);
+      const mine = next === null ? [] : [{ participantId: myParticipant.id, displayName: myParticipant.displayName, status: next }];
+      return { ...prev, [photoId]: [...others, ...mine] };
+    });
+
+    if (myParticipant.isOwner && next === 'selected') {
+      setOwnerSelectedCount((prev) => prev + (current === 'selected' ? 0 : 1));
+    } else if (myParticipant.isOwner && current === 'selected' && next !== 'selected') {
+      setOwnerSelectedCount((prev) => Math.max(0, prev - 1));
     }
-    setStatuses(nextStatuses);
   }
 
   function openNoteEditor(photoId: string, e: React.MouseEvent) {
     e.stopPropagation(); // לא לגעת בבחירה עצמה
     if (galleryStatus === 'completed') return;
     setNoteEditingId(photoId);
-    setNoteDraft(notes[photoId] ?? '');
+    setNoteDraft(myMarks[photoId]?.note ?? '');
   }
 
   async function handleFinish() {
@@ -219,12 +345,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
     setActionError('');
 
-    setNotes((prev) => {
-      if (!trimmed) {
-        const { [noteEditingId]: _, ...rest } = prev;
-        return rest;
-      }
-      return { ...prev, [noteEditingId]: trimmed };
+    setMyMarks((prev) => {
+      const existing = prev[noteEditingId];
+      if (!existing) return prev;
+      return { ...prev, [noteEditingId]: { ...existing, note: trimmed || null } };
     });
     setNoteEditingId(null);
   }
@@ -246,13 +370,20 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     );
   }
 
-  const selectedCount = Object.values(statuses).filter((s) => s === 'selected').length;
-  const maybeCount = Object.values(statuses).filter((s) => s === 'maybe').length;
-  const overIncluded = packageInfo ? Math.max(0, selectedCount - packageInfo.included) : 0;
+  // "נבחרו X/Y" ופס ההתקדמות תמיד לפי ה-ownerSelectedCount (הרשמי) - לא לפי
+  // הבחירות המקומיות של המשתמש/ת הנוכחי/ת, כדי שאורחים לא יראו מספר "כאילו רשמי"
+  // שלא באמת נספר. ראו app/api/gallery/[id]/route.ts.
+  const myStatuses = Object.fromEntries(Object.entries(myMarks).map(([id, m]) => [id, m.status]));
+  const mySelectedCount = Object.values(myStatuses).filter((s) => s === 'selected').length;
+  const maybeCount = Object.values(myStatuses).filter((s) => s === 'maybe').length;
+  const overIncluded = packageInfo ? Math.max(0, ownerSelectedCount - packageInfo.included) : 0;
+  const remaining = packageInfo ? Math.max(0, packageInfo.included - ownerSelectedCount) : 0;
   const extraCost = packageInfo ? overIncluded * packageInfo.extraPrice : 0;
   const progressPct = packageInfo && packageInfo.included > 0
-    ? Math.min(100, Math.round((selectedCount / packageInfo.included) * 100))
+    ? Math.min(100, Math.round((ownerSelectedCount / packageInfo.included) * 100))
     : 0;
+  const owner = participants.find((p) => p.isOwner);
+  const isOwner = myParticipant?.isOwner ?? false;
 
   // "צבע מותג": אם הצלמת לא הגדירה אחד בהגדרות, נשארים עם הפלטה המקורית
   // (theme.gold/goldBright) - ראו app/api/gallery/[id]/route.ts.
@@ -282,15 +413,22 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: accent, display: 'inline-block' }} />
             נבחר
           </span>
+          {myParticipant && (
+            <span style={{ color: theme.textFaint, fontSize: 12 }}>
+              מחוברת בתור {myParticipant.displayName}{isOwner ? '' : ' (אורחת)'}
+            </span>
+          )}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <div style={{ textAlign: 'right' }}>
             <div>
               נבחרו במסגרת החבילה{' '}
-              <b style={{ color: accent, fontFamily: theme.fontSerif }}>{packageInfo?.included ?? 0}</b> / {selectedCount}
+              <b style={{ color: accent, fontFamily: theme.fontSerif }}>{packageInfo?.included ?? 0}</b> / {ownerSelectedCount}
             </div>
-            <div style={{ fontSize: 12, color: theme.textFaint }}>{maybeCount} תמונות "אולי"</div>
+            <div style={{ fontSize: 12, color: theme.textFaint }}>
+              {isOwner ? `${maybeCount} תמונות "אולי"` : `הבחירות שלך (קלט בלבד): ${mySelectedCount} נבחרו, ${maybeCount} אולי`}
+            </div>
           </div>
           <div
             style={{
@@ -304,6 +442,26 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             </div>
           </div>
         </div>
+      </div>
+
+      <div
+        style={{
+          margin: '0.75rem 1.5rem 0', padding: '0.6rem 1rem', borderRadius: 8,
+          background: theme.panel, border: `1px solid ${theme.border}`, fontSize: 13, color: theme.textMuted,
+          display: 'flex', gap: '1.25rem', flexWrap: 'wrap',
+        }}
+      >
+        {packageInfo && (
+          <span>
+            החבילה כוללת <b style={{ color: theme.text }}>{packageInfo.included}</b> תמונות
+            {remaining > 0 && <> · נשארו לך עוד <b style={{ color: accent }}>{remaining}</b> במסגרת החבילה</>}
+          </span>
+        )}
+        {expiresAt && (
+          <span>
+            ניתן לבחור עד <b style={{ color: theme.text }}>{new Date(expiresAt).toLocaleDateString('he-IL')}</b>
+          </span>
+        )}
       </div>
 
       {overIncluded > 0 && (
@@ -340,19 +498,25 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </button>
         {compareMode && <span style={{ marginRight: '0.5rem', fontSize: 13, color: theme.textMuted }}>בחרי שתי תמונות להשוואה ({compareIds.length}/2)</span>}
 
-        {galleryStatus !== 'completed' && (
+        {galleryStatus !== 'completed' && isOwner && (
           <button
             onClick={handleFinish}
-            disabled={finishing || selectedCount === 0}
-            title={selectedCount === 0 ? 'בחרי לפחות תמונה אחת קודם' : undefined}
+            disabled={finishing || ownerSelectedCount === 0}
+            title={ownerSelectedCount === 0 ? 'בחרי לפחות תמונה אחת קודם' : undefined}
             style={{
               ...primaryButtonStyle,
               display: 'block', margin: '0.75rem auto 0',
-              opacity: finishing || selectedCount === 0 ? 0.5 : 1,
+              opacity: finishing || ownerSelectedCount === 0 ? 0.5 : 1,
             }}
           >
             {finishing ? 'שולחת...' : 'סיימתי לבחור ✓'}
           </button>
+        )}
+
+        {galleryStatus !== 'completed' && !isOwner && (
+          <p style={{ fontSize: 13, color: theme.textFaint, marginTop: '0.75rem' }}>
+            רק {owner?.displayName ?? 'הלקוחה הראשית'} יכולה לסיים את הבחירה הסופית - הבחירות שלך כאן הן קלט לדיון.
+          </p>
         )}
       </div>
 
@@ -417,9 +581,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         }}
       >
         {photos.map((photo) => {
-          const status = statuses[photo.id]; // undefined | 'maybe' | 'selected'
+          const status = myStatuses[photo.id]; // undefined | 'maybe' | 'selected'
           const isComparing = compareIds.includes(photo.id);
-          const hasNote = !!notes[photo.id];
+          const hasNote = !!myMarks[photo.id]?.note;
+          const othersMarks = (allMarks[photo.id] ?? []).filter((m) => m.participantId !== myParticipant?.id);
 
           const borderColor = isComparing
             ? theme.compare
@@ -470,6 +635,26 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 </div>
               )}
 
+              {othersMarks.length > 0 && (
+                <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 1, display: 'flex', gap: 2 }}>
+                  {othersMarks.map((m) => (
+                    <span
+                      key={m.participantId}
+                      title={`${m.displayName}: ${m.status === 'selected' ? 'נבחר' : 'אולי'}`}
+                      style={{
+                        width: 18, height: 18, borderRadius: '50%', fontSize: 10, fontWeight: 'bold',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: m.status === 'selected' ? accent : theme.green,
+                        color: m.status === 'selected' ? accentText : theme.goldText,
+                        border: '1px solid rgba(255,255,255,0.5)',
+                      }}
+                    >
+                      {initials(m.displayName)}
+                    </span>
+                  ))}
+                </div>
+              )}
+
               {!compareMode && (
                 <div
                   onClick={(e) => {
@@ -478,7 +663,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   }}
                   title="לחיצה: מחזור בין אולי / נבחר / כלום"
                   style={{
-                    position: 'absolute', top: 8, left: 8, zIndex: 1,
+                    position: 'absolute', top: othersMarks.length > 0 ? 32 : 8, left: 8, zIndex: 1,
                     background: heartBg, border: '1px solid rgba(255,255,255,0.3)', color: heartColor,
                     borderRadius: '50%', width: 30, height: 30,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',

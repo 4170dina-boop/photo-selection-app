@@ -118,6 +118,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'יצירת החבילה נכשלה' }, { status: 500 });
   }
 
+  // שיתוף גלריה משפחתי: הבעלים (הלקוחה הרשומה עצמה) נוצרת מיד עם הגלריה,
+  // לא רק כשמישהו נכנס בפועל - כדי ש-owner_participant_id תמיד יהיה תקין
+  // (ספירות חיוב/ייצוא מסתמכות עליו מהרגע הראשון). ראו app/gallery/[id]/page.tsx.
+  const { data: ownerParticipant, error: ownerError } = await supabase
+    .from('gallery_participants')
+    .insert({ gallery_id: gallery.id, display_name: clientName.trim(), is_owner: true })
+    .select('id')
+    .single();
+
+  if (ownerError || !ownerParticipant) {
+    await supabase.from('packages').delete().eq('gallery_id', gallery.id);
+    await supabase.from('galleries').delete().eq('id', gallery.id);
+    await supabase.from('clients').delete().eq('id', client.id);
+    return NextResponse.json({ error: 'יצירת הגלריה נכשלה' }, { status: 500 });
+  }
+
+  await supabase.from('galleries').update({ owner_participant_id: ownerParticipant.id }).eq('id', gallery.id);
+
   // שליחת המייל היא best-effort: כישלון שליחה לא אמור לבטל את יצירת הגלריה -
   // הצלם עדיין רואה את הקישור והקוד במסך ויכול לשלוח ידנית אם emailSent=false.
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;

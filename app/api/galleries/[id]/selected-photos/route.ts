@@ -35,7 +35,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id')
+    .select('id, owner_participant_id')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
@@ -44,10 +44,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
+  // רק בחירות הבעלים (שיתוף גלריה משפחתי) - זו רשימת המסירה הרשמית.
   const { data: selections } = await supabaseAdmin
     .from('selections')
     .select('photo_id, photos(file_path, original_filename)')
     .eq('gallery_id', params.id)
+    .eq('participant_id', gallery.owner_participant_id)
     .eq('status', 'selected');
 
   const photos = await Promise.all(

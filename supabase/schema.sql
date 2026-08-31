@@ -35,8 +35,33 @@ create table galleries (
   expires_at timestamptz,
   last_activity_at timestamptz,
   last_reminder_sent_at timestamptz,
+  -- ה"בעלים" הרשמי של הגלריה (לשיתוף גלריה משפחתי, ראו gallery_participants
+  -- למטה) - נוצר יחד עם הגלריה עצמה, לא null אחרי היצירה. מפנה מראש כדי
+  -- שכל שאילתת "כמה נבחרו בפועל" (חיוב, ייצוא, דוחות) תדע בלי חיפוש נוסף
+  -- אילו selections הן ה"רשמיות" (של הבעלים) לעומת קלט של בני משפחה אחרים.
+  owner_participant_id uuid,
   created_at timestamptz default now()
 );
+
+-- שיתוף גלריה משפחתי: כמה בני משפחה נכנסים עם אותו קוד גישה, כל אחד מזוהה
+-- בשם משלו (participant), עם בחירות נפרדות - ראו selections.participant_id
+-- למטה. is_owner=true היא הלקוחה הרשומה עצמה (galleries.client_id) - נוצרת
+-- אוטומטית עם הגלריה; רק היא יכולה לסיים את הבחירה ורק הבחירות שלה נספרות
+-- לחיוב/ייצוא. is_owner=false הם אורחים שמצטרפים מאוחר יותר (ראו
+-- app/api/gallery/[id]/identify/route.ts) - קלט נוסף לדיון, לא רשמי.
+create table gallery_participants (
+  id uuid primary key default uuid_generate_v4(),
+  gallery_id uuid references galleries(id) on delete cascade not null,
+  display_name text not null,
+  is_owner boolean default false not null,
+  created_at timestamptz default now()
+);
+
+-- רק בעלים אחד לגלריה
+create unique index gallery_participants_one_owner_idx on gallery_participants(gallery_id) where is_owner;
+
+alter table galleries add constraint galleries_owner_participant_fk
+  foreign key (owner_participant_id) references gallery_participants(id);
 
 create table photos (
   id uuid primary key default uuid_generate_v4(),
@@ -57,10 +82,13 @@ create table selections (
   id uuid primary key default uuid_generate_v4(),
   gallery_id uuid references galleries(id) on delete cascade not null,
   photo_id uuid references photos(id) on delete cascade not null,
+  -- מי סימן את זה - כל משתתף (ראו gallery_participants) שומר את הבחירות שלו
+  -- בנפרד, כדי שאפשר יהיה להראות "מי בחר מה" בלי לערבב בין אנשים.
+  participant_id uuid references gallery_participants(id) on delete cascade not null,
   status text default 'selected' check (status in ('maybe', 'selected')),
   note text,
   selected_at timestamptz default now(),
-  unique (gallery_id, photo_id)
+  unique (gallery_id, photo_id, participant_id)
 );
 
 create table packages (
@@ -85,6 +113,7 @@ create index idx_clients_photographer on clients(photographer_id);
 create index idx_galleries_photographer on galleries(photographer_id);
 create index idx_photos_gallery on photos(gallery_id);
 create index idx_selections_gallery on selections(gallery_id);
+create index idx_gallery_participants_gallery on gallery_participants(gallery_id);
 
 -- Row Level Security: כל צלם רואה רק את הנתונים שלו
 alter table photographers enable row level security;
@@ -94,6 +123,7 @@ alter table photos enable row level security;
 alter table selections enable row level security;
 alter table packages enable row level security;
 alter table sync_jobs enable row level security;
+alter table gallery_participants enable row level security;
 
 create policy "photographers see own row" on photographers
   for all using (auth.uid() = auth_user_id);
@@ -112,6 +142,13 @@ create policy "photographers see own photos" on photos
   ));
 
 create policy "photographers see own selections" on selections
+  for all using (gallery_id in (
+    select id from galleries where photographer_id in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  ));
+
+create policy "photographers see own gallery participants" on gallery_participants
   for all using (gallery_id in (
     select id from galleries where photographer_id in (
       select id from photographers where auth_user_id = auth.uid()
@@ -161,6 +198,40 @@ create policy "photographers see own sync jobs" on sync_jobs
 
 -- אם כבר הרצת גרסה קודמת בלי ציון חדות לתמונות, מריצים גם את זה:
 -- alter table photos add column if not exists sharpness_score numeric;
+
+-- אם כבר הרצת גרסה קודמת בלי שיתוף גלריה משפחתי (gallery_participants),
+-- מריצים את כל הבלוק הזה - כולל backfill לגלריות/בחירות קיימות, כדי שלכל
+-- גלריה יהיה participant "בעלים" (לפי שם הלקוחה הרשומה) ולכל selection קיים
+-- יהיה participant_id תקין לפני שהעמודה הופכת ל-not null:
+--
+-- create table if not exists gallery_participants (
+--   id uuid primary key default uuid_generate_v4(),
+--   gallery_id uuid references galleries(id) on delete cascade not null,
+--   display_name text not null,
+--   is_owner boolean default false not null,
+--   created_at timestamptz default now()
+-- );
+-- create unique index if not exists gallery_participants_one_owner_idx on gallery_participants(gallery_id) where is_owner;
+-- alter table galleries add column if not exists owner_participant_id uuid references gallery_participants(id);
+-- alter table selections add column if not exists participant_id uuid references gallery_participants(id) on delete cascade;
+--
+-- insert into gallery_participants (gallery_id, display_name, is_owner)
+-- select g.id, c.full_name, true
+-- from galleries g
+-- join clients c on c.id = g.client_id
+-- where not exists (select 1 from gallery_participants gp where gp.gallery_id = g.id and gp.is_owner);
+--
+-- update galleries g set owner_participant_id = gp.id
+-- from gallery_participants gp
+-- where gp.gallery_id = g.id and gp.is_owner and g.owner_participant_id is null;
+--
+-- update selections s set participant_id = g.owner_participant_id
+-- from galleries g
+-- where s.gallery_id = g.id and s.participant_id is null;
+--
+-- alter table selections alter column participant_id set not null;
+-- alter table selections drop constraint if exists selections_gallery_id_photo_id_key;
+-- alter table selections add constraint selections_gallery_id_photo_id_participant_id_key unique (gallery_id, photo_id, participant_id);
 
 -- מעדכן אוטומטית את "פעילות אחרונה" בגלריה בכל בחירה/ביטול בחירה של לקוחה,
 -- ומעביר את הסטטוס ל-in_progress באירוע הבחירה הראשון (draft/sent -> in_progress).

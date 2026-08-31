@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error: galleryError } = await supabaseAdmin
     .from('galleries')
-    .select('id, status, expires_at, photographers(brand_color)')
+    .select('id, status, expires_at, owner_participant_id, clients(full_name), photographers(brand_color)')
     .eq('id', galleryId)
     .single();
 
@@ -35,10 +35,21 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: 'תוקף הגלריה פג' }, { status: 410 });
   }
 
-  const [{ data: photosData }, { data: selectionsData }, { data: packageData }] = await Promise.all([
+  // שיתוף גלריה משפחתי: קוד הגישה כבר אומת, אבל עדיין לא ידוע מי בפועל
+  // נכנס/ת (הבעלים הרשומה, או בן משפחה אחר) - ראו app/api/gallery/[id]/identify/route.ts.
+  // מחזירים את שם הבעלים הרשום כדי שהמסך יוכל להציע "זאת [שם]?" ישירות.
+  if (!session.participantId) {
+    return NextResponse.json({
+      needsIdentity: true,
+      registeredName: (gallery as any).clients?.full_name ?? null,
+    });
+  }
+
+  const [{ data: photosData }, { data: selectionsData }, { data: packageData }, { data: participantsData }] = await Promise.all([
     supabaseAdmin.from('photos').select('id, file_path, thumbnail_path, original_filename').eq('gallery_id', galleryId),
-    supabaseAdmin.from('selections').select('photo_id, note, status').eq('gallery_id', galleryId),
+    supabaseAdmin.from('selections').select('photo_id, participant_id, note, status').eq('gallery_id', galleryId),
     supabaseAdmin.from('packages').select('included_photos, extra_photo_price').eq('gallery_id', galleryId).single(),
+    supabaseAdmin.from('gallery_participants').select('id, display_name, is_owner').eq('gallery_id', galleryId),
   ]);
 
   // שאילתה נפרדת ו-best-effort ל-sharpness_score, בכוונה לא בתוך ה-select
@@ -82,11 +93,45 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // מפורש עדיין מקבלת את הפלטה הקבועה (theme.gold) בצד הלקוח, לא שחור.
   const brandColor = (gallery as any).photographers?.brand_color;
 
+  const participants = (participantsData ?? []).map((p) => ({
+    id: p.id,
+    displayName: p.display_name,
+    isOwner: p.is_owner,
+  }));
+  const myParticipant = participants.find((p) => p.id === session.participantId) ?? null;
+
+  // myMarks: רק הסימונים שלי (עורכים דרכם). allMarks: כל הסימונים של כולם,
+  // לתגי "מי בחר מה" על כל תמונה - כדי שאפשר יהיה לראות מה בני המשפחה
+  // האחרים סימנו, בלי לערבב עם הסימון האישי שלי.
+  const myMarks: Record<string, { status: 'maybe' | 'selected'; note: string | null }> = {};
+  const allMarks: Record<string, { participantId: string; displayName: string; status: string }[]> = {};
+
+  (selectionsData ?? []).forEach((s: any) => {
+    if (s.participant_id === session.participantId) {
+      myMarks[s.photo_id] = { status: s.status, note: s.note };
+    }
+    const participant = participants.find((p) => p.id === s.participant_id);
+    if (!participant) return;
+    if (!allMarks[s.photo_id]) allMarks[s.photo_id] = [];
+    allMarks[s.photo_id].push({ participantId: s.participant_id, displayName: participant.displayName, status: s.status });
+  });
+
+  // הספירה ה"רשמית" (לחיוב, לפס ההתקדמות) היא רק של הבעלים - קלט של בני
+  // משפחה אחרים הוא לדיון בלבד, לא נספר. ראו lib/session.ts ו-README.
+  const ownerSelectedCount = (selectionsData ?? []).filter(
+    (s: any) => s.participant_id === gallery.owner_participant_id && s.status === 'selected'
+  ).length;
+
   return NextResponse.json({
     status: gallery.status,
     photos,
-    selections: selectionsData ?? [],
+    myParticipant,
+    participants,
+    myMarks,
+    allMarks,
+    ownerSelectedCount,
     package: packageData ? { included: packageData.included_photos, extraPrice: packageData.extra_photo_price } : null,
     brandColor: brandColor && brandColor !== '#000000' ? brandColor : null,
+    expiresAt: gallery.expires_at,
   });
 }

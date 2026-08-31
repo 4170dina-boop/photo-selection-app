@@ -10,8 +10,12 @@ const supabaseAdmin = createClient(
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const galleryId = params.id;
-  if (!requireGallerySession(req, galleryId)) {
+  const session = requireGallerySession(req, galleryId);
+  if (!session) {
     return NextResponse.json({ error: 'לא מאומת' }, { status: 401 });
+  }
+  if (!session.participantId) {
+    return NextResponse.json({ error: 'צריך לזהות את עצמך קודם' }, { status: 428 });
   }
 
   const writable = await checkGalleryWritable(supabaseAdmin, galleryId);
@@ -37,6 +41,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     .select('id')
     .eq('gallery_id', galleryId)
     .eq('photo_id', photoId)
+    .eq('participant_id', session.participantId)
     .single();
 
   if (!selection) {
@@ -47,7 +52,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     .from('selections')
     .update({ note: note || null })
     .eq('gallery_id', galleryId)
-    .eq('photo_id', photoId);
+    .eq('photo_id', photoId)
+    .eq('participant_id', session.participantId);
 
   return NextResponse.json({ success: true });
 }

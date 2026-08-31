@@ -108,3 +108,56 @@ export async function sendSelectionCompleteEmail(params: SelectionCompleteParams
     `
   );
 }
+
+interface QuotaReachedParams {
+  to: string;
+  clientName: string;
+  includedPhotos: number;
+  dashboardUrl: string;
+}
+
+// מודיעה לצלמת שלקוחה הגיעה בדיוק למכסת החבילה (לא ל"סיימתי לבחור" - זו
+// פעולה מפורשת אחרת, ראו sendSelectionCompleteEmail) - סימן עסקי שכדאי לשים
+// לב אליו, לא קריאה לפעולה. נשלחת פעם אחת בדיוק ברגע החציה, ראו
+// app/api/gallery/[id]/selection/route.ts.
+export async function sendQuotaReachedEmail(params: QuotaReachedParams): Promise<SendResult> {
+  return sendEmail(
+    params.to,
+    `${params.clientName} הגיעה למכסת התמונות בחבילה`,
+    `
+      <div dir="rtl" style="font-family: sans-serif; line-height: 1.6;">
+        <p>היי,</p>
+        <p>${params.clientName} בחרה ${params.includedPhotos} תמונות - בדיוק המכסה שכלולה בחבילה שלה.</p>
+        <p>היא עדיין יכולה להמשיך לבחור (עם חיוב על חריגה), או שהיא כבר עומדת לסיים.</p>
+        <p><a href="${params.dashboardUrl}">צפייה בגלריה</a></p>
+      </div>
+    `
+  );
+}
+
+interface ClientSelectionSummaryParams {
+  to: string;
+  clientName: string;
+  businessName: string;
+  filenames: string[];
+}
+
+// אישור ללקוחה על הבחירה הסופית שלה, ברגע "סיימתי לבחור" - אותו trigger
+// בדיוק כמו sendSelectionCompleteEmail (לצלמת), רק תוכן שונה. נשלחת רק
+// ללקוחה עצמה (הבעלים) - לא לבני משפחה אחרים שרק תרמו קלט.
+export async function sendClientSelectionSummaryEmail(params: ClientSelectionSummaryParams): Promise<SendResult> {
+  const list = params.filenames.map((name) => `<li>${name}</li>`).join('');
+
+  return sendEmail(
+    params.to,
+    `הבחירה שלך אצל ${params.businessName} נשלחה בהצלחה`,
+    `
+      <div dir="rtl" style="font-family: sans-serif; line-height: 1.6;">
+        <p>היי ${params.clientName},</p>
+        <p>הבחירה שלך אצל ${params.businessName} נשלחה בהצלחה - ${params.filenames.length} תמונות:</p>
+        <ul>${list}</ul>
+        <p>אין צורך לעשות עוד כלום, הצלמת תיצור איתך קשר להמשך.</p>
+      </div>
+    `
+  );
+}

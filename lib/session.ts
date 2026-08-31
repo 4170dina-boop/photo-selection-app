@@ -7,6 +7,10 @@ const SECRET = process.env.SESSION_SECRET as string;
 export interface SessionPayload {
   galleryId: string;
   clientId: string;
+  // מי מסתכל/ת בגלריה עכשיו (שיתוף גלריה משפחתי) - null מיד אחרי אימות קוד
+  // הגישה, עד שנבחרת זהות (ראו app/api/gallery/[id]/identify/route.ts).
+  // session ישן (לפני הפיצ'ר הזה) לא יכיל את השדה בכלל - מטופל כמו null.
+  participantId: string | null;
   iat: number; // Date.now() בזמן היצירה
 }
 
@@ -46,7 +50,9 @@ export function verifySession(
   if (payload.galleryId !== galleryId) return null;
   if (Date.now() - payload.iat > maxAgeMs) return null;
 
-  return payload;
+  // session שנחתם לפני שיתוף הגלריה המשפחתי לא יכיל participantId בכלל -
+  // מנרמלים ל-null במקום undefined, כדי שבדיקת "עדיין לא זוהה" תהיה אחידה.
+  return { ...payload, participantId: payload.participantId ?? null };
 }
 
 // השוואת קודים בזמן קבוע - מונע timing attack על אורך/תוכן קוד הגישה

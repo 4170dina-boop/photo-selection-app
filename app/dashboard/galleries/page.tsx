@@ -13,6 +13,7 @@ interface GalleryRow {
   last_activity_at: string | null;
   last_reminder_sent_at: string | null;
   sent_at: string | null;
+  owner_participant_id: string | null;
   clients: { full_name: string } | null;
   // packages.gallery_id הוא unique, אז PostgREST מחזיר יחס 1:1 - אובייקט בודד, לא מערך
   // (בניגוד ל-clients שגם הוא אובייקט בודד אבל מהצד "הרבים" של הקשר - גם לא מערך)
@@ -35,7 +36,7 @@ export default function GalleriesDashboard() {
 
     const { data: galleries } = await supabase
       .from('galleries')
-      .select('id, status, expires_at, last_activity_at, last_reminder_sent_at, sent_at, clients(full_name), packages(included_photos, extra_photo_price)')
+      .select('id, status, expires_at, last_activity_at, last_reminder_sent_at, sent_at, owner_participant_id, clients(full_name), packages(included_photos, extra_photo_price)')
       .order('created_at', { ascending: false });
 
     if (!galleries) {
@@ -43,13 +44,15 @@ export default function GalleriesDashboard() {
       return;
     }
 
-    // סופרים כמה תמונות בסטטוס 'selected' יש בכל גלריה (שאילתה נפרדת, כי אין COUNT ישיר ב-join הזה)
+    // סופרים כמה תמונות בסטטוס 'selected' יש בכל גלריה (שאילתה נפרדת, כי אין COUNT ישיר ב-join הזה) -
+    // רק של הבעלים (שיתוף גלריה משפחתי): קלט של בני משפחה אחרים לא נספר לחיוב/התקדמות רשמית.
     const rowsWithCounts = await Promise.all(
       galleries.map(async (g: any) => {
         const { count } = await supabase
           .from('selections')
           .select('*', { count: 'exact', head: true })
           .eq('gallery_id', g.id)
+          .eq('participant_id', g.owner_participant_id)
           .eq('status', 'selected');
 
         return { ...g, selectedCount: count ?? 0 };
