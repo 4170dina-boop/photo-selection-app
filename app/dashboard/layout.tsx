@@ -24,8 +24,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           padding: '1rem 1.5rem', borderBottom: `1px solid ${theme.border}`,
         }}
       >
-        <span style={{ fontWeight: 'bold', color: theme.gold }}>✨ אזור צלמים</span>
+        <Link href="/dashboard/galleries" style={{ fontWeight: 'bold', color: theme.gold, textDecoration: 'none' }}>
+          ✨ אזור צלמים
+        </Link>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          <Link href="/dashboard/galleries" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+            הגלריות שלי
+          </Link>
           <Link href="/dashboard/settings" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
             הגדרות
           </Link>
