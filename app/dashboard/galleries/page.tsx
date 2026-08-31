@@ -9,6 +9,7 @@ import { theme, goldButtonStyle, inputStyle, outlineButtonStyle } from '@/lib/th
 interface GalleryRow {
   id: string;
   status: string;
+  created_at: string;
   expires_at: string | null;
   last_activity_at: string | null;
   last_reminder_sent_at: string | null;
@@ -28,6 +29,7 @@ export default function GalleriesDashboard() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'expired'>('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'expiry' | 'activity' | 'name'>('newest');
 
   useEffect(() => {
     loadGalleries();
@@ -38,7 +40,7 @@ export default function GalleriesDashboard() {
 
     const { data: galleries } = await supabase
       .from('galleries')
-      .select('id, status, expires_at, last_activity_at, last_reminder_sent_at, sent_at, owner_participant_id, clients(full_name), packages(included_photos, base_price, extra_photo_price)')
+      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, owner_participant_id, clients(full_name), packages(included_photos, base_price, extra_photo_price)')
       .order('created_at', { ascending: false });
 
     if (!galleries) {
@@ -166,6 +168,29 @@ export default function GalleriesDashboard() {
     return matchesStatus && matchesSearch;
   });
 
+  // מיון בצד לקוח על מה שכבר נטען ומסונן - "newest" הוא סדר ברירת המחדל
+  // שכבר מגיע כך מהשאילתה (created_at desc), שאר האפשרויות דורסות אותו.
+  // בכל מקרה שבו אין ערך (expires_at/last_activity_at ריקים) - הגלריה יורדת לסוף,
+  // לא נעלמת ולא קופצת לראש בטעות בגלל date(0)/NaN.
+  const sortedRows = [...filteredRows].sort((a, b) => {
+    if (sortBy === 'name') {
+      return (a.clients?.full_name ?? '').localeCompare(b.clients?.full_name ?? '', 'he');
+    }
+    if (sortBy === 'expiry') {
+      if (!a.expires_at && !b.expires_at) return 0;
+      if (!a.expires_at) return 1;
+      if (!b.expires_at) return -1;
+      return new Date(a.expires_at).getTime() - new Date(b.expires_at).getTime();
+    }
+    if (sortBy === 'activity') {
+      if (!a.last_activity_at && !b.last_activity_at) return 0;
+      if (!a.last_activity_at) return 1;
+      if (!b.last_activity_at) return -1;
+      return new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime();
+    }
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
@@ -248,10 +273,20 @@ export default function GalleriesDashboard() {
               </button>
             ))}
           </div>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+            style={{ ...inputStyle, width: 'auto', padding: '0.35rem 0.6rem', fontSize: 12 }}
+          >
+            <option value="newest">מיון: החדשות ביותר</option>
+            <option value="expiry">מיון: תוקף קרוב</option>
+            <option value="activity">מיון: פעילות אחרונה</option>
+            <option value="name">מיון: שם לקוחה (א-ת)</option>
+          </select>
         </div>
       )}
 
-      {filteredRows.map((row) => {
+      {sortedRows.map((row) => {
         const included = row.packages?.included_photos ?? 0;
         const pct = included > 0 ? Math.min(100, Math.round((row.selectedCount / included) * 100)) : 0;
         const status = effectiveStatus(row);
