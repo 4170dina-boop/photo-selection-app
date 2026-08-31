@@ -122,3 +122,32 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   return NextResponse.json({ success: true });
 }
+
+// מבטלת בבת אחת את כל הסימונים (אולי+נבחר) של המשתתף/ת המחובר/ת בגלריה הזו -
+// רק שלה/שלו, לא של בני משפחה אחרים (participant_id מסונן, לא gallery_id בלבד).
+// כפתור "ביטול כל הבחירה" ב-app/gallery/[id]/page.tsx.
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  const galleryId = params.id;
+  const session = requireGallerySession(req, galleryId);
+
+  if (!session) {
+    return NextResponse.json({ error: 'לא מאומת' }, { status: 401 });
+  }
+
+  if (!session.participantId) {
+    return NextResponse.json({ error: 'צריך לזהות את עצמך קודם' }, { status: 428 });
+  }
+
+  const writable = await checkGalleryWritable(supabaseAdmin, galleryId);
+  if (!writable.ok) {
+    return NextResponse.json({ error: writable.error }, { status: writable.status });
+  }
+
+  await supabaseAdmin
+    .from('selections')
+    .delete()
+    .eq('gallery_id', galleryId)
+    .eq('participant_id', session.participantId);
+
+  return NextResponse.json({ success: true });
+}

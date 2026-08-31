@@ -55,6 +55,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [galleryStatus, setGalleryStatus] = useState<string>('sent');
   const [finishing, setFinishing] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
   const [loading, setLoading] = useState(true);
   const [brandColor, setBrandColor] = useState<string | null>(null);
   const [photographerName, setPhotographerName] = useState<string | null>(null);
@@ -374,6 +375,34 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setGalleryStatus('completed');
   }
 
+  async function clearAllSelections() {
+    if (!myParticipant || galleryStatus === 'completed') return;
+    if (!window.confirm('לבטל את כל הבחירות שלך בגלריה הזו? אי אפשר לשחזר את זה.')) return;
+
+    setClearingAll(true);
+    const res = await fetch(`/api/gallery/${galleryId}/selection`, { method: 'DELETE' });
+    setClearingAll(false);
+
+    if (!res.ok) {
+      setActionError('ביטול הבחירות נכשל, נסי שוב.');
+      return;
+    }
+    setActionError('');
+
+    setMyMarks({});
+    setAllMarks((prev) => {
+      const next: Record<string, Mark[]> = {};
+      for (const [photoId, marks] of Object.entries(prev)) {
+        const remaining = marks.filter((m) => m.participantId !== myParticipant.id);
+        if (remaining.length > 0) next[photoId] = remaining;
+      }
+      return next;
+    });
+    if (myParticipant.isOwner) {
+      setOwnerSelectedCount(0);
+    }
+  }
+
   async function saveNote() {
     if (!noteEditingId) return;
     const trimmed = noteDraft.trim();
@@ -530,6 +559,18 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               מחוברת בתור {myParticipant.displayName}{isOwner ? '' : ' (אורחת)'}
             </span>
           )}
+          <button
+            onClick={() => {
+              setCompareMode((prev) => !prev);
+              setCompareIds([]);
+            }}
+            style={{
+              ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12,
+              borderColor: compareMode ? accent : theme.border, color: compareMode ? accent : theme.textMuted,
+            }}
+          >
+            {compareMode ? '✕ צאי ממצב השוואה' : '⇄ השוואה'}
+          </button>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -613,6 +654,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           {compareMode ? 'צאי ממצב השוואה' : '⇄ השוואה בין 2 תמונות'}
         </button>
         {compareMode && <span style={{ marginRight: '0.5rem', fontSize: 13, color: theme.textMuted }}>בחרי שתי תמונות להשוואה ({compareIds.length}/2)</span>}
+
+        {galleryStatus !== 'completed' && (mySelectedCount > 0 || maybeCount > 0) && (
+          <button
+            onClick={clearAllSelections}
+            disabled={clearingAll}
+            style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginRight: '0.5rem', color: theme.errorText, opacity: clearingAll ? 0.6 : 1 }}
+          >
+            {clearingAll ? 'מבטלת...' : '🗑 ביטול כל הבחירה שלי'}
+          </button>
+        )}
 
         {galleryStatus !== 'completed' && isOwner && (
           <button
