@@ -71,9 +71,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [zoomScale, setZoomScale] = useState(1);
   const enlargedImgRef = useRef<HTMLImageElement | null>(null);
 
-  // React מצרף מאזיני wheel כ-passive כברירת מחדל, כך ש-preventDefault בתוך
-  // onWheel רגיל בכלל לא עובד (ורק זורק אזהרה בקונסול) - חייבים מאזין native
-  // עם {passive:false} כדי שגלגלת על התמונה המוגדלת לא תגלגל גם את הרקע מתחתיה.
+  // React מצרף מאזיני wheel/touch כ-passive כברירת מחדל, כך ש-preventDefault
+  // בתוך onWheel/onTouchMove רגילים בכלל לא עובד (ורק זורק אזהרה בקונסול) -
+  // חייבים מאזינים native עם {passive:false}. גלגלת עכבר היא רק חצי מהתמונה:
+  // בנייד אין גלגלת בכלל, אז צביטה בשתי אצבעות (pinch) היא הדרך היחידה לזום שם.
   useEffect(() => {
     const img = enlargedImgRef.current;
     if (!img) return;
@@ -83,8 +84,53 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       setZoomScale((prev) => Math.min(4, Math.max(1, prev - e.deltaY * 0.0015)));
     }
 
+    let pinchStartDistance = 0;
+    let pinchStartScale = 1;
+
+    function touchDistance(touches: TouchList) {
+      const [a, b] = [touches[0], touches[1]];
+      return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    }
+
+    function handleTouchStart(e: TouchEvent) {
+      if (e.touches.length !== 2) return;
+      pinchStartDistance = touchDistance(e.touches);
+      setZoomScale((current) => {
+        pinchStartScale = current;
+        return current;
+      });
+    }
+
+    function handleTouchMove(e: TouchEvent) {
+      if (e.touches.length !== 2 || pinchStartDistance === 0) return;
+      e.preventDefault();
+      const ratio = touchDistance(e.touches) / pinchStartDistance;
+      setZoomScale(Math.min(4, Math.max(1, pinchStartScale * ratio)));
+    }
+
     img.addEventListener('wheel', handleWheel, { passive: false });
-    return () => img.removeEventListener('wheel', handleWheel);
+    img.addEventListener('touchstart', handleTouchStart, { passive: true });
+    img.addEventListener('touchmove', handleTouchMove, { passive: false });
+    return () => {
+      img.removeEventListener('wheel', handleWheel);
+      img.removeEventListener('touchstart', handleTouchStart);
+      img.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, [enlargedId]);
+
+  // ניווט בין תמונות עם מקשי חצים, ו-Escape לסגירה - עובד רק כשמצב ההגדלה פתוח.
+  useEffect(() => {
+    if (!enlargedId) return;
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'ArrowRight') navigateEnlarged(1);
+      else if (e.key === 'ArrowLeft') navigateEnlarged(-1);
+      else if (e.key === 'Escape') setEnlargedId(null);
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enlargedId]);
 
   const [authorized, setAuthorized] = useState(false);
@@ -436,6 +482,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     });
   }
 
+  // דפדוף בין תמונות במצב הגדלה - בלי לצאת ולהיכנס מחדש מהגריד. מאפסת זום
+  // בכל מעבר, כדי שלא להישאר מוגדלת על תמונה חדשה בטעות.
+  function navigateEnlarged(delta: 1 | -1) {
+    const currentIndex = photos.findIndex((p) => p.id === enlargedId);
+    const nextIndex = currentIndex + delta;
+    if (currentIndex === -1 || nextIndex < 0 || nextIndex >= photos.length) return;
+    setZoomScale(1);
+    setEnlargedId(photos[nextIndex].id);
+  }
+
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', background: theme.bg, color: theme.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -753,6 +809,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       {enlargedId && (() => {
         const photo = photos.find((p) => p.id === enlargedId);
         if (!photo?.fullUrl) return null;
+        const currentIndex = photos.findIndex((p) => p.id === enlargedId);
+        const hasPrev = currentIndex > 0;
+        const hasNext = currentIndex < photos.length - 1;
         return (
           <div
             style={{
@@ -776,6 +835,40 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             >
               ✕
             </button>
+            {hasPrev && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigateEnlarged(-1);
+                }}
+                title="הקודמת"
+                style={{
+                  position: 'absolute', top: '50%', insetInlineStart: 16, transform: 'translateY(-50%)', zIndex: 51,
+                  width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                  background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 20, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                ‹
+              </button>
+            )}
+            {hasNext && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigateEnlarged(1);
+                }}
+                title="הבאה"
+                style={{
+                  position: 'absolute', top: '50%', insetInlineEnd: 16, transform: 'translateY(-50%)', zIndex: 51,
+                  width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                  background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 20, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                ›
+              </button>
+            )}
             {zoomScale > 1 && (
               <div
                 style={{
