@@ -12,6 +12,7 @@ interface GalleryPhoto {
   thumbnailUrl: string | null;
   fullUrl: string | null;
   original_filename: string;
+  possiblyBlurry: boolean;
 }
 
 // בוחר טקסט כהה/בהיר לפי בהירות צבע המותג, כדי שכפתורים יישארו קריאים
@@ -455,6 +456,19 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               >
                 {photo.original_filename}
               </div>
+
+              {photo.possiblyBlurry && (
+                <div
+                  title="הערכה אוטומטית לפי חדות - לא תמיד מדויקת, בדקי בעצמך"
+                  style={{
+                    position: 'absolute', bottom: 8, right: 8, zIndex: 1,
+                    background: theme.warningBg, color: theme.warningText, fontSize: 10,
+                    padding: '2px 7px', borderRadius: 10,
+                  }}
+                >
+                  ייתכן שמטושטשת
+                </div>
+              )}
 
               {!compareMode && (
                 <div

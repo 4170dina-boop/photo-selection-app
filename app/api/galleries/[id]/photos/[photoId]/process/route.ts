@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { createWatermarkedPreview } from '@/lib/watermark';
+import { computeSharpnessScore } from '@/lib/sharpness';
 
 // יוצרת thumbnail_path אמיתי: מקטינה ומטביעה סימן מים על התמונה שהועלתה.
 // רצה אחרי שהמקור כבר הועלה ישירות מהדפדפן ל-Storage (app/dashboard/upload/[galleryId]/page.tsx) -
@@ -66,9 +67,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     return NextResponse.json({ error: 'הורדת התמונה המקורית נכשלה' }, { status: 500 });
   }
 
+  const originalBuffer = Buffer.from(await original.arrayBuffer());
+
   let watermarked: Buffer;
   try {
-    const originalBuffer = Buffer.from(await original.arrayBuffer());
     const watermarkText = photographer.watermark_text?.trim() || photographer.business_name;
     watermarked = await createWatermarkedPreview(originalBuffer, watermarkText);
   } catch (err) {
@@ -94,6 +96,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
 
   if (updateError) {
     return NextResponse.json({ error: 'עדכון רשומת התמונה נכשל' }, { status: 500 });
+  }
+
+  // best-effort ומופרד מהעדכון הראשי בכוונה: אם sharpness_score עוד לא קיימת
+  // כעמודה ב-DB (דורש להריץ את המיגרציה ב-supabase/schema.sql), כישלון כאן
+  // לא אמור למנוע את יצירת ה-thumbnail עצמו, שהוא הדבר החשוב.
+  try {
+    const sharpnessScore = await computeSharpnessScore(originalBuffer);
+    await supabase.from('photos').update({ sharpness_score: sharpnessScore }).eq('id', photo.id);
+  } catch (err) {
+    console.error('[process] חישוב ציון חדות נכשל:', err);
   }
 
   return NextResponse.json({ success: true });

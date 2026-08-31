@@ -32,6 +32,7 @@ app/api/galleries/[id]/resend-invite/route.ts → שולחת שוב את מיי�
 app/api/gallery/[id]/finish/route.ts         → "סיימתי לבחור" - נועל את הגלריה (status=completed)
 app/api/cron/tick/route.ts                   → מסמן גלריות שפג תוקפן + שולח תזכורות מייל (מופעל ע"י scheduler חיצוני)
 lib/email.ts                                 → שליחת מייל (הזמנה לגלריה + תזכורת תפוגה) דרך Resend (no-op אם אין RESEND_API_KEY)
+lib/sharpness.ts                             → ציון חדות היוריסטי (Laplacian variance) - לתג "ייתכן שמטושטשת" בגלריית הלקוחה
 lib/galleryAccess.ts                         → בדיקה משותפת: אסור לערוך גלריה שהושלמה/פג תוקפה
 lib/theme.ts                                 → פלטת הצבעים המשותפת (טוקנים + סגנונות input/button) - כל הדפים משתמשים בה
 vercel.json                                  → תזמון Vercel Cron ל-/api/cron/tick (פעם ביום)
@@ -174,6 +175,29 @@ npm run dev
   פשוט נשאר זהה ל-`file_path` (המצב שהיה קיים לפני הפיצ'ר), וההעלאה ממשיכה
   לשאר הקבצים
 
+## תג "ייתכן שמטושטשת"
+
+**דורש הרצת מיגרציה ידנית ב-Supabase SQL Editor לפני שזה עובד בפועל** (ראו
+למטה) - בלי זה הפיצ'ר פשוט לא מציג תגים, לא שובר כלום.
+
+באותה קריאת עיבוד שכבר מקטינה ומטביעה סימן מים
+(`app/api/galleries/[id]/photos/[photoId]/process/route.ts`), נחשב גם ציון
+חדות (`lib/sharpness.ts`) - variance של Laplacian kernel על התמונה באפור,
+היוריסטיקה קלאסית לזיהוי טשטוש (לא ML). ציון נמוך מ-`BLUR_THRESHOLD` (100,
+לא מכויל על תמונות אמיתיות של המוצר - עשוי לדרוש כיוונון) מציג תג עדין
+"ייתכן שמטושטשת" בגלריית הלקוחה (`app/gallery/[id]/page.tsx`). זו היוריסטיקה
+תלוית-תוכן, לא שיפוט - תמונת שמיים נקיים תקבל ציון נמוך גם אם היא חדה
+לגמרי, אז זה מוצג כרמז עדין שאפשר להתעלם ממנו, לא כפסק דין. הבחירה עצמה
+אף פעם לא נחסמת בגלל זה.
+
+**כדי שהתג יעבוד בפועל**, מריצים ב-Supabase SQL Editor:
+```sql
+alter table photos add column if not exists sharpness_score numeric;
+```
+עד אז, שני המקומות שקוראים את העמודה (`process/route.ts` בזמן עיבוד,
+ו-`app/api/gallery/[id]/route.ts` בזמן טעינת הגלריה של הלקוחה) נכשלים
+בשקט ופשוט לא מציגים תג - נבדק ומאומת שזה לא שובר את טעינת הגלריה.
+
 ## בדיקות אוטומטיות
 
 ```bash
@@ -193,6 +217,9 @@ npm test
 - `lib/email.test.ts` - `lib/email.ts` עם `fetch` מדומה: דילוג שקט כשאין
   `RESEND_API_KEY`, שליחה מוצלחת, טיפול בתשובת שגיאה מ-Resend, והתראת "סיימה
   לבחור" לצלמת
+- `lib/sharpness.test.ts` - `computeSharpnessScore` על תמונות אמיתיות (לא מוקים):
+  תמונת בדיקה עם מרקם מקבלת ציון גבוה יותר מגרסה מטושטשת שלה, ותמונה שטוחה
+  לגמרי מקבלת ציון קרוב לאפס
 
 ## כפתור הקסם - תוקן מיקום + נוסף ZIP fallback
 

@@ -46,6 +46,10 @@ create table photos (
   file_path text not null,
   thumbnail_path text,
   original_filename text not null,
+  -- variance של Laplacian kernel על התמונה באפור - היוריסטיקת חדות קלאסית,
+  -- לא ML. ערך נמוך = כנראה מטושטשת. נחשב פעם אחת בעיבוד (ראו lib/sharpness.ts),
+  -- לא בכל בקשה. null עד שהעיבוד רץ, או אם הוא נכשל - לא חוסם שום דבר.
+  sharpness_score numeric,
   created_at timestamptz default now()
 );
 
@@ -154,6 +158,9 @@ create policy "photographers see own sync jobs" on sync_jobs
 
 -- אם כבר הרצת גרסה קודמת בלי מגבלת חשבון חינמי, מריצים גם את הטריגרים
 -- שמוגדרים למטה (enforce_active_gallery_limit, enforce_photo_limit) בנפרד.
+
+-- אם כבר הרצת גרסה קודמת בלי ציון חדות לתמונות, מריצים גם את זה:
+-- alter table photos add column if not exists sharpness_score numeric;
 
 -- מעדכן אוטומטית את "פעילות אחרונה" בגלריה בכל בחירה/ביטול בחירה של לקוחה,
 -- ומעביר את הסטטוס ל-in_progress באירוע הבחירה הראשון (draft/sent -> in_progress).

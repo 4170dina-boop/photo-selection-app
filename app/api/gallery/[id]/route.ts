@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireGallerySession } from '@/lib/gallerySession';
+import { BLUR_THRESHOLD } from '@/lib/sharpness';
 
 // service_role - נשאר בצד שרת בלבד. כל הגישה של הלקוחה לנתוני הגלריה
 // עוברת דרך ה-API הזה (ולא דרך anon key ישירות מהדפדפן), כי אין policy
@@ -40,6 +41,22 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     supabaseAdmin.from('packages').select('included_photos, extra_photo_price').eq('gallery_id', galleryId).single(),
   ]);
 
+  // שאילתה נפרדת ו-best-effort ל-sharpness_score, בכוונה לא בתוך ה-select
+  // הראשי של photos למעלה: אם העמודה עוד לא קיימת (המיגרציה ב-supabase/schema.sql
+  // לא רצה), זו לא צריכה להפיל את טעינת הגלריה כולה - רק שלא יוצג תג טשטוש.
+  const possiblyBlurryIds = new Set<string>();
+  try {
+    const { data: sharpnessData } = await supabaseAdmin
+      .from('photos')
+      .select('id, sharpness_score')
+      .eq('gallery_id', galleryId)
+      .not('sharpness_score', 'is', null)
+      .lt('sharpness_score', BLUR_THRESHOLD);
+    (sharpnessData ?? []).forEach((row: any) => possiblyBlurryIds.add(row.id));
+  } catch {
+    // בכוונה שקט - ראו הערה למעלה
+  }
+
   const photos = await Promise.all(
     (photosData ?? []).map(async (photo) => {
       const thumbPath = photo.thumbnail_path ?? photo.file_path;
@@ -56,6 +73,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         thumbnailUrl: thumbSigned?.signedUrl ?? null,
         fullUrl: thumbSigned?.signedUrl ?? null,
         original_filename: photo.original_filename,
+        possiblyBlurry: possiblyBlurryIds.has(photo.id),
       };
     })
   );
