@@ -16,6 +16,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
 
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
+  const [accessCode, setAccessCode] = useState('');
   const [includedPhotos, setIncludedPhotos] = useState('');
   const [basePrice, setBasePrice] = useState('');
   const [extraPhotoPrice, setExtraPhotoPrice] = useState('');
@@ -26,6 +27,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [deleting, setDeleting] = useState(false);
   const [resending, setResending] = useState(false);
   const [resendMessage, setResendMessage] = useState('');
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [notFound, setNotFound] = useState(false);
 
@@ -47,6 +49,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     const data = await res.json();
     setClientName(data.clients?.full_name ?? '');
     setClientEmail(data.clients?.email ?? '');
+    setAccessCode(data.clients?.access_code ?? '');
     setIncludedPhotos(String(data.packages?.included_photos ?? 0));
     setBasePrice(String(data.packages?.base_price ?? 0));
     setExtraPhotoPrice(String(data.packages?.extra_photo_price ?? 0));
@@ -134,6 +137,29 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   return (
     <div style={{ maxWidth: 420 }}>
       <h1 style={{ fontSize: 20, marginBottom: '1.5rem' }}>עריכת גלריה</h1>
+
+      {accessCode && (
+        <div style={{ background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10, padding: '1rem 1.25rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div>
+              <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: '0.25rem' }}>קוד גישה</div>
+              <div style={{ fontFamily: 'monospace', fontSize: 20, fontWeight: 'bold', color: theme.gold, letterSpacing: 1 }}>{accessCode}</div>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                const galleryUrl = `${window.location.origin}/gallery/${galleryId}`;
+                await navigator.clipboard.writeText(`${galleryUrl}\nקוד גישה: ${accessCode}`);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+              style={{ ...outlineButtonStyle, padding: '0.5rem 1rem' }}
+            >
+              {copied ? 'הועתק!' : 'העתקת קישור וקוד'}
+            </button>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>

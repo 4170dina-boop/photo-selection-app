@@ -25,7 +25,7 @@ app/gallery/[id]/page.tsx                     → דף הגלריה מצד הל�
 app/dashboard/upload/[galleryId]/page.tsx     → העלאת תמונות מצד הצלם ל-Supabase Storage
 app/dashboard/galleries/page.tsx             → רשימת גלריות עם סטטוס, % התקדמות, ופעילות אחרונה (לחיצה על שורה -> העלאה, קישור נפרד לעריכה)
 app/dashboard/galleries/new/page.tsx         → טופס יצירת גלריה חדשה (לקוחה + חבילה) + שליחת מייל אוטומטית ללקוחה
-app/dashboard/galleries/[id]/edit/page.tsx   → עריכת פרטי לקוחה/חבילה/תוקף, מחיקת גלריה, ושליחת הזמנה מחדש
+app/dashboard/galleries/[id]/edit/page.tsx   → עריכת פרטי לקוחה/חבילה/תוקף, מחיקת גלריה, שליחת הזמנה מחדש, וצפייה חוזרת בקוד הגישה
 app/api/galleries/route.ts                   → יצירת client+gallery+package בשרת, עם session הצלם (לא service key)
 app/api/galleries/[id]/route.ts              → GET/PATCH/DELETE לגלריה קיימת, עם session הצלם (לא service key)
 app/api/galleries/[id]/resend-invite/route.ts → שולחת שוב את מייל ההזמנה (קישור + קוד גישה) ללקוחה קיימת
