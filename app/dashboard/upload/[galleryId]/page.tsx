@@ -16,6 +16,14 @@ interface UploadItem {
   error?: string;
 }
 
+interface ExistingPhoto {
+  id: string;
+  thumbnailUrl: string | null;
+  original_filename: string;
+  status: 'maybe' | 'selected' | null;
+  note: string | null;
+}
+
 // תואם ל-enforce_photo_limit ב-supabase/schema.sql - אין מקור אמת משותף אחד,
 // אז אם המספר שם משתנה צריך לעדכן גם כאן. זה רק לתצוגה מקדימה; האכיפה בפועל
 // היא ה-trigger ב-DB, לא זה.
@@ -27,7 +35,7 @@ export default function UploadPage({ params }: UploadPageProps) {
   const [supabase] = useState(() => createClient());
   const [items, setItems] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [existingPhotoCount, setExistingPhotoCount] = useState<number | null>(null);
+  const [existingPhotos, setExistingPhotos] = useState<ExistingPhoto[] | null>(null);
   const [checkingOwnership, setCheckingOwnership] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -44,15 +52,17 @@ export default function UploadPage({ params }: UploadPageProps) {
         return;
       }
       setCheckingOwnership(false);
-
-      const { count } = await supabase
-        .from('photos')
-        .select('id', { count: 'exact', head: true })
-        .eq('gallery_id', galleryId);
-      setExistingPhotoCount(count ?? 0);
+      await loadExistingPhotos();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [galleryId]);
+
+  async function loadExistingPhotos() {
+    const res = await fetch(`/api/galleries/${galleryId}/review`);
+    if (!res.ok) return;
+    const data = await res.json();
+    setExistingPhotos(data.photos ?? []);
+  }
 
   // מנקה object URLs של תצוגה מקדימה כשעוזבים את הדף, כדי לא לדלוף זיכרון
   useEffect(() => {
@@ -126,12 +136,15 @@ export default function UploadPage({ params }: UploadPageProps) {
     }
 
     setUploading(false);
+    await loadExistingPhotos(); // רענון סקירת התמונות הקיימות עם החדשות שהתווספו
   }
 
   const doneCount = items.filter((it) => it.status === 'done').length;
   const errorCount = items.filter((it) => it.status === 'error').length;
   const allProcessed = items.length > 0 && items.every((it) => it.status === 'done' || it.status === 'error');
-  const totalPhotoCount = existingPhotoCount === null ? null : existingPhotoCount + doneCount;
+  // בזמן העלאה: מוסיפים doneCount לספירה החיה. אחרי סיום: loadExistingPhotos
+  // כבר רענן את existingPhotos לכלול את החדשות, אז לא מוסיפים doneCount שוב.
+  const totalPhotoCount = existingPhotos === null ? null : existingPhotos.length + (uploading ? doneCount : 0);
 
   if (checkingOwnership) return <p style={{ color: theme.textMuted }}>טוען...</p>;
 
@@ -154,6 +167,68 @@ export default function UploadPage({ params }: UploadPageProps) {
         <p style={{ color: totalPhotoCount >= FREE_PHOTO_LIMIT ? theme.errorText : theme.textMuted, fontSize: 13, marginBottom: '1rem' }}>
           {totalPhotoCount}/{FREE_PHOTO_LIMIT} תמונות בגלריה (חשבון חינמי)
         </p>
+      )}
+
+      {existingPhotos !== null && existingPhotos.length > 0 && (
+        <div style={{ marginBottom: '2rem' }}>
+          <h2 style={{ fontFamily: theme.fontSerif, fontSize: 16, marginBottom: '0.75rem' }}>
+            סקירת תמונות ({existingPhotos.length})
+          </h2>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+              gap: '0.75rem',
+            }}
+          >
+            {existingPhotos.map((photo) => {
+              const borderColor =
+                photo.status === 'selected' ? theme.gold : photo.status === 'maybe' ? theme.green : theme.border;
+              const statusLabel = photo.status === 'selected' ? 'נבחר' : photo.status === 'maybe' ? 'אולי' : null;
+
+              return (
+                <div
+                  key={photo.id}
+                  style={{
+                    position: 'relative', borderRadius: 8, overflow: 'hidden',
+                    border: `2px solid ${borderColor}`, background: theme.panel,
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={photo.thumbnailUrl ?? ''}
+                    alt=""
+                    style={{ width: '100%', aspectRatio: '3/4', objectFit: 'cover', display: 'block' }}
+                  />
+                  {statusLabel && (
+                    <span
+                      style={{
+                        position: 'absolute', top: 6, left: 6,
+                        background: photo.status === 'selected' ? theme.gold : theme.green,
+                        color: theme.goldText, fontSize: 10, fontWeight: 'bold',
+                        padding: '2px 7px', borderRadius: 10,
+                      }}
+                    >
+                      {statusLabel}
+                    </span>
+                  )}
+                  {photo.note && (
+                    <div
+                      title={photo.note}
+                      style={{
+                        position: 'absolute', bottom: 0, insetInline: 0,
+                        background: 'rgba(0,0,0,0.65)', color: theme.text, fontSize: 10,
+                        padding: '3px 7px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}
+                    >
+                      ✎ {photo.note}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1.5rem' }}>

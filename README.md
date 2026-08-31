@@ -22,7 +22,8 @@ app/api/gallery/[id]/route.ts                → טעינת תמונות/בחי�
 app/api/gallery/[id]/selection/route.ts      → סימון אולי/נבחר/הסרה (צד שרת, אחרי אימות session)
 app/api/gallery/[id]/note/route.ts           → שמירת הערה לתמונה (צד שרת, אחרי אימות session)
 app/gallery/[id]/page.tsx                     → דף הגלריה מצד הלקוחה (קוד גישה → זיהוי → שער פתיחה → בחירה → ספירה מול חבילה)
-app/dashboard/upload/[galleryId]/page.tsx     → העלאת תמונות מצד הצלם ל-Supabase Storage
+app/dashboard/upload/[galleryId]/page.tsx     → העלאת תמונות מצד הצלם, וסקירת תמונות קיימות (סטטוס+הערה) - קודם היה רק מסך העלאה
+app/api/galleries/[id]/review/route.ts       → thumbnail+סטטוס רשמי+הערה לכל תמונה, לסקירת הצלמת
 app/dashboard/galleries/page.tsx             → רשימת גלריות עם סטטוס, % התקדמות, ופעילות אחרונה (לחיצה על שורה -> העלאה, קישור נפרד לעריכה)
 app/dashboard/reports/page.tsx               → דוח הכנסות מקובץ לפי חודש (base_price + חריגות)
 app/dashboard/galleries/new/page.tsx         → טופס יצירת גלריה חדשה (לקוחה + חבילה) + שליחת מייל אוטומטית ללקוחה

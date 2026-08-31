@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 
 interface GalleryPageProps {
@@ -68,6 +68,23 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [enlargedId, setEnlargedId] = useState<string | null>(null);
   const [zoomScale, setZoomScale] = useState(1);
+  const enlargedImgRef = useRef<HTMLImageElement | null>(null);
+
+  // React מצרף מאזיני wheel כ-passive כברירת מחדל, כך ש-preventDefault בתוך
+  // onWheel רגיל בכלל לא עובד (ורק זורק אזהרה בקונסול) - חייבים מאזין native
+  // עם {passive:false} כדי שגלגלת על התמונה המוגדלת לא תגלגל גם את הרקע מתחתיה.
+  useEffect(() => {
+    const img = enlargedImgRef.current;
+    if (!img) return;
+
+    function handleWheel(e: WheelEvent) {
+      e.preventDefault();
+      setZoomScale((prev) => Math.min(4, Math.max(1, prev - e.deltaY * 0.0015)));
+    }
+
+    img.addEventListener('wheel', handleWheel, { passive: false });
+    return () => img.removeEventListener('wheel', handleWheel);
+  }, [enlargedId]);
 
   const [authorized, setAuthorized] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -721,6 +738,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             )}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
+              ref={enlargedImgRef}
               src={photo.fullUrl}
               alt=""
               draggable={false}
@@ -729,11 +747,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 setZoomScale((prev) => (prev > 1 ? 1 : 2));
               }}
               onContextMenu={(e) => e.preventDefault()}
-              onWheel={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setZoomScale((prev) => Math.min(4, Math.max(1, prev - e.deltaY * 0.0015)));
-              }}
               title="קליק או גלגלת עכבר להגדלה/הקטנה"
               style={{
                 maxHeight: '90vh', maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
