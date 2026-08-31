@@ -67,6 +67,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [enlargedId, setEnlargedId] = useState<string | null>(null);
+  const [zoomScale, setZoomScale] = useState(1);
 
   const [authorized, setAuthorized] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -707,15 +708,37 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             >
               ✕
             </button>
+            {zoomScale > 1 && (
+              <div
+                style={{
+                  position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 51,
+                  background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 12,
+                  padding: '4px 10px', borderRadius: 12,
+                }}
+              >
+                {Math.round(zoomScale * 100)}%
+              </div>
+            )}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={photo.fullUrl}
               alt=""
               draggable={false}
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setZoomScale((prev) => (prev > 1 ? 1 : 2));
+              }}
               onContextMenu={(e) => e.preventDefault()}
+              onWheel={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setZoomScale((prev) => Math.min(4, Math.max(1, prev - e.deltaY * 0.0015)));
+              }}
+              title="קליק או גלגלת עכבר להגדלה/הקטנה"
               style={{
                 maxHeight: '90vh', maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
+                transform: `scale(${zoomScale})`, transition: zoomScale === 1 ? 'transform 0.15s ease-out' : 'none',
+                cursor: zoomScale > 1 ? 'zoom-out' : 'zoom-in',
                 WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
               }}
             />
@@ -813,6 +836,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
+                    setZoomScale(1);
                     setEnlargedId(photo.id);
                   }}
                   title="הגדלת תמונה"
