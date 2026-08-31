@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 
   const { data: photographer, error } = await supabase
     .from('photographers')
-    .select('business_name, watermark_text, brand_color')
+    .select('id, business_name, watermark_text, brand_color, logo_url')
     .eq('auth_user_id', user.id)
     .single();
 
@@ -40,7 +40,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'לא מחוברת' }, { status: 401 });
   }
 
-  let body: { watermarkText?: string | null; brandColor?: string | null };
+  let body: { watermarkText?: string | null; brandColor?: string | null; logoUrl?: string | null };
   try {
     body = await req.json();
   } catch {
@@ -59,9 +59,17 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'צבע מותג לא תקין' }, { status: 400 });
   }
 
+  const update: Record<string, unknown> = { watermark_text: watermarkText, brand_color: brandColor ?? '#000000' };
+
+  // logoUrl מגיע רק כשהוא באמת השתנה (העלאה חדשה/הסרה) - PATCH הרגיל של שאר
+  // ההגדרות לא שולח את השדה הזה בכלל, כדי לא לדרוס בטעות לוגו קיים ב-null.
+  if ('logoUrl' in body) {
+    update.logo_url = body.logoUrl?.trim() || null;
+  }
+
   const { error } = await supabase
     .from('photographers')
-    .update({ watermark_text: watermarkText, brand_color: brandColor ?? '#000000' })
+    .update(update)
     .eq('auth_user_id', user.id);
 
   if (error) {

@@ -394,3 +394,33 @@ create policy "photographers upload only to own galleries" on storage.objects
 -- אם כבר הרצת גרסה קודמת של הסכמה עם bucket ציבורי, מריצים גם את זה כדי לנקות:
 -- update storage.buckets set public = false where id = 'gallery-photos';
 -- drop policy if exists "public read gallery photos" on storage.objects;
+
+-- Storage: bucket ללוגו של הצלמת (מוצג ללקוחה במסך הפתיחה של הגלריה, ראו
+-- app/dashboard/settings/page.tsx ו-app/gallery/[id]/page.tsx). בכוונה ציבורי,
+-- בניגוד ל-gallery-photos - לוגו הוא נכס מיתוג, לא תוכן פרטי של לקוחה, ואין
+-- טעם לייצר signed URL מחדש בכל טעינה בשביל תמונה קטנה וקבועה.
+insert into storage.buckets (id, name, public)
+values ('photographer-logos', 'photographer-logos', true)
+on conflict (id) do update set public = true;
+
+-- נתיב קבוע {photographerId}/logo (בלי סיומת - content-type נקבע מה-upload
+-- עצמו, לא מהנתיב) עם upsert בצד הקליינט: כל העלאה חדשה דורסת את הקודמת,
+-- כדי שלא ייצברו קבצי לוגו ישנים יתומים.
+create policy "photographers upload own logo" on storage.objects
+  for insert with check (
+    bucket_id = 'photographer-logos'
+    and (storage.foldername(name))[1]::uuid in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  );
+
+create policy "photographers update own logo" on storage.objects
+  for update using (
+    bucket_id = 'photographer-logos'
+    and (storage.foldername(name))[1]::uuid in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  );
+
+create policy "public read logos" on storage.objects
+  for select using (bucket_id = 'photographer-logos');

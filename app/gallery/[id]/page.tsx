@@ -58,6 +58,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [loading, setLoading] = useState(true);
   const [brandColor, setBrandColor] = useState<string | null>(null);
   const [photographerName, setPhotographerName] = useState<string | null>(null);
+  const [photographerLogo, setPhotographerLogo] = useState<string | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
 
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
@@ -131,6 +132,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setGalleryStatus(data.status ?? 'sent');
     setBrandColor(data.brandColor ?? null);
     setPhotographerName(data.photographerName ?? null);
+    setPhotographerLogo(data.photographerLogo ?? null);
     setMyParticipant(data.myParticipant ?? null);
     setParticipants(data.participants ?? []);
 
@@ -420,13 +422,44 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     : goldButtonStyle;
 
   if (showWelcome) {
+    const avatarInitial = (photographerName || myParticipant?.displayName || '?').trim().charAt(0).toUpperCase();
+
     return (
-      <div style={{ minHeight: '100vh', background: theme.bg, color: theme.text, display: 'flex', alignItems: 'center', justifyContent: 'center', direction: 'rtl', fontFamily: theme.fontSans, padding: '1.5rem' }}>
-        <div style={{ maxWidth: 380, width: '100%', textAlign: 'center' }}>
+      <div
+        style={{
+          minHeight: '100vh', background: theme.bg, color: theme.text, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', direction: 'rtl', fontFamily: theme.fontSans, padding: '1.5rem',
+          position: 'relative', overflow: 'hidden',
+        }}
+      >
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute', inset: 0, pointerEvents: 'none',
+            background: `radial-gradient(circle at 50% 15%, ${accent}2e, transparent 55%)`,
+          }}
+        />
+        <div style={{ maxWidth: 380, width: '100%', textAlign: 'center', position: 'relative' }}>
+          <div
+            style={{
+              width: 96, height: 96, borderRadius: '50%', margin: '0 auto 1.25rem', overflow: 'hidden',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: photographerLogo ? theme.panel : `linear-gradient(135deg, ${accentSolid}, ${accent})`,
+              border: `2px solid ${accent}`, boxShadow: `0 0 0 6px ${accent}22, 0 10px 28px ${accent}33`,
+            }}
+          >
+            {photographerLogo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={photographerLogo} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            ) : (
+              <span style={{ fontSize: 36, fontFamily: theme.fontSerif, color: accentText }}>{avatarInitial}</span>
+            )}
+          </div>
+
           {photographerName && (
             <p style={{ color: accent, fontSize: 14, marginBottom: '0.5rem', letterSpacing: 0.5 }}>✨ {photographerName}</p>
           )}
-          <p style={{ fontSize: 22, fontFamily: theme.fontSerif, marginBottom: '0.75rem' }}>
+          <p style={{ fontSize: 24, fontFamily: theme.fontSerif, marginBottom: '0.75rem' }}>
             ברוכה הבאה{myParticipant ? `, ${myParticipant.displayName}` : ''}!
           </p>
           <p style={{ color: theme.textMuted, fontSize: 14, marginBottom: '1.5rem', lineHeight: 1.6 }}>
@@ -441,7 +474,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               display: 'flex', flexDirection: 'column', gap: '0.5rem',
             }}
           >
-            <span>♥ לחיצה על תמונה = "אולי", לחיצה נוספת = "נבחר"</span>
             <span>⇄ אפשר להשוות בין שתי תמונות זו לצד זו</span>
             <span>✎ אפשר להוסיף הערה אישית לכל תמונה</span>
             {!isOwner && (

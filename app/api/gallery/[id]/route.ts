@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error: galleryError } = await supabaseAdmin
     .from('galleries')
-    .select('id, status, expires_at, owner_participant_id, clients(full_name), photographers(brand_color, business_name)')
+    .select('id, status, expires_at, owner_participant_id, clients(full_name), photographers(brand_color, business_name, logo_url)')
     .eq('id', galleryId)
     .single();
 
@@ -93,6 +93,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // מפורש עדיין מקבלת את הפלטה הקבועה (theme.gold) בצד הלקוח, לא שחור.
   const brandColor = (gallery as any).photographers?.brand_color;
   const photographerName = (gallery as any).photographers?.business_name ?? null;
+  const photographerLogo = (gallery as any).photographers?.logo_url ?? null;
 
   const participants = (participantsData ?? []).map((p) => ({
     id: p.id,
@@ -134,6 +135,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     package: packageData ? { included: packageData.included_photos, extraPrice: packageData.extra_photo_price } : null,
     brandColor: brandColor && brandColor !== '#000000' ? brandColor : null,
     photographerName,
+    photographerLogo,
     expiresAt: gallery.expires_at,
   });
 }
