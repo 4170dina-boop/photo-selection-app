@@ -183,9 +183,16 @@ export default function GalleriesDashboard() {
         </Link>
       </div>
 
-      <p style={{ color: activeCount >= freeGalleryLimit ? theme.errorText : theme.textMuted, fontSize: 13, marginTop: '-0.5rem' }}>
-        {activeCount}/{freeGalleryLimit} גלריות פעילות (חשבון חינמי)
-      </p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '-0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <p style={{ color: activeCount >= freeGalleryLimit ? theme.errorText : theme.textMuted, fontSize: 13, margin: 0 }}>
+          {activeCount}/{freeGalleryLimit} גלריות פעילות (חשבון חינמי)
+        </p>
+        {rows.length > 0 && (
+          <a href="/api/galleries/export-contacts" style={{ color: theme.textMuted, fontSize: 12, textDecoration: 'underline' }}>
+            ייצוא רשימת אנשי קשר (CSV)
+          </a>
+        )}
+      </div>
 
       {urgentRows.length > 0 && (
         <div style={{ background: theme.warningBg, border: `1px solid ${theme.warningText}`, borderRadius: 10, padding: '0.85rem 1rem' }}>
