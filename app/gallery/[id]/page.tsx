@@ -44,6 +44,30 @@ function initials(name: string): string {
   return name.trim().charAt(0).toUpperCase() || '?';
 }
 
+// תור פעולות ממתינות (localStorage) - כשהאינטרנט חלש/מנותק באירוע עצמו,
+// בחירה/הערה נשמרת מקומית ומסונכרנת אוטומטית ברגע שהחיבור חוזר, כדי שהלקוחה
+// תוכל להמשיך לדפדף ולבחור בלי לחכות לתשובת שרת על כל קליק.
+type PendingAction =
+  | { type: 'status'; photoId: string; status: 'maybe' | 'selected' | null }
+  | { type: 'note'; photoId: string; note: string };
+
+function pendingQueueKey(galleryId: string, participantId: string): string {
+  return `gallery_pending_${galleryId}_${participantId}`;
+}
+
+function loadPendingQueue(galleryId: string, participantId: string): PendingAction[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    return JSON.parse(localStorage.getItem(pendingQueueKey(galleryId, participantId)) ?? '[]');
+  } catch {
+    return [];
+  }
+}
+
+function savePendingQueue(galleryId: string, participantId: string, queue: PendingAction[]) {
+  localStorage.setItem(pendingQueueKey(galleryId, participantId), JSON.stringify(queue));
+}
+
 export default function GalleryPage({ params }: GalleryPageProps) {
   const galleryId = params.id;
 
@@ -66,6 +90,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [noteDraft, setNoteDraft] = useState('');
 
   const [viewFilter, setViewFilter] = useState<'all' | 'selected' | 'maybe'>('all');
+  const [isOffline, setIsOffline] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [enlargedId, setEnlargedId] = useState<string | null>(null);
@@ -134,6 +160,26 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enlargedId]);
 
+  // מצב אופליין: רושמים service worker שממטמן תמונות שכבר נטענו (public/sw.js),
+  // כדי שדפדוף בתמונות שכבר נצפו ימשיך לעבוד גם באינטרנט חלש/מנותק באירוע.
+  useEffect(() => {
+    function updateOnlineStatus() {
+      setIsOffline(!navigator.onLine);
+    }
+    updateOnlineStatus();
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+
+    return () => {
+      window.removeEventListener('online', updateOnlineStatus);
+      window.removeEventListener('offline', updateOnlineStatus);
+    };
+  }, []);
+
   const [authorized, setAuthorized] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [codeInput, setCodeInput] = useState('');
@@ -155,13 +201,39 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [galleryId]);
 
+  // מנסה לשלוח שוב פעולות שהמתינו בתור (localStorage) כי נכשלו על ניתוק -
+  // כשמזהים משתתפ/ת (myParticipant), כשהחיבור חוזר, וגם כל 20 שניות ליתר ביטחון
+  // (אירוע 'online' לא תמיד יורה כשהאינטרנט "חלש" ולא ממש מנותק).
+  useEffect(() => {
+    if (!myParticipant) return;
+    setPendingCount(loadPendingQueue(galleryId, myParticipant.id).length);
+    flushPendingQueue();
+
+    window.addEventListener('online', flushPendingQueue);
+    const interval = setInterval(flushPendingQueue, 20000);
+
+    return () => {
+      window.removeEventListener('online', flushPendingQueue);
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myParticipant?.id]);
+
   // הטעינה עצמה היא גם בדיקת האימות: העוגייה httpOnly ולא ניתנת לקריאה
   // מ-JS, אז אי אפשר "לבדוק אם קיימת" מראש - פשוט מנסים לטעון, ו-401 אומר שצריך קוד גישה.
   async function loadGallery() {
     setLoading(true);
     setCheckingAuth(true);
 
-    const res = await fetch(`/api/gallery/${galleryId}`);
+    let res: Response;
+    try {
+      res = await fetch(`/api/gallery/${galleryId}`);
+    } catch {
+      setAuthError('אין חיבור לאינטרנט. בדקי את החיבור ונסי שוב.');
+      setCheckingAuth(false);
+      setLoading(false);
+      return;
+    }
 
     if (res.status === 401) {
       setAuthorized(false);
@@ -349,6 +421,60 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     );
   }
 
+  // שולח פעולה אחת לשרת ומדווח אם הצליחה, נדחתה ע"י השרת (שגיאה אמיתית), או
+  // נכשלה בגלל ניתוק/רשת - כדי ש-setPhotoStatus/saveNote יידעו אם לבטל את
+  // העדכון האופטימי (שגיאת שרת) או להכניס לתור לניסיון חוזר (ניתוק).
+  async function postAction(action: PendingAction): Promise<'ok' | 'server-error' | 'network-error'> {
+    try {
+      const res = await fetch(
+        action.type === 'status' ? `/api/gallery/${galleryId}/selection` : `/api/gallery/${galleryId}/note`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            action.type === 'status'
+              ? { photoId: action.photoId, status: action.status }
+              : { photoId: action.photoId, note: action.note }
+          ),
+        }
+      );
+      return res.ok ? 'ok' : 'server-error';
+    } catch {
+      return 'network-error';
+    }
+  }
+
+  function enqueuePendingAction(action: PendingAction) {
+    if (!myParticipant) return;
+    // מחליף פעולה קודמת על אותה תמונה מאותו סוג - רק המצב האחרון חשוב,
+    // לא כל קליק ביניים כשמנתקים ומחזירים חיבור כמה פעמים
+    const queue = loadPendingQueue(galleryId, myParticipant.id).filter(
+      (a) => !(a.type === action.type && a.photoId === action.photoId)
+    );
+    queue.push(action);
+    savePendingQueue(galleryId, myParticipant.id, queue);
+    setPendingCount(queue.length);
+  }
+
+  async function flushPendingQueue() {
+    if (!myParticipant) return;
+    const queue = loadPendingQueue(galleryId, myParticipant.id);
+    if (queue.length === 0) return;
+
+    let stoppedAt = queue.length;
+    for (let i = 0; i < queue.length; i++) {
+      const result = await postAction(queue[i]);
+      if (result === 'network-error') {
+        stoppedAt = i; // עדיין בלי חיבור - עוצרים כאן, מנסים שוב בפעם הבאה
+        break;
+      }
+      // 'ok' או 'server-error' - בשני המקרים לא מנסים שוב את אותה פעולה
+    }
+    const remaining = queue.slice(stoppedAt);
+    savePendingQueue(galleryId, myParticipant.id, remaining);
+    setPendingCount(remaining.length);
+  }
+
   function cycleStatus(photoId: string) {
     if (galleryStatus === 'completed' || !myParticipant) return; // הבחירה כבר נשלחה - נעול לעריכה
     const current = myMarks[photoId]?.status; // undefined | 'maybe' | 'selected'
@@ -356,24 +482,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     return setPhotoStatus(photoId, next);
   }
 
-  // מופרד מ-cycleStatus כדי שגם מצב ההשוואה יוכל לקבוע ישירות "נבחר" על תמונה
-  // ספציפית, בלי לעבור דרך הריצה של אולי->נבחר->כלום.
-  async function setPhotoStatus(photoId: string, next: 'maybe' | 'selected' | null) {
-    if (galleryStatus === 'completed' || !myParticipant) return;
-    const current = myMarks[photoId]?.status;
-
-    const res = await fetch(`/api/gallery/${galleryId}/selection`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ photoId, status: next }),
-    });
-
-    if (!res.ok) {
-      setActionError('העדכון לא נשמר, נסי שוב.');
-      return;
-    }
-    setActionError('');
-
+  // מחיל שינוי סטטוס על המצב המקומי (myMarks/allMarks/ownerSelectedCount) -
+  // מופרד מ-setPhotoStatus כדי שאפשר יהיה גם להחיל אותו אופטימית מיד וגם
+  // לבטל אותו (קריאה הפוכה עם current/next מוחלפים) אם השרת דוחה את הבקשה.
+  function applyStatusChange(photoId: string, next: 'maybe' | 'selected' | null, current: 'maybe' | 'selected' | undefined) {
+    if (!myParticipant) return;
     setMyMarks((prev) => {
       const nextMarks = { ...prev };
       if (next === null) {
@@ -399,6 +512,33 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
   }
 
+  // מופרד מ-cycleStatus כדי שגם מצב ההשוואה יוכל לקבוע ישירות "נבחר" על תמונה
+  // ספציפית, בלי לעבור דרך הריצה של אולי->נבחר->כלום.
+  //
+  // מעדכן את המסך מיד (אופטימי), לפני תשובת השרת - כדי שאפשר יהיה להמשיך
+  // לדפדף ולבחור גם באינטרנט חלש/מנותק. אם זו שגיאת רשת (לא שרת), הפעולה
+  // נכנסת לתור ותסונכרן אוטומטית כשהחיבור יחזור (ראו flushPendingQueue).
+  async function setPhotoStatus(photoId: string, next: 'maybe' | 'selected' | null) {
+    if (galleryStatus === 'completed' || !myParticipant) return;
+    const current = myMarks[photoId]?.status;
+
+    applyStatusChange(photoId, next, current);
+
+    const result = await postAction({ type: 'status', photoId, status: next });
+
+    if (result === 'network-error') {
+      enqueuePendingAction({ type: 'status', photoId, status: next });
+      setActionError('');
+      return;
+    }
+    if (result === 'server-error') {
+      applyStatusChange(photoId, current ?? null, next ?? undefined); // ביטול העדכון האופטימי - שגיאה אמיתית, לא ניתוק
+      setActionError('העדכון לא נשמר, נסי שוב.');
+      return;
+    }
+    setActionError('');
+  }
+
   function openNoteEditor(photoId: string, e: React.MouseEvent) {
     e.stopPropagation(); // לא לגעת בבחירה עצמה
     if (galleryStatus === 'completed') return;
@@ -410,7 +550,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (!window.confirm('לשלוח את הבחירה? אחרי זה לא ניתן יהיה לשנות אותה.')) return;
 
     setFinishing(true);
-    const res = await fetch(`/api/gallery/${galleryId}/finish`, { method: 'POST' });
+    let res: Response;
+    try {
+      res = await fetch(`/api/gallery/${galleryId}/finish`, { method: 'POST' });
+    } catch {
+      setFinishing(false);
+      setActionError('אין חיבור לאינטרנט כרגע - נסי שוב כשהחיבור יחזור.');
+      return;
+    }
     setFinishing(false);
 
     if (!res.ok) {
@@ -427,7 +574,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (!window.confirm('לבטל את כל הבחירות שלך בגלריה הזו? אי אפשר לשחזר את זה.')) return;
 
     setClearingAll(true);
-    const res = await fetch(`/api/gallery/${galleryId}/selection`, { method: 'DELETE' });
+    let res: Response;
+    try {
+      res = await fetch(`/api/gallery/${galleryId}/selection`, { method: 'DELETE' });
+    } catch {
+      setClearingAll(false);
+      setActionError('אין חיבור לאינטרנט כרגע - נסי שוב כשהחיבור יחזור.');
+      return;
+    }
     setClearingAll(false);
 
     if (!res.ok) {
@@ -450,28 +604,32 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
   }
 
+  // אופטימי כמו setPhotoStatus - ההערה נשמרת מקומית מיד, ומסונכרנת מהתור אם
+  // הייתה שגיאת רשת (לא שגיאת שרת אמיתית).
   async function saveNote() {
     if (!noteEditingId) return;
+    const photoId = noteEditingId;
     const trimmed = noteDraft.trim();
 
-    const res = await fetch(`/api/gallery/${galleryId}/note`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ photoId: noteEditingId, note: trimmed }),
+    setMyMarks((prev) => {
+      const existing = prev[photoId];
+      if (!existing) return prev;
+      return { ...prev, [photoId]: { ...existing, note: trimmed || null } };
     });
+    setNoteEditingId(null);
 
-    if (!res.ok) {
+    const result = await postAction({ type: 'note', photoId, note: trimmed });
+
+    if (result === 'network-error') {
+      enqueuePendingAction({ type: 'note', photoId, note: trimmed });
+      setActionError('');
+      return;
+    }
+    if (result === 'server-error') {
       setActionError('ההערה לא נשמרה, נסי שוב.');
       return;
     }
     setActionError('');
-
-    setMyMarks((prev) => {
-      const existing = prev[noteEditingId];
-      if (!existing) return prev;
-      return { ...prev, [noteEditingId]: { ...existing, note: trimmed || null } };
-    });
-    setNoteEditingId(null);
   }
 
   function toggleCompareSelect(photoId: string, e: React.MouseEvent) {
@@ -657,6 +815,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </div>
         </div>
       </div>
+
+      {(isOffline || pendingCount > 0) && (
+        <div style={{ padding: '0.5rem 1.5rem', background: theme.warningBg, color: theme.warningText, fontSize: 13, textAlign: 'center' }}>
+          {isOffline && '📴 אין חיבור לאינטרנט - '}
+          {pendingCount > 0
+            ? `${pendingCount} שינויים ממתינים ויישלחו אוטומטית כשהחיבור יחזור.`
+            : 'אפשר להמשיך לדפדף ולבחור - הבחירות יישלחו כשהחיבור יחזור.'}
+        </div>
+      )}
 
       <div
         style={{
