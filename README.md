@@ -31,6 +31,7 @@ app/dashboard/galleries/[id]/edit/page.tsx   → עריכת פרטי לקוחה/
 app/api/galleries/route.ts                   → יצירת client+gallery+package בשרת, עם session הצלם (לא service key)
 app/api/galleries/[id]/route.ts              → GET/PATCH/DELETE לגלריה קיימת, עם session הצלם (לא service key)
 app/api/galleries/[id]/resend-invite/route.ts → שולחת שוב את מייל ההזמנה (קישור + קוד גישה) ללקוחה קיימת
+app/api/galleries/[id]/send-reminder/route.ts → שליחה ידנית של תזכורת תפוגה, בלי לחכות לריצת ה-cron
 app/api/gallery/[id]/finish/route.ts         → "סיימתי לבחור" - נועל את הגלריה (status=completed)
 app/api/cron/tick/route.ts                   → מסמן גלריות שפג תוקפן + שולח תזכורות מייל (מופעל ע"י scheduler חיצוני)
 lib/email.ts                                 → שליחת מייל (הזמנה לגלריה + תזכורת תפוגה) דרך Resend (no-op אם אין RESEND_API_KEY)
@@ -374,6 +375,14 @@ npm test
    `expires_at` בצד לקוח, כדי שהתצוגה תהיה נכונה מיד גם בין ריצת cron אחת לשנייה -
    אבל זה קוסמטי בלבד; הבדיקה שבאמת חוסמת כניסה ללקוחה (`app/api/gallery/[id]/route.ts`)
    בודקת `expires_at` בזמן אמת בכל בקשה, בלי תלות בעמודת `status` בכלל.
+
+**תזכורת ידנית**: כפתור "🔔 שליחת תזכורת עכשיו" בדף עריכת הגלריה
+(`app/dashboard/galleries/[id]/edit/page.tsx`, מופיע רק אם יש `expires_at`) שולח
+מיד את אותה תזכורת תפוגה בלי לחכות לריצת ה-cron היומית - שימושי כשהצלמת רוצה
+לדחוף עכשיו, למשל יומיים לפני הדדליין. `POST /api/galleries/[id]/send-reminder`
+מעדכן גם הוא את `last_reminder_sent_at` (רק אם השליחה הצליחה בפועל), כדי שה-cron
+לא ישלח תזכורת "כפולה" מיד אחרי זה - בניגוד לתזכורת האוטומטית, אין כאן הגבלה
+לפעם אחת בלבד; אפשר ללחוץ שוב בכל עת.
 
 **הפעלת ה-cron בפועל** - `app/api/cron/tick` מוגן ב-`CRON_SECRET`, ומצפה לו כ-
 `Authorization: Bearer <secret>` או כ-`?secret=<secret>` ב-query. יש כמה אופציות:

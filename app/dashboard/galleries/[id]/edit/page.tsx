@@ -27,6 +27,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [deleting, setDeleting] = useState(false);
   const [resending, setResending] = useState(false);
   const [resendMessage, setResendMessage] = useState('');
+  const [sendingReminder, setSendingReminder] = useState(false);
+  const [reminderMessage, setReminderMessage] = useState('');
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [notFound, setNotFound] = useState(false);
@@ -102,6 +104,23 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     }
 
     setResendMessage(data.emailSent ? 'ההזמנה נשלחה שוב בהצלחה' : 'שליחת המייל נכשלה - ודאו ששירות המייל מוגדר');
+  }
+
+  async function handleSendReminder() {
+    setReminderMessage('');
+    setError('');
+    setSendingReminder(true);
+
+    const res = await fetch(`/api/galleries/${galleryId}/send-reminder`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    setSendingReminder(false);
+
+    if (!res.ok) {
+      setError(data.error ?? 'שליחת התזכורת נכשלה');
+      return;
+    }
+
+    setReminderMessage(data.emailSent ? 'התזכורת נשלחה בהצלחה' : 'שליחת המייל נכשלה - ודאו ששירות המייל מוגדר');
   }
 
   async function handleDelete() {
@@ -242,6 +261,17 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           >
             {resending ? 'שולחת...' : 'שליחת הזמנה מחדש'}
           </button>
+          {expiresAt && (
+            <button
+              type="button"
+              onClick={handleSendReminder}
+              disabled={sendingReminder}
+              title="שולחת עכשיו את אותה תזכורת תפוגה שנשלחת אוטומטית, בלי לחכות לתזמון היומי"
+              style={{ ...outlineButtonStyle, opacity: sendingReminder ? 0.6 : 1 }}
+            >
+              {sendingReminder ? 'שולחת...' : '🔔 שליחת תזכורת עכשיו'}
+            </button>
+          )}
           <Link href="/dashboard/galleries" style={{ ...outlineButtonStyle, textDecoration: 'none' }}>
             ביטול
           </Link>
@@ -251,6 +281,12 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
       {resendMessage && (
         <p style={{ background: theme.successBg, color: theme.successText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
           {resendMessage}
+        </p>
+      )}
+
+      {reminderMessage && (
+        <p style={{ background: theme.successBg, color: theme.successText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
+          {reminderMessage}
         </p>
       )}
 
