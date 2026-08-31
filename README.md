@@ -74,6 +74,12 @@ Authentication → Providers → Email — אז יש session מיד אחרי ה�
 Supabase דוחה כתובות בדומיינים שמורים כמו `example.com` עם שגיאת `email_address_invalid`
 (אין להם שרת מייל אמיתי) - זה תקין ולא קשור לקוד; עם דומיין רגיל (gmail.com וכו') זה עובד.
 
+**שינוי סיסמה יזום**: בנוסף לשחזור סיסמה (מעל), צלמת מחוברת יכולה גם לשנות
+סיסמה בלי לעבור דרך המייל - קטע "שינוי סיסמה" בתחתית `app/dashboard/settings/page.tsx`.
+אותה קריאת `updateUser({ password })` בדיוק כמו ב-`/login/reset-password`, רק
+שכאן ה-session הוא session רגיל (לא "recovery" מקישור במייל) - Supabase מאפשר
+`updateUser` על כל session מאומת, לא רק recovery, כך שאין צורך בסיסמה הישנה.
+
 ## יצירת גלריה חדשה
 
 מ-`/dashboard/galleries` יש כפתור "+ גלריה חדשה" שמוביל ל-`/dashboard/galleries/new`

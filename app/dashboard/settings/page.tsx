@@ -24,6 +24,12 @@ export default function SettingsPage() {
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
 
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSaved, setPasswordSaved] = useState(false);
+
   useEffect(() => {
     (async () => {
       const res = await fetch('/api/photographer');
@@ -139,6 +145,33 @@ export default function SettingsPage() {
     }
 
     setSaved(true);
+  }
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPasswordError('');
+    setPasswordSaved(false);
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError('הסיסמאות לא תואמות');
+      return;
+    }
+
+    setChangingPassword(true);
+    // בניגוד ל-app/login/reset-password/page.tsx (שם ה-session הוא "recovery"
+    // מקישור במייל), כאן כבר יש session רגיל של צלמת מחוברת - אותה קריאה
+    // בדיוק (updateUser) עובדת גם עליו, בלי צורך בסיסמה הישנה.
+    const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+    setChangingPassword(false);
+
+    if (updateError) {
+      setPasswordError('עדכון הסיסמה נכשל, נסי שוב');
+      return;
+    }
+
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordSaved(true);
   }
 
   if (loading) return <p style={{ color: theme.textMuted }}>טוען...</p>;
@@ -276,6 +309,49 @@ export default function SettingsPage() {
           {error}
         </p>
       )}
+
+      <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
+        <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '1rem' }}>שינוי סיסמה</h2>
+
+        <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            סיסמה חדשה
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              style={inputStyle}
+              minLength={6}
+              required
+            />
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            אימות סיסמה חדשה
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              style={inputStyle}
+              minLength={6}
+              required
+            />
+          </label>
+
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+            <button type="submit" disabled={changingPassword} style={{ ...outlineButtonStyle, opacity: changingPassword ? 0.6 : 1 }}>
+              {changingPassword ? 'מעדכנת...' : 'עדכון סיסמה'}
+            </button>
+            {passwordSaved && <span style={{ color: theme.successText, fontSize: 13 }}>הסיסמה עודכנה!</span>}
+          </div>
+        </form>
+
+        {passwordError && (
+          <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
+            {passwordError}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
