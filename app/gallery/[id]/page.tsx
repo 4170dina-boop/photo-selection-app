@@ -114,6 +114,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [showCelebration, setShowCelebration] = useState(false);
   const [confettiPieces, setConfettiPieces] = useState<ConfettiPiece[]>([]);
   const [clearingAll, setClearingAll] = useState(false);
+  const [aiPicksRunning, setAiPicksRunning] = useState(false);
+  const [aiPicksMessage, setAiPicksMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [brandColor, setBrandColor] = useState<string | null>(null);
   const [photographerName, setPhotographerName] = useState<string | null>(null);
@@ -695,6 +697,44 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
   }
 
+  // ה-API כבר שמר את הסימונים בשרת (app/api/gallery/[id]/ai-picks) - כאן רק
+  // מעדכנים את המסך המקומי לפי מה שחזר, בלי לקרוא שוב ל-setPhotoStatus (זה
+  // היה שולח בקשת רשת נוספת לכל תמונה, מיותר כשהשרת כבר עשה את זה בבת אחת).
+  async function handleAiPicks() {
+    if (!myParticipant || galleryStatus === 'completed' || aiPicksRunning) return;
+
+    setAiPicksRunning(true);
+    setAiPicksMessage('');
+    setActionError('');
+
+    let res: Response;
+    try {
+      res = await fetch(`/api/gallery/${galleryId}/ai-picks`, { method: 'POST' });
+    } catch {
+      setAiPicksRunning(false);
+      setActionError('אין חיבור לאינטרנט כרגע - נסי שוב כשהחיבור יחזור.');
+      return;
+    }
+    setAiPicksRunning(false);
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setActionError(data.error ?? 'הניתוח נכשל, נסי שוב.');
+      return;
+    }
+
+    const data = await res.json();
+    (data.pickedPhotoIds ?? []).forEach((photoId: string) => {
+      applyStatusChange(photoId, 'maybe', myMarks[photoId]?.status);
+    });
+
+    setAiPicksMessage(
+      data.pickedCount > 0
+        ? `סימנתי ${data.pickedCount} תמונות כ"אולי" מתוך ${data.analyzedCount} שנותחו - עדיין אפשר לשנות הכל`
+        : 'לא מצאתי תמונות מובהקות לסמן - ייתכן שכבר סימנת את כולן'
+    );
+  }
+
   // אופטימי כמו setPhotoStatus - ההערה נשמרת מקומית מיד, ומסונכרנת מהתור אם
   // הייתה שגיאת רשת (לא שגיאת שרת אמיתית).
   async function saveNote() {
@@ -985,6 +1025,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </div>
       )}
 
+      {aiPicksMessage && (
+        <div role="status" style={{ padding: '0.5rem 1.5rem', background: theme.successBg, color: theme.successText, fontSize: 14, textAlign: 'center' }}>
+          {aiPicksMessage}
+        </div>
+      )}
+
       {/* מסך תודה - מוצג ברגע שהקונפטי דועך (showCelebration חוזר ל-false), כדי
           שלא יתחרה איתו על תשומת הלב. לא חוסם את הגלריה שמתחתיו - "אפשר עדיין
           לצפות בתמונות" נשאר תקף כרגיל, זה רק פאנל בזרימת העמוד. */}
@@ -1052,6 +1098,17 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginRight: '0.5rem', color: theme.errorText, opacity: clearingAll ? 0.6 : 1 }}
           >
             {clearingAll ? 'מבטלת...' : '🗑 ביטול כל הבחירה שלי'}
+          </button>
+        )}
+
+        {galleryStatus !== 'completed' && photos.length > 0 && (
+          <button
+            onClick={handleAiPicks}
+            disabled={aiPicksRunning}
+            title="Claude מנתחת עד 60 תמונות ומסמנת 'אולי' על הטובות ביותר - נקודת פתיחה, לא בחירה סופית"
+            style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginRight: '0.5rem', borderColor: theme.gold, color: theme.gold, opacity: aiPicksRunning ? 0.6 : 1 }}
+          >
+            {aiPicksRunning ? 'מנתחת תמונות...' : '🪄 עזרי לי לבחור'}
           </button>
         )}
 
