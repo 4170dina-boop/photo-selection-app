@@ -87,62 +87,79 @@ export default function UploadPage({ params }: UploadPageProps) {
     setItems(selected.map((file) => ({ file, previewUrl: URL.createObjectURL(file), status: 'pending' })));
   }
 
+  // כמה תמונות מעלים בו-זמנית. קודם זה היה אחת-אחת (תור), מה שהפך העלאה של
+  // הרבה תמונות לאיטית מאוד - כל תמונה כללה שלוש קריאות רשת ברצף (Storage,
+  // DB, עיבוד סימן מים) לפני שהבאה בתור מתחילה. 4 במקביל זו נקודת איזון -
+  // מספיק כדי לקצר משמעותית את הזמן הכולל, בלי להציף את ה-Storage/הפונקציה
+  // של עיבוד התמונות בבת אחת.
+  const UPLOAD_CONCURRENCY = 4;
+
+  async function uploadOne(i: number) {
+    const { file } = items[i];
+    setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'uploading' } : it)));
+
+    try {
+      // נתיב ייחודי בתוך ה-bucket, מסודר לפי גלריה
+      const path = `${galleryId}/${crypto.randomUUID()}-${file.name}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('gallery-photos')
+        .upload(path, file, { upsert: false });
+
+      if (uploadError) throw uploadError;
+
+      // ה-bucket פרטי (לא public) - שומרים את הנתיב בתוך ה-bucket, לא URL.
+      // ה-URL בפועל (signed, זמני) נוצר רק כשלקוחה צופה בגלריה - ראו
+      // app/api/gallery/[id]/route.ts. thumbnail_path מתחיל זהה ל-file_path
+      // (נופל בחזרה למקור אם העיבוד למטה נכשל), ומוחלף בגרסה עם סימן מים
+      // ברגע שה-route בצד שרת מסיים.
+      const { data: photo, error: dbError } = await supabase
+        .from('photos')
+        .insert({
+          gallery_id: galleryId,
+          file_path: path,
+          thumbnail_path: path,
+          original_filename: file.name,
+        })
+        .select('id')
+        .single();
+
+      if (dbError) throw dbError;
+
+      setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'processing' } : it)));
+
+      // best-effort: אם ה-watermark נכשל, thumbnail_path כבר נופל בחזרה
+      // למקור (app/api/galleries/[id]/photos/[photoId]/process/route.ts
+      // פשוט לא מעדכן אותו) - לא חוסמים את ההעלאה בגלל זה.
+      await fetch(`/api/galleries/${galleryId}/photos/${photo.id}/process`, { method: 'POST' }).catch(() => {});
+
+      setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'done' } : it)));
+    } catch (err: any) {
+      // מגבלת חשבון חינמי (טריגר enforce_photo_limit ב-DB) - ראו supabase/schema.sql
+      const message: string = err.message ?? 'שגיאה לא ידועה';
+      const displayMessage = message.includes('LIMIT_PHOTOS')
+        ? 'חשבון חינמי מוגבל ל-25 תמונות בגלריה'
+        : message;
+      setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'error', error: displayMessage } : it)));
+    }
+  }
+
   async function handleUpload() {
     if (items.length === 0) return;
 
     setUploading(true);
 
-    for (let i = 0; i < items.length; i++) {
-      const { file } = items[i];
-      setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'uploading' } : it)));
-
-      try {
-        // נתיב ייחודי בתוך ה-bucket, מסודר לפי גלריה
-        const path = `${galleryId}/${crypto.randomUUID()}-${file.name}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from('gallery-photos')
-          .upload(path, file, { upsert: false });
-
-        if (uploadError) throw uploadError;
-
-        // ה-bucket פרטי (לא public) - שומרים את הנתיב בתוך ה-bucket, לא URL.
-        // ה-URL בפועל (signed, זמני) נוצר רק כשלקוחה צופה בגלריה - ראו
-        // app/api/gallery/[id]/route.ts. thumbnail_path מתחיל זהה ל-file_path
-        // (נופל בחזרה למקור אם העיבוד למטה נכשל), ומוחלף בגרסה עם סימן מים
-        // ברגע שה-route בצד שרת מסיים.
-        const { data: photo, error: dbError } = await supabase
-          .from('photos')
-          .insert({
-            gallery_id: galleryId,
-            file_path: path,
-            thumbnail_path: path,
-            original_filename: file.name,
-          })
-          .select('id')
-          .single();
-
-        if (dbError) throw dbError;
-
-        setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'processing' } : it)));
-
-        // best-effort: אם ה-watermark נכשל, thumbnail_path כבר נופל בחזרה
-        // למקור (app/api/galleries/[id]/photos/[photoId]/process/route.ts
-        // פשוט לא מעדכן אותו) - לא חוסמים את ההעלאה בגלל זה.
-        await fetch(`/api/galleries/${galleryId}/photos/${photo.id}/process`, { method: 'POST' }).catch(() => {});
-
-        setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'done' } : it)));
-      } catch (err: any) {
-        // מגבלת חשבון חינמי (טריגר enforce_photo_limit ב-DB) - ראו supabase/schema.sql
-        const message: string = err.message ?? 'שגיאה לא ידועה';
-        const displayMessage = message.includes('LIMIT_PHOTOS')
-          ? 'חשבון חינמי מוגבל ל-25 תמונות בגלריה'
-          : message;
-        setItems((prev) =>
-          prev.map((it, idx) => (idx === i ? { ...it, status: 'error', error: displayMessage } : it))
-        );
+    // "מאגר עובדים" קטן: כל "עובד" מושך את האינדקס הבא בתור ומעלה אותו, עד
+    // שנגמרים - כך יש תמיד עד UPLOAD_CONCURRENCY העלאות פעילות בו-זמנית,
+    // בלי תזמון מסובך יותר מזה.
+    let nextIndex = 0;
+    async function worker() {
+      while (nextIndex < items.length) {
+        const i = nextIndex++;
+        await uploadOne(i);
       }
     }
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, items.length) }, worker));
 
     setUploading(false);
     await loadExistingPhotos(); // רענון סקירת התמונות הקיימות עם החדשות שהתווספו
