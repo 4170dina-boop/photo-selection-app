@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
+import { toHebrewDateString } from '@/lib/hebrewDate';
 
 interface GalleryPageProps {
   params: { id: string };
@@ -768,7 +769,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           <p style={{ color: theme.textMuted, fontSize: 14, marginBottom: '1.5rem', lineHeight: 1.6 }}>
             הגלריה מוכנה לבחירה
             {packageInfo ? ` - יש לך ${packageInfo.included} תמונות במסגרת החבילה` : ''}
-            {expiresAt ? `, עד ${new Date(expiresAt).toLocaleDateString('he-IL')}` : ''}.
+            {expiresAt ? `, עד ${toHebrewDateString(new Date(expiresAt))}` : ''}.
           </p>
           <div
             style={{
@@ -885,7 +886,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         )}
         {expiresAt && (
           <span>
-            ניתן לבחור עד <b style={{ color: theme.text }}>{new Date(expiresAt).toLocaleDateString('he-IL')}</b>
+            ניתן לבחור עד <b style={{ color: theme.text }}>{toHebrewDateString(new Date(expiresAt))}</b>
           </span>
         )}
       </div>

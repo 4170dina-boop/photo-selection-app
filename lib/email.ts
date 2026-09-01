@@ -1,4 +1,5 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { toHebrewDateString } from '@/lib/hebrewDate';
 
 // שליחת מייל דרך Resend (REST API ישיר, בלי SDK נוסף). אם RESEND_API_KEY לא
 // מוגדר - לא זורקים שגיאה, רק מדלגים ומדפיסים אזהרה. כך גם app/api/cron/tick/route.ts
@@ -143,7 +144,7 @@ interface ExpiryReminderParams {
 }
 
 export async function sendExpiryReminderEmail(params: ExpiryReminderParams): Promise<SendResult> {
-  const expiresDate = new Date(params.expiresAt).toLocaleDateString('he-IL');
+  const expiresDate = toHebrewDateString(new Date(params.expiresAt));
 
   const html = wrapEmailHtml({
     headerText: params.businessName,
