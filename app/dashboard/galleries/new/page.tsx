@@ -193,7 +193,7 @@ function NewGalleryForm() {
           <input
             type="number"
             min={0}
-            step="0.01"
+            step="1"
             value={basePrice}
             onChange={(e) => setBasePrice(e.target.value)}
             style={inputStyle}
@@ -205,7 +205,7 @@ function NewGalleryForm() {
           <input
             type="number"
             min={0}
-            step="0.01"
+            step="1"
             value={extraPhotoPrice}
             onChange={(e) => setExtraPhotoPrice(e.target.value)}
             style={inputStyle}
