@@ -46,3 +46,51 @@ describe('createWatermarkedPreview', () => {
     expect(meta.format).toBe('jpeg');
   });
 });
+
+async function buildTestLogo(size = 60): Promise<Buffer> {
+  return sharp({
+    create: { width: size, height: size, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 0.8 } },
+  })
+    .png()
+    .toBuffer();
+}
+
+describe('createWatermarkedPreview with a logo', () => {
+  it('composites the logo watermark and produces different output than the text watermark', async () => {
+    const input = await buildTestImage(800, 600);
+    const logo = await buildTestLogo();
+
+    const textOutput = await createWatermarkedPreview(input, 'סטודיו דוגמה');
+    const logoOutput = await createWatermarkedPreview(input, 'סטודיו דוגמה', logo);
+
+    expect(Buffer.compare(logoOutput, textOutput)).not.toBe(0);
+
+    const meta = await sharp(logoOutput).metadata();
+    expect(meta.width).toBe(800);
+    expect(meta.format).toBe('jpeg');
+  });
+
+  it('falls back to the text watermark when no logo is provided (null)', async () => {
+    const input = await buildTestImage(800, 600);
+
+    const withNull = await createWatermarkedPreview(input, 'סטודיו דוגמה', null);
+    const withoutArg = await createWatermarkedPreview(input, 'סטודיו דוגמה');
+
+    // אותה קלט/טקסט, בלי לוגו בשני המקרים - אמורות להפיק תוצאה זהה בייט לבייט
+    expect(Buffer.compare(withNull, withoutArg)).toBe(0);
+  });
+
+  it('falls back to the text watermark instead of throwing when the logo buffer is invalid/corrupted', async () => {
+    const input = await buildTestImage(800, 600);
+    const corruptLogo = Buffer.from('this is not a valid image file');
+
+    const output = await createWatermarkedPreview(input, 'סטודיו דוגמה', corruptLogo);
+    const textOnly = await createWatermarkedPreview(input, 'סטודיו דוגמה');
+
+    const meta = await sharp(output).metadata();
+    expect(meta.width).toBe(800);
+    expect(meta.format).toBe('jpeg');
+    // נפילה חזרה לאותו נתיב טקסטואלי - לא זריקת שגיאה שהייתה מפילה את כל ההעלאה
+    expect(Buffer.compare(output, textOnly)).toBe(0);
+  });
+});

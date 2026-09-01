@@ -29,7 +29,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
 
   const { data: photographer } = await supabase
     .from('photographers')
-    .select('id, business_name, watermark_text')
+    .select('id, business_name, watermark_text, logo_url')
     .eq('auth_user_id', user.id)
     .single();
 
@@ -69,10 +69,25 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
 
   const originalBuffer = Buffer.from(await original.arrayBuffer());
 
+  // מעדיפים את הלוגו של הצלמת כסימן מים (עוקף את באג הפונט העברי ב-SVG טקסט);
+  // אם אין לוגו, או שההורדה שלו נכשלת, נופלים חזרה לסימן המים הטקסטואלי הקיים
+  // כדי לא להפיל את כל העלאת התמונה בגלל בעיית רשת/קובץ בלוגו בלבד.
+  let logoBuffer: Buffer | null = null;
+  if (photographer.logo_url) {
+    try {
+      const logoRes = await fetch(photographer.logo_url);
+      if (logoRes.ok) {
+        logoBuffer = Buffer.from(await logoRes.arrayBuffer());
+      }
+    } catch (err) {
+      logoBuffer = null;
+    }
+  }
+
   let watermarked: Buffer;
   try {
     const watermarkText = photographer.watermark_text?.trim() || photographer.business_name;
-    watermarked = await createWatermarkedPreview(originalBuffer, watermarkText);
+    watermarked = await createWatermarkedPreview(originalBuffer, watermarkText, logoBuffer);
   } catch (err) {
     // לא מפילים את כל ההעלאה בגלל תמונה בעייתית אחת - thumbnail_path נשאר
     // כמו שהוא (זהה ל-file_path, כמו שנקבע בהעלאה), פשוט בלי סימן מים.
