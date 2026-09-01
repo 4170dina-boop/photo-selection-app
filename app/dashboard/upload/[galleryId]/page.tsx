@@ -12,7 +12,7 @@ interface UploadPageProps {
 interface UploadItem {
   file: File;
   previewUrl: string;
-  status: 'pending' | 'uploading' | 'processing' | 'done' | 'error';
+  status: 'pending' | 'uploading' | 'done' | 'error';
   error?: string;
 }
 
@@ -87,12 +87,11 @@ export default function UploadPage({ params }: UploadPageProps) {
     setItems(selected.map((file) => ({ file, previewUrl: URL.createObjectURL(file), status: 'pending' })));
   }
 
-  // כמה תמונות מעלים בו-זמנית. קודם זה היה אחת-אחת (תור), מה שהפך העלאה של
-  // הרבה תמונות לאיטית מאוד - כל תמונה כללה שלוש קריאות רשת ברצף (Storage,
-  // DB, עיבוד סימן מים) לפני שהבאה בתור מתחילה. 4 במקביל זו נקודת איזון -
-  // מספיק כדי לקצר משמעותית את הזמן הכולל, בלי להציף את ה-Storage/הפונקציה
-  // של עיבוד התמונות בבת אחת.
-  const UPLOAD_CONCURRENCY = 4;
+  // כמה תמונות מעלים בו-זמנית. קודם זה היה אחת-אחת (תור) - עכשיו גם לא
+  // מחכים יותר לעיבוד סימן המים לפני שעוברים לתמונה הבאה (ראו הערה למטה),
+  // אז שלב ההעלאה עצמו (Storage + DB) מהיר בהרבה, ואפשר להעלות יותר תמונות
+  // בו-זמנית בלי לחשוש שכל "עובד" תקוע מחכה לעיבוד איטי בצד שרת.
+  const UPLOAD_CONCURRENCY = 8;
 
   async function uploadOne(i: number) {
     const { file } = items[i];
@@ -126,12 +125,13 @@ export default function UploadPage({ params }: UploadPageProps) {
 
       if (dbError) throw dbError;
 
-      setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'processing' } : it)));
-
-      // best-effort: אם ה-watermark נכשל, thumbnail_path כבר נופל בחזרה
-      // למקור (app/api/galleries/[id]/photos/[photoId]/process/route.ts
-      // פשוט לא מעדכן אותו) - לא חוסמים את ההעלאה בגלל זה.
-      await fetch(`/api/galleries/${galleryId}/photos/${photo.id}/process`, { method: 'POST' }).catch(() => {});
+      // התמונה כבר בטוחה ב-Storage וב-DB - זה מה שקובע "הועלה בהצלחה" מבחינת
+      // הלקוחה/המכסה. עיבוד סימן המים לא מחכים לו יותר (fire-and-forget) - הוא
+      // best-effort ממילא (אם נכשל, thumbnail_path נשאר המקור, ראו הערה למעלה),
+      // אז אין סיבה שהתמונה הבאה בתור תחכה לו. זה הצעד שבאמת קיצר את הזמן
+      // הכולל בהעלאה של הרבה תמונות - הורדה+שינוי גודל+הטבעה בצד שרת הם החלק
+      // האיטי, לא ההעלאה עצמה.
+      fetch(`/api/galleries/${galleryId}/photos/${photo.id}/process`, { method: 'POST' }).catch(() => {});
 
       setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'done' } : it)));
     } catch (err: any) {
@@ -354,8 +354,7 @@ export default function UploadPage({ params }: UploadPageProps) {
                 <span>
                   {item.status === 'pending' && '⋯'}
                   {item.status === 'uploading' && '↑'}
-                  {item.status === 'processing' && <span title="מטביעה סימן מים...">✨</span>}
-                  {item.status === 'done' && <span style={{ color: theme.green }}>✓</span>}
+                  {item.status === 'done' && <span title="הועלה - סימן המים מתווסף ברקע" style={{ color: theme.green }}>✓</span>}
                   {item.status === 'error' && <span style={{ color: theme.errorText }}>✕</span>}
                 </span>
               </div>
