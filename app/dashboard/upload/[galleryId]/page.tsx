@@ -14,6 +14,8 @@ interface UploadItem {
   previewUrl: string;
   status: 'pending' | 'uploading' | 'done' | 'error';
   error?: string;
+  isDuplicateExisting?: boolean; // כבר קיים בגלריה (לפי original_filename)
+  isDuplicateInSelection?: boolean; // נבחר יותר מפעם אחת בבחירה הנוכחית
 }
 
 interface ExistingPhoto {
@@ -72,10 +74,26 @@ export default function UploadPage({ params }: UploadPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // מסמנים קבצים ששמם חוזר על עצמו בתוך הבחירה הנוכחית, או שכבר קיימים
+  // בגלריה (לפי original_filename) - השוואה מדויקת של השם, בלי נרמול.
+  function buildItems(selected: File[]): UploadItem[] {
+    const existingNames = new Set((existingPhotos ?? []).map((p) => p.original_filename));
+    const nameCounts = new Map<string, number>();
+    selected.forEach((file) => nameCounts.set(file.name, (nameCounts.get(file.name) ?? 0) + 1));
+
+    return selected.map((file) => ({
+      file,
+      previewUrl: URL.createObjectURL(file),
+      status: 'pending',
+      isDuplicateExisting: existingNames.has(file.name),
+      isDuplicateInSelection: (nameCounts.get(file.name) ?? 0) > 1,
+    }));
+  }
+
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const selected = Array.from(e.target.files ?? []);
     items.forEach((item) => URL.revokeObjectURL(item.previewUrl));
-    setItems(selected.map((file) => ({ file, previewUrl: URL.createObjectURL(file), status: 'pending' })));
+    setItems(buildItems(selected));
   }
 
   // בחירת תיקייה שלמה (webkitdirectory) לא תומכת ב-accept="image/*" - הדפדפן
@@ -84,7 +102,7 @@ export default function UploadPage({ params }: UploadPageProps) {
   function handleFolderSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const selected = Array.from(e.target.files ?? []).filter((file) => file.type.startsWith('image/'));
     items.forEach((item) => URL.revokeObjectURL(item.previewUrl));
-    setItems(selected.map((file) => ({ file, previewUrl: URL.createObjectURL(file), status: 'pending' })));
+    setItems(buildItems(selected));
   }
 
   // כמה תמונות מעלים בו-זמנית. קודם זה היה אחת-אחת (תור) - עכשיו גם לא
@@ -196,6 +214,7 @@ export default function UploadPage({ params }: UploadPageProps) {
 
   const doneCount = items.filter((it) => it.status === 'done').length;
   const errorCount = items.filter((it) => it.status === 'error').length;
+  const duplicateCount = items.filter((it) => it.isDuplicateExisting || it.isDuplicateInSelection).length;
   const allProcessed = items.length > 0 && items.every((it) => it.status === 'done' || it.status === 'error');
   // בזמן העלאה: מוסיפים doneCount לספירה החיה. אחרי סיום: loadExistingPhotos
   // כבר רענן את existingPhotos לכלול את החדשות, אז לא מוסיפים doneCount שוב.
@@ -340,6 +359,12 @@ export default function UploadPage({ params }: UploadPageProps) {
         )}
       </div>
 
+      {duplicateCount > 0 && (
+        <p style={{ background: theme.warningBg, color: theme.warningText, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem', fontSize: 13 }}>
+          ⚠️ {duplicateCount} מהקבצים שנבחרו כבר קיימים בגלריה או נבחרו יותר מפעם אחת - אפשר להעלות בכל זאת אם זה מכוון
+        </p>
+      )}
+
       {allProcessed && errorCount === 0 && (
         <p style={{ background: theme.successBg, color: theme.successText, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem' }}>
           כל התמונות הועלו בהצלחה!
@@ -354,47 +379,65 @@ export default function UploadPage({ params }: UploadPageProps) {
             gap: '1rem',
           }}
         >
-          {items.map((item, i) => (
-            <div
-              key={i}
-              style={{
-                position: 'relative',
-                borderRadius: 10,
-                overflow: 'hidden',
-                border: `2px solid ${item.status === 'error' ? theme.errorText : item.status === 'done' ? theme.green : theme.border}`,
-                background: theme.panel,
-              }}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={item.previewUrl}
-                alt={item.file.name}
-                style={{ width: '100%', aspectRatio: '3/4', objectFit: 'cover', display: 'block', opacity: item.status === 'error' ? 0.5 : 1 }}
-              />
+          {items.map((item, i) => {
+            const isDuplicate = item.isDuplicateExisting || item.isDuplicateInSelection;
+            const borderColor =
+              item.status === 'error' ? theme.errorText
+              : item.status === 'done' ? theme.green
+              : isDuplicate ? theme.warningText
+              : theme.border;
 
+            return (
               <div
+                key={i}
                 style={{
-                  position: 'absolute', bottom: 0, insetInline: 0,
-                  background: 'rgba(0,0,0,0.6)', color: theme.text, fontSize: 11,
-                  padding: '4px 8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  position: 'relative',
+                  borderRadius: 10,
+                  overflow: 'hidden',
+                  border: `2px solid ${borderColor}`,
+                  background: theme.panel,
                 }}
               >
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file.name}</span>
-                <span>
-                  {item.status === 'pending' && '⋯'}
-                  {item.status === 'uploading' && '↑'}
-                  {item.status === 'done' && <span title="הועלה - סימן המים מתווסף ברקע" style={{ color: theme.green }}>✓</span>}
-                  {item.status === 'error' && <span style={{ color: theme.errorText }}>✕</span>}
-                </span>
-              </div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={item.previewUrl}
+                  alt={item.file.name}
+                  style={{ width: '100%', aspectRatio: '3/4', objectFit: 'cover', display: 'block', opacity: item.status === 'error' ? 0.5 : 1 }}
+                />
 
-              {item.status === 'error' && item.error && (
-                <div style={{ position: 'absolute', top: 0, insetInline: 0, background: theme.errorBg, color: theme.errorText, fontSize: 11, padding: '4px 8px' }}>
-                  {item.error}
+                <div
+                  style={{
+                    position: 'absolute', bottom: 0, insetInline: 0,
+                    background: 'rgba(0,0,0,0.6)', color: theme.text, fontSize: 11,
+                    padding: '4px 8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  }}
+                >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file.name}</span>
+                  <span>
+                    {item.status === 'pending' && '⋯'}
+                    {item.status === 'uploading' && '↑'}
+                    {item.status === 'done' && <span title="הועלה - סימן המים מתווסף ברקע" style={{ color: theme.green }}>✓</span>}
+                    {item.status === 'error' && <span style={{ color: theme.errorText }}>✕</span>}
+                  </span>
                 </div>
-              )}
-            </div>
-          ))}
+
+                {(isDuplicate || (item.status === 'error' && item.error)) && (
+                  <div style={{ position: 'absolute', top: 0, insetInline: 0, display: 'flex', flexDirection: 'column' }}>
+                    {isDuplicate && (
+                      <div style={{ background: theme.warningBg, color: theme.warningText, fontSize: 11, padding: '4px 8px' }}>
+                        {item.isDuplicateExisting ? '⚠️ קובץ בשם זה כבר קיים בגלריה' : '⚠️ כבר נבחר'}
+                      </div>
+                    )}
+                    {item.status === 'error' && item.error && (
+                      <div style={{ background: theme.errorBg, color: theme.errorText, fontSize: 11, padding: '4px 8px' }}>
+                        {item.error}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
