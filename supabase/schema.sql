@@ -69,6 +69,11 @@ create table galleries (
   -- משולם בהזמנה, הרבה לפני שהלקוחה סיימה לבחור). אין אינטגרציית סליקה
   -- (ראו README) אז זה סימון ידני בלבד, לא נגזר מכלום אוטומטית. null = טרם שולם.
   paid_at timestamptz,
+  -- מונה צפיות של הלקוחה בגלריה (כל טעינה מוצלחת, לא ייחודי) - כדי שהצלמת
+  -- תדע אם הלקוחה בכלל פתחה את הקישור, לא רק שהמייל "נשלח" (יכול להיחסם
+  -- אצל הלקוחה בלי שום דרך אחרת לדעת - ראו app/api/gallery/[id]/route.ts).
+  view_count int default 0 not null,
+  last_viewed_at timestamptz,
   created_at timestamptz default now()
 );
 
@@ -261,6 +266,10 @@ create policy "photographers see own sync jobs" on sync_jobs
 
 -- אם כבר הרצת גרסה קודמת בלי סימון "שולם" לגלריה, מריצים גם את זה:
 -- alter table galleries add column if not exists paid_at timestamptz;
+
+-- אם כבר הרצת גרסה קודמת בלי מונה צפיות לגלריה, מריצים גם את זה:
+-- alter table galleries add column if not exists view_count int default 0 not null;
+-- alter table galleries add column if not exists last_viewed_at timestamptz;
 
 -- אם כבר הרצת גרסה קודמת בלי הערות פרטיות של הצלמת על הגלריה, מריצים גם את זה:
 -- alter table galleries add column if not exists photographer_notes text;

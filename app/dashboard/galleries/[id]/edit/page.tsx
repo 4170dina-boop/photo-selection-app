@@ -38,6 +38,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [notFound, setNotFound] = useState(false);
   const [businessName, setBusinessName] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
+  const [viewCount, setViewCount] = useState(0);
+  const [lastViewedAt, setLastViewedAt] = useState<string | null>(null);
 
   useEffect(() => {
     loadGallery();
@@ -73,6 +75,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setExpiresAt(data.expires_at ? data.expires_at.slice(0, 10) : '');
     setPhotographerNotes(data.photographer_notes ?? '');
     setReminderDays(data.reminder_days != null ? String(data.reminder_days) : '');
+    setViewCount(data.view_count ?? 0);
+    setLastViewedAt(data.last_viewed_at ?? null);
     setLoading(false);
   }
 
@@ -281,6 +285,12 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
                 {messageCopied ? 'הועתק!' : '✎ העתקת הודעה מוכנה לשליחה'}
               </button>
             </div>
+          </div>
+
+          <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: `1px solid ${theme.border}`, fontSize: 12, color: theme.textMuted }}>
+            {viewCount > 0
+              ? `👁 הלקוחה פתחה את הגלריה ${viewCount} פעמים${lastViewedAt ? ` - לאחרונה ב-${toHebrewDateString(new Date(lastViewedAt))}` : ''}`
+              : '👁 הלקוחה עדיין לא פתחה את הגלריה'}
           </div>
         </div>
       )}

@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error: galleryError } = await supabaseAdmin
     .from('galleries')
-    .select('id, status, expires_at, owner_participant_id, clients(full_name), photographers(brand_color, business_name, logo_url, custom_theme)')
+    .select('id, status, expires_at, owner_participant_id, view_count, clients(full_name), photographers(brand_color, business_name, logo_url, custom_theme)')
     .eq('id', galleryId)
     .single();
 
@@ -46,6 +46,16 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       .eq('id', galleryId);
     gallery.status = 'in_progress';
   }
+
+  // מונה צפיות - כל טעינה מוצלחת של הגלריה (כולל רענון), לא ייחודי לפי מבקר.
+  // לצלמת אין דרך אחרת לדעת אם הלקוחה בכלל פתחה את הקישור בפועל (למשל אם
+  // המייל האוטומטי לא הגיע, או שהקישור נחסם אצל הלקוחה) - ראו app/dashboard/galleries/[id]/edit/page.tsx.
+  // best-effort, לא חוסם את הטעינה אם נכשל.
+  supabaseAdmin
+    .from('galleries')
+    .update({ view_count: (gallery.view_count ?? 0) + 1, last_viewed_at: new Date().toISOString() })
+    .eq('id', galleryId)
+    .then(() => {}, () => {});
 
   // שיתוף גלריה משפחתי: קוד הגישה כבר אומת, אבל עדיין לא ידוע מי בפועל
   // נכנס/ת (הבעלים הרשומה, או בן משפחה אחר) - ראו app/api/gallery/[id]/identify/route.ts.
