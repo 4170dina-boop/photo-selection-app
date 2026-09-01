@@ -32,6 +32,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [sendingReminder, setSendingReminder] = useState(false);
   const [reminderMessage, setReminderMessage] = useState('');
   const [copied, setCopied] = useState(false);
+  const [messageCopied, setMessageCopied] = useState(false);
   const [error, setError] = useState('');
   const [notFound, setNotFound] = useState(false);
 
@@ -109,7 +110,24 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
       return;
     }
 
-    setResendMessage(data.emailSent ? 'ההזמנה נשלחה שוב בהצלחה' : 'שליחת המייל נכשלה - ודאו ששירות המייל מוגדר');
+    setResendMessage(
+      data.emailSent
+        ? 'ההזמנה נשלחה שוב בהצלחה'
+        : 'שליחת המייל האוטומטי נכשלה - אפשר להעתיק הודעה מוכנה למטה ולשלוח בעצמך (וואטסאפ/מייל)'
+    );
+  }
+
+  // הודעה חמה ומוכנה לשליחה ידנית (וואטסאפ/מייל רגיל) - הפתרון המעשי כל עוד
+  // אין דומיין מאומת ב-Resend ומיילים אוטומטיים לא מגיעים ללקוחות אמיתיות
+  // (ראו README, "מיילים אוטומטיים"). טקסט פשוט, לא HTML - כדי שיתאים לכל אפליקציה.
+  async function handleCopyFormattedMessage() {
+    const galleryUrl = `${window.location.origin}/gallery/${galleryId}`;
+    const expiryLine = expiresAt ? `\nהגלריה פתוחה לבחירה עד ${new Date(expiresAt).toLocaleDateString('he-IL')}.` : '';
+    const message = `היי ${clientName || ''}! 📸\n\nהגלריה שלך עם התמונות מוכנה לבחירה.\n\nקישור: ${galleryUrl}\nקוד גישה: ${accessCode}${expiryLine}\n\nמחכה לראות מה תבחרי! ✨`;
+
+    await navigator.clipboard.writeText(message);
+    setMessageCopied(true);
+    setTimeout(() => setMessageCopied(false), 2000);
   }
 
   async function handleSendReminder() {
@@ -170,18 +188,28 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
               <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: '0.25rem' }}>קוד גישה</div>
               <div style={{ fontFamily: 'monospace', fontSize: 20, fontWeight: 'bold', color: theme.gold, letterSpacing: 1 }}>{accessCode}</div>
             </div>
-            <button
-              type="button"
-              onClick={async () => {
-                const galleryUrl = `${window.location.origin}/gallery/${galleryId}`;
-                await navigator.clipboard.writeText(`${galleryUrl}\nקוד גישה: ${accessCode}`);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-              }}
-              style={{ ...outlineButtonStyle, padding: '0.5rem 1rem' }}
-            >
-              {copied ? 'הועתק!' : 'העתקת קישור וקוד'}
-            </button>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={async () => {
+                  const galleryUrl = `${window.location.origin}/gallery/${galleryId}`;
+                  await navigator.clipboard.writeText(`${galleryUrl}\nקוד גישה: ${accessCode}`);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+                style={{ ...outlineButtonStyle, padding: '0.5rem 1rem' }}
+              >
+                {copied ? 'הועתק!' : 'העתקת קישור וקוד'}
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyFormattedMessage}
+                title="הודעה מוכנה עם ברכה, קישור וקוד - להדביק בוואטסאפ/מייל ולשלוח בעצמך"
+                style={{ ...outlineButtonStyle, padding: '0.5rem 1rem', borderColor: theme.gold, color: theme.gold }}
+              >
+                {messageCopied ? 'הועתק!' : '✎ העתקת הודעה מוכנה לשליחה'}
+              </button>
+            </div>
           </div>
         </div>
       )}
