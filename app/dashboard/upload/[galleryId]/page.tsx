@@ -93,11 +93,40 @@ export default function UploadPage({ params }: UploadPageProps) {
   // בו-זמנית בלי לחשוש שכל "עובד" תקוע מחכה לעיבוד איטי בצד שרת.
   const UPLOAD_CONCURRENCY = 8;
 
+  // דחיסת JPEG לפני העלאה, כדי לקצר משמעותית את זמן ההעלאה בפועל (פחות בייטים
+  // לשלוח, לא רק פחות המתנה לעיבוד). לא נוגעים ברזולוציה (רק באיכות ה-JPEG) -
+  // אין הבדל נראה לעין במסך או בהדפסה רגילה, וממילא הקובץ הזה לא הקובץ שהצלמת
+  // עורכת בפועל (היא עובדת על המקור המקומי שלה, ראו MagicButton) - הוא רק
+  // לתצוגה/בחירה של הלקוחה. אם הדחיסה נכשלת או לא משפרת, מעלים את המקור כמו שהוא.
+  const COMPRESSED_JPEG_QUALITY = 0.85;
+
+  async function compressForUpload(file: File): Promise<File> {
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return file;
+
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return file;
+      ctx.drawImage(bitmap, 0, 0);
+
+      const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', COMPRESSED_JPEG_QUALITY));
+      if (!blob || blob.size >= file.size) return file;
+
+      return new File([blob], file.name, { type: 'image/jpeg' });
+    } catch {
+      return file;
+    }
+  }
+
   async function uploadOne(i: number) {
-    const { file } = items[i];
+    const originalFile = items[i].file;
     setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'uploading' } : it)));
 
     try {
+      const file = await compressForUpload(originalFile);
       // נתיב ייחודי בתוך ה-bucket, מסודר לפי גלריה
       const path = `${galleryId}/${crypto.randomUUID()}-${file.name}`;
 
