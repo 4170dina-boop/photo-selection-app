@@ -14,6 +14,7 @@ interface GalleryRow {
   last_activity_at: string | null;
   last_reminder_sent_at: string | null;
   sent_at: string | null;
+  editing_started_at: string | null;
   delivered_at: string | null;
   paid_at: string | null;
   owner_participant_id: string | null;
@@ -35,6 +36,7 @@ export default function GalleriesDashboard() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
   const [bulkMessage, setBulkMessage] = useState('');
+  const [togglingEditingId, setTogglingEditingId] = useState<string | null>(null);
   const [togglingDeliveredId, setTogglingDeliveredId] = useState<string | null>(null);
   const [togglingPaidId, setTogglingPaidId] = useState<string | null>(null);
   const [coverUrls, setCoverUrls] = useState<Record<string, string>>({});
@@ -51,6 +53,18 @@ export default function GalleriesDashboard() {
       else next.add(id);
       return next;
     });
+  }
+
+  async function handleToggleEditing(row: GalleryRow, e: React.MouseEvent) {
+    e.stopPropagation();
+    setTogglingEditingId(row.id);
+
+    const res = await fetch(`/api/galleries/${row.id}/toggle-editing`, { method: 'POST' });
+    setTogglingEditingId(null);
+
+    if (!res.ok) return;
+    const data = await res.json();
+    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, editing_started_at: data.editingStartedAt } : r)));
   }
 
   async function handleToggleDelivered(row: GalleryRow, e: React.MouseEvent) {
@@ -132,7 +146,7 @@ export default function GalleriesDashboard() {
 
     const { data: galleries } = await supabase
       .from('galleries')
-      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, delivered_at, paid_at, owner_participant_id, clients(full_name), packages(included_photos, base_price, extra_photo_price)')
+      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, editing_started_at, delivered_at, paid_at, owner_participant_id, clients(full_name), packages(included_photos, base_price, extra_photo_price)')
       .order('created_at', { ascending: false });
 
     if (!galleries) {
@@ -505,6 +519,23 @@ export default function GalleriesDashboard() {
             >
               {statusLabel(status)}
             </span>
+
+            {status === 'completed' && (
+              <button
+                onClick={(e) => handleToggleEditing(row, e)}
+                disabled={togglingEditingId === row.id}
+                title={row.editing_started_at ? 'לחצי כדי לבטל את סימון תחילת העריכה' : 'לחצי כשמתחילים לערוך את התמונות שנבחרו'}
+                style={{
+                  padding: '0.25rem 0.75rem', borderRadius: 16, fontSize: 12, whiteSpace: 'nowrap', cursor: 'pointer',
+                  border: `1px solid ${row.editing_started_at ? theme.gold : theme.border}`,
+                  color: row.editing_started_at ? theme.gold : theme.textFaint,
+                  background: 'transparent',
+                  opacity: togglingEditingId === row.id ? 0.6 : 1,
+                }}
+              >
+                {row.editing_started_at ? '🖌 בעריכה' : 'סימון כבעריכה'}
+              </button>
+            )}
 
             {status === 'completed' && (
               <button

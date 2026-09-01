@@ -75,6 +75,16 @@ function initials(name: string): string {
   return name.trim().charAt(0).toUpperCase() || '?';
 }
 
+// עוזר טהור למצב "בחירה מהירה" - מדלג קדימה מ-fromIndex על תמונות שכבר
+// סומנו (למשל דרך הגריד הרגיל, או בסבב קודם) עד לתמונה הראשונה שעוד לא
+// הוכרעה. מוחזר queue.length אם לא נשארה אף תמונה לא-מסומנת (=הסבב נגמר).
+function findNextUnmarkedIndex(queue: string[], fromIndex: number, isMarked: (id: string) => boolean): number {
+  for (let i = fromIndex; i < queue.length; i++) {
+    if (!isMarked(queue[i])) return i;
+  }
+  return queue.length;
+}
+
 // תור פעולות ממתינות (localStorage) - כשהאינטרנט חלש/מנותק באירוע עצמו,
 // בחירה/הערה נשמרת מקומית ומסונכרנת אוטומטית ברגע שהחיבור חוזר, כדי שהלקוחה
 // תוכל להמשיך לדפדף ולבחור בלי לחכות לתשובת שרת על כל קליק.
@@ -130,6 +140,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [pendingCount, setPendingCount] = useState(0);
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [swipeMode, setSwipeMode] = useState(false);
+  const [swipeQueue, setSwipeQueue] = useState<string[]>([]);
+  const [swipeCursor, setSwipeCursor] = useState(0);
+  const [swipePass, setSwipePass] = useState<1 | 2>(1);
   const [enlargedId, setEnlargedId] = useState<string | null>(null);
   const [zoomScale, setZoomScale] = useState(1);
   const enlargedImgRef = useRef<HTMLImageElement | null>(null);
@@ -217,6 +231,29 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slideshowActive]);
+
+  // חצים ל"בחירה מהירה" - מוסכמה מוכרת מאפליקציות סוויפ (ימינה=כן, שמאלה=לא):
+  // ימינה=👍 בחרי, שמאלה=👎 דילוג, למטה/רווח=🤔 אולי. הכפתורים על המסך נשארים
+  // הדרך העיקרית (המצב מיועד בעיקר לנייד), זו רק נוחות נוספת למי שבמחשב.
+  useEffect(() => {
+    if (!swipeMode) return;
+
+    function handleSwipeKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        exitSwipeMode();
+        return;
+      }
+      const idx = findNextUnmarkedIndex(swipeQueue, swipeCursor, (id) => !!myMarks[id]?.status);
+      if (idx >= swipeQueue.length) return; // מסך הסיכום - רק Escape רלוונטי
+      if (e.key === 'ArrowRight') handleSwipeAction('selected');
+      else if (e.key === 'ArrowLeft') handleSwipeAction(null);
+      else if (e.key === 'ArrowDown' || e.key === ' ') handleSwipeAction('maybe');
+    }
+
+    window.addEventListener('keydown', handleSwipeKeyDown);
+    return () => window.removeEventListener('keydown', handleSwipeKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [swipeMode, swipeQueue, swipeCursor, myMarks]);
 
   // מצב אופליין: רושמים service worker שממטמן תמונות שכבר נטענו (public/sw.js),
   // כדי שדפדוף בתמונות שכבר נצפו ימשיך לעבוד גם באינטרנט חלש/מנותק באירוע.
@@ -772,6 +809,34 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     });
   }
 
+  // בונה את תור התמונות למצב "בחירה מהירה" - סבב 1 עובר על כל התמונות (בסדר
+  // הגלריה), סבב 2 מסנן רק לאלה שסומנו "אולי" בסבב הראשון.
+  function startSwipeMode(pass: 1 | 2) {
+    const queue = pass === 1
+      ? photos.map((p) => p.id)
+      : photos.filter((p) => myMarks[p.id]?.status === 'maybe').map((p) => p.id);
+    setSwipeQueue(queue);
+    setSwipeCursor(0);
+    setSwipePass(pass);
+    setCompareMode(false); // לא לערבב שני מצבי תצוגה מלאה בו-זמנית
+    setCompareIds([]);
+    setSwipeMode(true);
+  }
+
+  function exitSwipeMode() {
+    setSwipeMode(false);
+  }
+
+  // מפעילה את הפעולה על התמונה המוצגת כרגע ומתקדמת - findNextUnmarkedIndex
+  // דואג שהתמונה הבאה שתוצג היא תמיד הבאה שעדיין לא הוכרעה, גם אם חלק
+  // מהתמונות בתור כבר סומנו קודם (למשל דרך הגריד הרגיל).
+  async function handleSwipeAction(status: 'maybe' | 'selected' | null) {
+    const idx = findNextUnmarkedIndex(swipeQueue, swipeCursor, (id) => !!myMarks[id]?.status);
+    if (idx >= swipeQueue.length) return;
+    await setPhotoStatus(swipeQueue[idx], status);
+    setSwipeCursor(idx + 1);
+  }
+
   // דפדוף בין תמונות במצב הגדלה - בלי לצאת ולהיכנס מחדש מהגריד. מאפסת זום
   // בכל מעבר, כדי שלא להישאר מוגדלת על תמונה חדשה בטעות.
   function navigateEnlarged(delta: 1 | -1) {
@@ -946,6 +1011,17 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           >
             {compareMode ? '✕ צאי ממצב השוואה' : '⇄ השוואה'}
           </button>
+          <button
+            onClick={() => (swipeMode ? exitSwipeMode() : startSwipeMode(1))}
+            disabled={galleryStatus === 'completed' || photos.length === 0}
+            style={{
+              ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12,
+              borderColor: swipeMode ? accent : theme.border, color: swipeMode ? accent : theme.textMuted,
+              opacity: galleryStatus === 'completed' || photos.length === 0 ? 0.5 : 1,
+            }}
+          >
+            {swipeMode ? '✕ צאי מבחירה מהירה' : '⚡ בחירה מהירה'}
+          </button>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -1009,15 +1085,23 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         )}
       </div>
 
+      {/* מסגור חיובי/upsell ("קיבלת עוד") ולא אזהרה ("חרגת") - נשען על אותה
+          אנרגיה כמו "סה״כ משוער לחבילה" בקופסה שמעל, כדי שהשתיים יקראו
+          כסיפור מחיר אחד ועקבי ולא כשתי אזהרות נפרדות. */}
+      {overIncluded > 0 && packageInfo && (
+        <div
+          style={{
+            margin: '0.6rem 1.5rem 0', padding: '0.6rem 1rem', borderRadius: 8,
+            background: `${accent}1f`, border: `1px solid ${accent}44`, color: accent, fontSize: 14,
+          }}
+        >
+          ✨ בחרת {ownerSelectedCount} תמונות ({packageInfo.included} כלולות + {overIncluded} נוספות) · תוספת: {Math.round(extraCost)} ₪
+        </div>
+      )}
+
       <p style={{ textAlign: 'center', fontSize: 12, color: theme.textFaint, padding: '0.5rem 1.5rem 0' }}>
         לחיצה ראשונה על תמונה = <span style={{ color: theme.green }}>אולי</span> · לחיצה שנייה = <span style={{ color: accent }}>נבחר</span> · לחיצה שלישית מבטלת
       </p>
-
-      {overIncluded > 0 && (
-        <div style={{ padding: '0.5rem 1.5rem', background: theme.warningBg, color: theme.warningText, fontSize: 14 }}>
-          עברת ב-{overIncluded} תמונות מהחבילה — עלות נוספת: {Math.round(extraCost)} ₪
-        </div>
-      )}
 
       {actionError && (
         <div role="alert" style={{ padding: '0.5rem 1.5rem', background: theme.errorBg, color: theme.errorText, fontSize: 14 }}>
@@ -1216,6 +1300,121 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           })}
         </div>
       )}
+
+      {swipeMode && (() => {
+        const idx = findNextUnmarkedIndex(swipeQueue, swipeCursor, (id) => !!myMarks[id]?.status);
+        const total = swipeQueue.length;
+        const done = idx >= total;
+
+        if (done) {
+          const isSecondPass = swipePass === 2;
+          return (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="סיכום בחירה מהירה"
+              style={{
+                position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', zIndex: 60,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                padding: '2rem', textAlign: 'center', gap: '1.1rem',
+              }}
+            >
+              <p style={{ fontSize: 40, margin: 0 }}>🎉</p>
+              <p style={{ fontSize: 22, fontFamily: theme.fontSerif, color: '#fff', margin: 0 }}>
+                {isSecondPass ? 'סיימת גם את הסבב השני!' : 'עברת על כל התמונות!'}
+              </p>
+              {!isSecondPass && maybeCount > 0 && (
+                <>
+                  <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: 14, maxWidth: 320, margin: 0 }}>
+                    סימנת {maybeCount} תמונות כ"אולי" - רוצה לעבור עליהן שוב ולהחליט סופית?
+                  </p>
+                  <button onClick={() => startSwipeMode(2)} style={{ ...primaryButtonStyle, minWidth: 240 }}>
+                    כן, סבב שני על "אולי" ({maybeCount})
+                  </button>
+                </>
+              )}
+              <button
+                onClick={exitSwipeMode}
+                style={{ ...outlineButtonStyle, minWidth: 240, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}
+              >
+                {!isSecondPass && maybeCount > 0 ? 'לא תודה, סיימתי' : 'סגירה'}
+              </button>
+            </div>
+          );
+        }
+
+        const photo = photos.find((p) => p.id === swipeQueue[idx]);
+        if (!photo) return null;
+
+        const swipeActionBtn = (bg: string, border: string) => ({
+          width: 68, height: 68, borderRadius: '50%', fontSize: 30, cursor: 'pointer',
+          background: bg, border: `1px solid ${border}`,
+        });
+
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`בחירה מהירה: תמונה ${idx + 1} מתוך ${total}`}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.94)', zIndex: 60,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between',
+              padding: '1.1rem 1rem',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', maxWidth: 480 }}>
+              <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13 }}>
+                {swipePass === 2 ? 'סבב שני · "אולי" · ' : 'בחירה מהירה · '}{idx + 1}/{total}
+              </span>
+              <button
+                onClick={exitSwipeMode}
+                title="סגירה"
+                style={{
+                  width: 36, height: 36, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                  background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 16, cursor: 'pointer',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', minHeight: 0 }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={photo.fullUrl ?? photo.thumbnailUrl ?? ''}
+                alt=""
+                draggable={false}
+                onContextMenu={(e) => e.preventDefault()}
+                style={{
+                  maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', borderRadius: 8,
+                  WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '1.5rem', paddingTop: '1rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                <button onClick={() => handleSwipeAction(null)} aria-label="דילוג, בלי סימון" style={swipeActionBtn('rgba(255,255,255,0.08)', 'rgba(255,255,255,0.3)')}>
+                  👎
+                </button>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>דילוג</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                <button onClick={() => handleSwipeAction('maybe')} aria-label="סמני כאולי" style={swipeActionBtn(`${theme.green}33`, theme.green)}>
+                  🤔
+                </button>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>אולי</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                <button onClick={() => handleSwipeAction('selected')} aria-label="בחרי תמונה זו" style={swipeActionBtn(`${accent}33`, accent)}>
+                  👍
+                </button>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>בחרתי</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {enlargedId && (() => {
         const photo = photos.find((p) => p.id === enlargedId);

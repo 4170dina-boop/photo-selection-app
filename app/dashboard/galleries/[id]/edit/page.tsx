@@ -444,15 +444,24 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
       <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
         <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.5rem' }}>תמונות שנבחרו</h2>
         <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '1rem' }}>
-          מיון אוטומטי מול תיקייה מקומית (Chrome/Edge), או הורדת כל התמונות שנבחרו כקובץ ZIP אחד.
+          מיון אוטומטי מול תיקייה מקומית (Chrome/Edge) - מעתיק לשלוש תת-תיקיות ביעד: Selected (נבחרו),
+          Maybe (אולי) ו-Extras (לא סומנו בכלל), או הורדת כל התמונות שנבחרו כקובץ ZIP אחד.
         </p>
         <MagicButton galleryId={galleryId} />
-        <a
-          href={`/api/galleries/${galleryId}/selections-export`}
-          style={{ display: 'inline-block', marginTop: '0.75rem', color: theme.textMuted, fontSize: 13, textDecoration: 'underline' }}
-        >
-          הורדת רשימת הבחירה כקובץ CSV
-        </a>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.4rem', marginTop: '0.75rem' }}>
+          <a
+            href={`/api/galleries/${galleryId}/selections-export`}
+            style={{ color: theme.textMuted, fontSize: 13, textDecoration: 'underline' }}
+          >
+            הורדת רשימת הבחירה כקובץ CSV
+          </a>
+          <a
+            href={`/api/galleries/${galleryId}/lightroom-export`}
+            style={{ color: theme.textMuted, fontSize: 13, textDecoration: 'underline' }}
+          >
+            ייצוא ל-Lightroom/Capture One (CSV)
+          </a>
+        </div>
       </div>
 
       <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>

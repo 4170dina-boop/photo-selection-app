@@ -34,6 +34,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           <Link href="/dashboard/reports" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
             דוח הכנסות
           </Link>
+          <Link href="/dashboard/analytics" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+            אנליטיקס
+          </Link>
           <Link href="/dashboard/settings" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
             הגדרות
           </Link>
