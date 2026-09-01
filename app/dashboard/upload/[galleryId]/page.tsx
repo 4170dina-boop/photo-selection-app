@@ -78,6 +78,15 @@ export default function UploadPage({ params }: UploadPageProps) {
     setItems(selected.map((file) => ({ file, previewUrl: URL.createObjectURL(file), status: 'pending' })));
   }
 
+  // בחירת תיקייה שלמה (webkitdirectory) לא תומכת ב-accept="image/*" - הדפדפן
+  // מחזיר את כל הקבצים בתיקייה (כולל למשל .DS_Store), אז מסננים ידנית לפי
+  // סוג הקובץ בפועל אחרי הבחירה.
+  function handleFolderSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const selected = Array.from(e.target.files ?? []).filter((file) => file.type.startsWith('image/'));
+    items.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+    setItems(selected.map((file) => ({ file, previewUrl: URL.createObjectURL(file), status: 'pending' })));
+  }
+
   async function handleUpload() {
     if (items.length === 0) return;
 
@@ -239,6 +248,26 @@ export default function UploadPage({ params }: UploadPageProps) {
             accept="image/*"
             multiple
             onChange={handleFileSelect}
+            disabled={uploading}
+            style={{ display: 'none' }}
+          />
+        </label>
+
+        <label
+          style={{
+            display: 'inline-block', padding: '0.6rem 1.1rem', borderRadius: 8,
+            border: `1px solid ${theme.border}`, color: theme.text, cursor: uploading ? 'default' : 'pointer',
+            opacity: uploading ? 0.6 : 1,
+          }}
+        >
+          בחירת תיקייה שלמה
+          <input
+            type="file"
+            // @ts-expect-error webkitdirectory לא בטיפוסי TypeScript הרשמיים, אבל נתמך בכל הדפדפנים המרכזיים
+            webkitdirectory=""
+            directory=""
+            multiple
+            onChange={handleFolderSelect}
             disabled={uploading}
             style={{ display: 'none' }}
           />
