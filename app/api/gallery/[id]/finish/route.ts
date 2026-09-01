@@ -67,9 +67,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         .eq('id', gallery.photographer_id)
         .single();
 
+      let photographerEmail: string | undefined;
       if (photographer?.auth_user_id) {
         const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(photographer.auth_user_id);
-        const photographerEmail = authUser?.user?.email;
+        photographerEmail = authUser?.user?.email;
 
         if (photographerEmail) {
           const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
@@ -88,6 +89,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           clientName,
           businessName: photographer?.business_name ?? '',
           filenames,
+          replyTo: photographerEmail,
         });
       }
     } catch (err) {

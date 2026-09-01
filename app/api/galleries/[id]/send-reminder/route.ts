@@ -64,6 +64,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
     accessCode: client.access_code,
     expiresAt: gallery.expires_at,
+    replyTo: user.email,
   });
 
   if (emailSent) {

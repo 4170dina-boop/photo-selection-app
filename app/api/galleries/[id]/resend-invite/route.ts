@@ -48,6 +48,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     businessName: photographer.business_name,
     galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
     accessCode: client.access_code,
+    replyTo: user.email,
   });
 
   return NextResponse.json({ emailSent });

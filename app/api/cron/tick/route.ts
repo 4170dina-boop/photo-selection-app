@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
   const { data: candidates, error: candidatesError } = await supabaseAdmin
     .from('galleries')
     .select(
-      'id, expires_at, reminder_days, status, clients(full_name, email, access_code), photographers(business_name, reminder_days_default)'
+      'id, expires_at, reminder_days, status, clients(full_name, email, access_code), photographers(business_name, reminder_days_default, auth_user_id)'
     )
     .in('status', ['sent', 'in_progress'])
     .not('expires_at', 'is', null)
@@ -69,6 +69,18 @@ export async function GET(req: NextRequest) {
 
     if (now < reminderThreshold) continue; // עוד לא הגיע הזמן להזכיר
 
+    // best-effort - כדי שתשובה של הלקוחה תגיע ישירות לצלמת. אם השליפה נכשלת
+    // (למשל המשתמש כבר לא קיים), פשוט שולחים בלי reply-to במקום להפיל את כל הריצה.
+    let photographerEmail: string | undefined;
+    if (photographer.auth_user_id) {
+      try {
+        const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(photographer.auth_user_id);
+        photographerEmail = authUser?.user?.email;
+      } catch {
+        // בכוונה שקט - ראו הערה למעלה
+      }
+    }
+
     const result = await sendExpiryReminderEmail({
       to: client.email,
       clientName: client.full_name,
@@ -76,6 +88,7 @@ export async function GET(req: NextRequest) {
       galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
       accessCode: client.access_code,
       expiresAt: gallery.expires_at,
+      replyTo: photographerEmail,
     });
 
     if (result.sent) {

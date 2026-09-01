@@ -147,6 +147,7 @@ export async function POST(req: NextRequest) {
     businessName: photographer.business_name,
     galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
     accessCode,
+    replyTo: user.email,
   });
 
   return NextResponse.json({ galleryId: gallery.id, accessCode, emailSent });
