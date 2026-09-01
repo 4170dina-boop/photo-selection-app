@@ -132,6 +132,14 @@ function NewGalleryForm() {
           >
             {copied ? 'הועתק!' : 'העתקת קישור וקוד'}
           </button>
+          <a
+            href={`https://wa.me/?text=${encodeURIComponent(`היי! הגלריה שלך מוכנה לבחירת תמונות 📸\n${galleryUrl}\nקוד גישה: ${created.accessCode}`)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ ...outlineButtonStyle, textDecoration: 'none' }}
+          >
+            שליחה בוואטסאפ
+          </a>
           <Link href={`/dashboard/upload/${created.galleryId}`} style={{ ...outlineButtonStyle, textDecoration: 'none' }}>
             להעלאת תמונות
           </Link>
