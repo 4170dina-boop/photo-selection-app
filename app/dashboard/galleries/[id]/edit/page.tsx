@@ -36,9 +36,18 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [messageCopied, setMessageCopied] = useState(false);
   const [error, setError] = useState('');
   const [notFound, setNotFound] = useState(false);
+  const [businessName, setBusinessName] = useState('');
 
   useEffect(() => {
     loadGallery();
+    // רק לשם המותג בהודעה המוכנה להעתקה (handleCopyFormattedMessage) - לא
+    // קריטי לשאר הדף, אז כישלון כאן פשוט משאיר כותרת גנרית ולא חוסם כלום.
+    (async () => {
+      const res = await fetch('/api/photographer');
+      if (!res.ok) return;
+      const data = await res.json();
+      setBusinessName(data.business_name ?? '');
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [galleryId]);
 
@@ -118,15 +127,69 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     );
   }
 
+  // גרסת HTML מעוצבת של אותה הודעה, באותו סגנון בדיוק כמו המיילים האוטומטיים
+  // הממותגים (lib/email.ts: wrapEmailHtml/accessCodeBadge - כותרת כהה+זהב,
+  // כרטיס לבן, כפתור זהב). לא ניתן לייבא את lib/email.ts כאן (הוא משתמש
+  // ב-service_role client, לא מיועד לרוץ בדפדפן) אז זה כפול בכוונה - קטן
+  // ומוגדר-עצמאי מספיק שזה לא מצדיק שיתוף קוד בין שרת ללקוח בשביל זה.
+  function buildInviteEmailHtml(galleryUrl: string, expiryLine: string) {
+    return `
+      <div dir="rtl" style="font-family: sans-serif; background: #f4f1ec; padding: 32px 16px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e7e0d5;">
+          <tr>
+            <td style="background: #0f1626; padding: 20px 28px; text-align: center;">
+              <span style="font-family: sans-serif; font-size: 18px; font-weight: 700; color: #e3b3ac;">✨ ${businessName || 'הגלריה שלך'}</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 28px; text-align: center; color: #2a2420; font-size: 15px; line-height: 1.7;">
+              <p style="margin: 0 0 8px;">היי ${clientName || ''}! 📸</p>
+              <p style="margin: 0 0 8px;">הגלריה שלך עם התמונות מוכנה לבחירה.${expiryLine}</p>
+              <div style="margin: 18px 0; padding: 12px 20px; background: #f4f1ec; border: 1px dashed #c98f89; border-radius: 8px; display: inline-block;">
+                <span style="font-size: 12px; color: #9a8f7d;">קוד גישה</span><br />
+                <span style="font-size: 22px; font-weight: 700; letter-spacing: 2px; color: #a06a63; font-family: monospace;">${accessCode}</span>
+              </div>
+              <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">מחכה לראות מה תבחרי! ✨</p>
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 24px auto 0;">
+                <tr>
+                  <td style="border-radius: 8px; background: linear-gradient(135deg, #e3b3ac, #c98f89);">
+                    <a href="${galleryUrl}" style="display: inline-block; padding: 14px 32px; font-family: sans-serif; font-size: 15px; font-weight: 700; color: #20120f; text-decoration: none;">
+                      כניסה לגלריה
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </div>
+    `;
+  }
+
   // הודעה חמה ומוכנה לשליחה ידנית (וואטסאפ/מייל רגיל) - הפתרון המעשי כל עוד
   // אין דומיין מאומת ב-Resend ומיילים אוטומטיים לא מגיעים ללקוחות אמיתיות
-  // (ראו README, "מיילים אוטומטיים"). טקסט פשוט, לא HTML - כדי שיתאים לכל אפליקציה.
+  // (ראו README, "מיילים אוטומטיים"). מעתיקים גם טקסט רגיל וגם HTML מעוצב
+  // באותה פעולה (navigator.clipboard.write עם שני ה-MIME types) - וואטסאפ
+  // ואפליקציות טקסט פשוט משתמשות בגרסת הטקסט, וג'ימייל/אאוטלוק (עריכת טקסט
+  // עשיר) מדביקים את גרסת ה-HTML המעוצבת אוטומטית. דפדפנים ישנים שלא תומכים
+  // ב-ClipboardItem נופלים בחזרה לטקסט רגיל בלבד.
   async function handleCopyFormattedMessage() {
     const galleryUrl = `${window.location.origin}/gallery/${galleryId}`;
     const expiryLine = expiresAt ? `\nהגלריה פתוחה לבחירה עד ${toHebrewDateString(new Date(expiresAt))}.` : '';
     const message = `היי ${clientName || ''}! 📸\n\nהגלריה שלך עם התמונות מוכנה לבחירה.\n\nקישור: ${galleryUrl}\nקוד גישה: ${accessCode}${expiryLine}\n\nמחכה לראות מה תבחרי! ✨`;
 
-    await navigator.clipboard.writeText(message);
+    try {
+      const html = buildInviteEmailHtml(galleryUrl, expiryLine ? `<br />הגלריה פתוחה לבחירה עד ${toHebrewDateString(new Date(expiresAt))}.` : '');
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/plain': new Blob([message], { type: 'text/plain' }),
+          'text/html': new Blob([html], { type: 'text/html' }),
+        }),
+      ]);
+    } catch {
+      await navigator.clipboard.writeText(message);
+    }
+
     setMessageCopied(true);
     setTimeout(() => setMessageCopied(false), 2000);
   }
@@ -205,7 +268,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
               <button
                 type="button"
                 onClick={handleCopyFormattedMessage}
-                title="הודעה מוכנה עם ברכה, קישור וקוד - להדביק בוואטסאפ/מייל ולשלוח בעצמך"
+                title="הודעה מוכנה עם ברכה, קישור וקוד - להדביק בוואטסאפ כטקסט, או בג'ימייל/אאוטלוק בתור מייל מעוצב"
                 style={{ ...outlineButtonStyle, padding: '0.5rem 1rem', borderColor: theme.gold, color: theme.gold }}
               >
                 {messageCopied ? 'הועתק!' : '✎ העתקת הודעה מוכנה לשליחה'}
