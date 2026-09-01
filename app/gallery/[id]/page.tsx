@@ -938,9 +938,41 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </div>
       )}
 
-      {galleryStatus === 'completed' && (
-        <div style={{ padding: '0.5rem 1.5rem', background: theme.successBg, color: theme.successText, fontSize: 14, textAlign: 'center' }}>
-          ✓ הבחירה נשלחה. אפשר עדיין לצפות בתמונות, אבל לא לשנות את הבחירה.
+      {/* מסך תודה - מוצג ברגע שהקונפטי דועך (showCelebration חוזר ל-false), כדי
+          שלא יתחרה איתו על תשומת הלב. לא חוסם את הגלריה שמתחתיו - "אפשר עדיין
+          לצפות בתמונות" נשאר תקף כרגיל, זה רק פאנל בזרימת העמוד. */}
+      {galleryStatus === 'completed' && !showCelebration && (
+        <div
+          style={{
+            margin: '1rem 1.5rem 0', padding: '1.75rem 1.5rem', borderRadius: 14,
+            background: theme.panel, border: `1px solid ${theme.border}`, textAlign: 'center',
+          }}
+        >
+          <div
+            style={{
+              width: 64, height: 64, borderRadius: '50%', margin: '0 auto 1rem', overflow: 'hidden',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: photographerLogo ? theme.panelInput : `linear-gradient(135deg, ${accentSolid}, ${accent})`,
+              border: `2px solid ${accent}`,
+            }}
+          >
+            {photographerLogo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={photographerLogo} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            ) : (
+              <span style={{ fontSize: 28 }}>💛</span>
+            )}
+          </div>
+          <p style={{ fontSize: 22, fontFamily: theme.fontSerif, color: theme.text, marginBottom: '0.5rem' }}>
+            תודה רבה{myParticipant?.displayName ? `, ${myParticipant.displayName}` : ''}!
+          </p>
+          <p style={{ color: theme.textMuted, fontSize: 14, lineHeight: 1.7, maxWidth: 420, margin: '0 auto' }}>
+            הבחירה שלך התקבלה{photographerName ? ` אצל ${photographerName}` : ''} ✨ אין צורך לעשות עוד כלום -
+            {' '}{photographerName ?? 'הצלמת'} כבר רואה את מה שבחרת, ותיצור איתך קשר להמשך.
+          </p>
+          <p style={{ color: theme.textFaint, fontSize: 12, marginTop: '1rem' }}>
+            ✓ אפשר עדיין לצפות בתמונות למטה, אבל לא לשנות את הבחירה.
+          </p>
         </div>
       )}
 
