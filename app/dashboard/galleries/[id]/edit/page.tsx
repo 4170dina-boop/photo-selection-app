@@ -37,16 +37,18 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [error, setError] = useState('');
   const [notFound, setNotFound] = useState(false);
   const [businessName, setBusinessName] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
 
   useEffect(() => {
     loadGallery();
-    // רק לשם המותג בהודעה המוכנה להעתקה (handleCopyFormattedMessage) - לא
+    // רק למותג בהודעה המוכנה להעתקה (handleCopyFormattedMessage) - לא
     // קריטי לשאר הדף, אז כישלון כאן פשוט משאיר כותרת גנרית ולא חוסם כלום.
     (async () => {
       const res = await fetch('/api/photographer');
       if (!res.ok) return;
       const data = await res.json();
       setBusinessName(data.business_name ?? '');
+      setLogoUrl(data.logo_url ?? '');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [galleryId]);
@@ -138,7 +140,12 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e7e0d5;">
           <tr>
             <td style="background: #0f1626; padding: 20px 28px; text-align: center;">
-              <span style="font-family: sans-serif; font-size: 18px; font-weight: 700; color: #e3b3ac;">✨ ${businessName || 'הגלריה שלך'}</span>
+              ${
+                logoUrl
+                  ? `<img src="${logoUrl}" alt="${businessName || 'הגלריה שלך'}" width="44" height="44" style="width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid #e3b3ac; display: block; margin: 0 auto 8px;" />`
+                  : ''
+              }
+              <span style="font-family: sans-serif; font-size: 18px; font-weight: 700; color: #e3b3ac;">${logoUrl ? '' : '✨ '}${businessName || 'הגלריה שלך'}</span>
             </td>
           </tr>
           <tr>
