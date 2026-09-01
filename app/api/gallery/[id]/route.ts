@@ -35,6 +35,18 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: 'תוקף הגלריה פג' }, { status: 410 });
   }
 
+  // "ממתין לפתיחה" (sent) -> "בבחירה" (in_progress) ברגע שהלקוחה בפועל פותחת
+  // את הגלריה (קוד גישה כבר אומת ב-verify-access לפני שמגיעים לכאן) - בלי זה
+  // הלוח של הצלמת ממשיך להראות "ממתין לפתיחה" לנצח, גם אחרי שהלקוחה כבר
+  // בפנים ובוחרת תמונות. לא נוגעים בסטטוסים אחרים (completed/expired).
+  if (gallery.status === 'sent') {
+    await supabaseAdmin
+      .from('galleries')
+      .update({ status: 'in_progress', last_activity_at: new Date().toISOString() })
+      .eq('id', galleryId);
+    gallery.status = 'in_progress';
+  }
+
   // שיתוף גלריה משפחתי: קוד הגישה כבר אומת, אבל עדיין לא ידוע מי בפועל
   // נכנס/ת (הבעלים הרשומה, או בן משפחה אחר) - ראו app/api/gallery/[id]/identify/route.ts.
   // מחזירים את שם הבעלים הרשום כדי שהמסך יוכל להציע "זאת [שם]?" ישירות.
