@@ -132,6 +132,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [zoomScale, setZoomScale] = useState(1);
   const enlargedImgRef = useRef<HTMLImageElement | null>(null);
 
+  // מצב סקירה ברצף (סליידשואו) - עמדה נפרדת לגמרי ממצב ההגדלה (enlargedId):
+  // דפדוף לפי סדר photos, לא לפי enlargedId, כדי שאפשר יהיה להשאיר את
+  // ההגדלה הרגילה בלי שינוי.
+  const [slideshowActive, setSlideshowActive] = useState(false);
+  const [slideshowIndex, setSlideshowIndex] = useState(0);
+
   // React מצרף מאזיני wheel/touch כ-passive כברירת מחדל, כך ש-preventDefault
   // בתוך onWheel/onTouchMove רגילים בכלל לא עובד (ורק זורק אזהרה בקונסול) -
   // חייבים מאזינים native עם {passive:false}. גלגלת עכבר היא רק חצי מהתמונה:
@@ -193,6 +199,22 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enlargedId]);
+
+  // ניווט וסגירה במקלדת במצב סקירה ברצף - מאזין נפרד מזה של ההגדלה הרגילה,
+  // ופעיל רק כשהסליידשואו פתוח, כדי שלא יתנגשו זה בזה.
+  useEffect(() => {
+    if (!slideshowActive) return;
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'ArrowRight') navigateSlideshow(1);
+      else if (e.key === 'ArrowLeft') navigateSlideshow(-1);
+      else if (e.key === 'Escape') setSlideshowActive(false);
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slideshowActive]);
 
   // מצב אופליין: רושמים service worker שממטמן תמונות שכבר נטענו (public/sw.js),
   // כדי שדפדוף בתמונות שכבר נצפו ימשיך לעבוד גם באינטרנט חלש/מנותק באירוע.
@@ -720,6 +742,31 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setEnlargedId(photos[nextIndex].id);
   }
 
+  // פותחת סקירה ברצף מההתחלה - סוגרת מצבים אחרים (הגדלה/השוואה) כדי שלא
+  // תהיה חפיפה בין כמה שכבות מסך-מלא בו-זמנית.
+  function openSlideshow() {
+    setEnlargedId(null);
+    setCompareMode(false);
+    setCompareIds([]);
+    setSlideshowIndex(0);
+    setSlideshowActive(true);
+  }
+
+  function navigateSlideshow(delta: 1 | -1) {
+    setSlideshowIndex((prev) => {
+      const next = prev + delta;
+      if (next < 0 || next >= photos.length) return prev;
+      return next;
+    });
+  }
+
+  // מחזירה תמונה שכבר מסומנת באותו סטטוס למצב "לא מסומן" - כדי שאפשר יהיה
+  // לבטל סימון בטעות בלי לצאת מהסליידשואו. אותה setPhotoStatus בדיוק כמו בגריד.
+  function slideshowMarkStatus(photoId: string, status: 'maybe' | 'selected') {
+    const current = myMarks[photoId]?.status;
+    setPhotoStatus(photoId, current === status ? null : status);
+  }
+
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', background: theme.bg, color: theme.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -992,6 +1039,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </button>
         {compareMode && <span style={{ marginRight: '0.5rem', fontSize: 13, color: theme.textMuted }}>בחרי שתי תמונות להשוואה ({compareIds.length}/2)</span>}
 
+        {photos.length > 0 && (
+          <button onClick={openSlideshow} style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginRight: '0.5rem' }}>
+            ▶ סקירה ברצף
+          </button>
+        )}
+
         {galleryStatus !== 'completed' && (mySelectedCount > 0 || maybeCount > 0) && (
           <button
             onClick={clearAllSelections}
@@ -1203,6 +1256,141 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
               }}
             />
+          </div>
+        );
+      })()}
+
+      {slideshowActive && photos.length > 0 && (() => {
+        const total = photos.length;
+        const currentIndex = Math.min(slideshowIndex, total - 1);
+        const photo = photos[currentIndex];
+        const status = myStatuses[photo.id];
+        const hasPrev = currentIndex > 0;
+        const hasNext = currentIndex < total - 1;
+
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`סקירה ברצף: תמונה ${currentIndex + 1} מתוך ${total}`}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', zIndex: 55,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem',
+            }}
+            onClick={() => setSlideshowActive(false)}
+          >
+            {/* יציאה זמינה תמיד מכל תמונה בסליידשואו - זו לא אמורה להיות
+                חוויה כפויה, הלקוחה יכולה לצאת באמצע בלי לעבור על הכל. */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setSlideshowActive(false);
+              }}
+              title="יציאה ממצב סקירה"
+              style={{
+                position: 'absolute', top: 16, insetInlineEnd: 16, zIndex: 57,
+                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                padding: '0.5rem 1rem', borderRadius: 20, border: '1px solid rgba(255,255,255,0.4)',
+                background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 14, cursor: 'pointer',
+              }}
+            >
+              ✕ יציאה
+            </button>
+
+            <div
+              style={{
+                position: 'absolute', top: 16, insetInlineStart: 16, zIndex: 57,
+                background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 13,
+                padding: '4px 12px', borderRadius: 12,
+              }}
+            >
+              {currentIndex + 1} / {total}
+            </div>
+
+            {hasPrev && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigateSlideshow(-1);
+                }}
+                title="הקודמת"
+                style={{
+                  position: 'absolute', top: '50%', insetInlineStart: 16, transform: 'translateY(-50%)', zIndex: 56,
+                  width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                  background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 20, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                ‹
+              </button>
+            )}
+            {hasNext && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigateSlideshow(1);
+                }}
+                title="הבאה"
+                style={{
+                  position: 'absolute', top: '50%', insetInlineEnd: 16, transform: 'translateY(-50%)', zIndex: 56,
+                  width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                  background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 20, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                ›
+              </button>
+            )}
+
+            {photo.fullUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={photo.fullUrl}
+                alt={photo.original_filename}
+                draggable={false}
+                onClick={(e) => e.stopPropagation()}
+                onContextMenu={(e) => e.preventDefault()}
+                style={{
+                  maxHeight: '75vh', maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
+                  WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
+                }}
+              />
+            ) : (
+              <p style={{ color: theme.textMuted }} onClick={(e) => e.stopPropagation()}>
+                אין תצוגה זמינה לתמונה הזו
+              </p>
+            )}
+
+            {galleryStatus !== 'completed' && myParticipant ? (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem', flexWrap: 'wrap', justifyContent: 'center' }}
+              >
+                <button
+                  onClick={() => slideshowMarkStatus(photo.id, 'maybe')}
+                  style={{
+                    ...outlineButtonStyle, padding: '0.5rem 1.25rem',
+                    borderColor: status === 'maybe' ? theme.green : theme.border,
+                    color: status === 'maybe' ? theme.green : theme.textMuted,
+                  }}
+                >
+                  {status === 'maybe' ? '✓ אולי' : '? אולי'}
+                </button>
+                <button
+                  onClick={() => slideshowMarkStatus(photo.id, 'selected')}
+                  style={{
+                    ...primaryButtonStyle, padding: '0.5rem 1.25rem',
+                    opacity: status === 'selected' ? 1 : 0.85,
+                  }}
+                >
+                  {status === 'selected' ? '✓ נבחרה' : '✓ בחירה'}
+                </button>
+              </div>
+            ) : (
+              <p style={{ color: theme.textFaint, fontSize: 13, marginTop: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
+                הבחירה כבר נשלחה - אפשר לצפות בלבד.
+              </p>
+            )}
           </div>
         );
       })()}
