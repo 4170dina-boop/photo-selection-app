@@ -1269,6 +1269,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+          alignItems: 'start',
           gap: '1rem',
           padding: '0 1.5rem 1.5rem',
         }}
@@ -1419,7 +1420,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 alt={`${photo.original_filename} - ${statusLabel}`}
                 draggable={false}
                 style={{
-                  width: '100%', display: 'block', pointerEvents: 'none', aspectRatio: '3/4', objectFit: 'cover',
+                  width: '100%', height: 'auto', display: 'block', pointerEvents: 'none',
                   WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
                 }}
               />

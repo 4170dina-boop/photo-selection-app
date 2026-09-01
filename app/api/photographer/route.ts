@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
 
   const { data: photographer, error } = await supabase
     .from('photographers')
-    .select('id, business_name, watermark_text, brand_color, logo_url, default_included_photos, default_base_price, default_extra_photo_price, reminder_days_default')
+    .select('id, business_name, watermark_text, brand_color, logo_url, custom_theme, default_included_photos, default_base_price, default_extra_photo_price, reminder_days_default')
     .eq('auth_user_id', user.id)
     .single();
 
@@ -45,6 +45,7 @@ export async function PATCH(req: NextRequest) {
     watermarkText?: string | null;
     brandColor?: string | null;
     logoUrl?: string | null;
+    customTheme?: { bg: string; panel: string; text: string; accent: string } | null;
     defaultIncludedPhotos?: number;
     defaultBasePrice?: number;
     defaultExtraPhotoPrice?: number;
@@ -74,6 +75,22 @@ export async function PATCH(req: NextRequest) {
   // ההגדרות לא שולח את השדה הזה בכלל, כדי לא לדרוס בטעות לוגו קיים ב-null.
   if ('logoUrl' in body) {
     update.logo_url = body.logoUrl?.trim() || null;
+  }
+
+  // customTheme: null מנקה חזרה לפלטה הקבועה. אם מוגדר, כל 4 השדות חייבים
+  // להיות hex תקין - זה נשמר רק אחרי שהצלמת אישרה תצוגה מקדימה (ראו הגדרות),
+  // אבל בודקים שוב כאן כי זו הבקרה האמיתית לפני כתיבה ל-DB.
+  if ('customTheme' in body) {
+    if (body.customTheme === null) {
+      update.custom_theme = null;
+    } else {
+      const t = body.customTheme;
+      const hex = /^#[0-9a-fA-F]{6}$/;
+      if (!t || !hex.test(t.bg) || !hex.test(t.panel) || !hex.test(t.text) || !hex.test(t.accent)) {
+        return NextResponse.json({ error: 'עיצוב מותאם אישית לא תקין' }, { status: 400 });
+      }
+      update.custom_theme = t;
+    }
   }
 
   if (body.defaultIncludedPhotos != null) {

@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error: galleryError } = await supabaseAdmin
     .from('galleries')
-    .select('id, status, expires_at, owner_participant_id, clients(full_name), photographers(brand_color, business_name, logo_url)')
+    .select('id, status, expires_at, owner_participant_id, clients(full_name), photographers(brand_color, business_name, logo_url, custom_theme)')
     .eq('id', galleryId)
     .single();
 
@@ -94,6 +94,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const brandColor = (gallery as any).photographers?.brand_color;
   const photographerName = (gallery as any).photographers?.business_name ?? null;
   const photographerLogo = (gallery as any).photographers?.logo_url ?? null;
+  const customTheme = (gallery as any).photographers?.custom_theme ?? null;
 
   const participants = (participantsData ?? []).map((p) => ({
     id: p.id,
@@ -136,6 +137,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       ? { included: packageData.included_photos, extraPrice: packageData.extra_photo_price, basePrice: packageData.base_price }
       : null,
     brandColor: brandColor && brandColor !== '#000000' ? brandColor : null,
+    customTheme,
     photographerName,
     photographerLogo,
     expiresAt: gallery.expires_at,

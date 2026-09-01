@@ -22,6 +22,13 @@ create table photographers (
   -- app/dashboard/admin/page.tsx) אחרי שצלמת שילמה על מנוי, לא ניתן להגדרה
   -- עצמית ע"י הצלמת עצמה (ראו protect_is_unlimited בהמשך הקובץ).
   is_unlimited boolean default false not null,
+  -- עיצוב מותאם אישית (bg/panel/text/accent) שנוצר ע"י "עיצוב הגלריה עם AI"
+  -- בהגדרות (app/api/photographer/design-theme) - null = פלטת ברירת המחדל
+  -- הקבועה. theme_gen_count/date הם מונה שימוש יומי (רשת ביטחון על העלות,
+  -- ראו README) - מתאפס בכל יום חדש, לא קשור לשום מכסה אחרת באפליקציה.
+  custom_theme jsonb,
+  theme_gen_count int default 0 not null,
+  theme_gen_date date,
   created_at timestamptz default now()
 );
 
