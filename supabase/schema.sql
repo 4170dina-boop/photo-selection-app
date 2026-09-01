@@ -29,6 +29,11 @@ create table photographers (
   custom_theme jsonb,
   theme_gen_count int default 0 not null,
   theme_gen_date date,
+  -- מונה שימוש יומי נפרד ל"עזרי לי לבחור" (app/api/gallery/[id]/ai-picks) -
+  -- לא אותו מונה כמו theme_gen_count למעלה כי זו קריאת AI יקרה משמעותית
+  -- יותר (הרבה תמונות בבת אחת, לא רק טקסט קצר), אז יש לה תקרה יומית נמוכה יותר.
+  ai_picks_count int default 0 not null,
+  ai_picks_date date,
   created_at timestamptz default now()
 );
 
@@ -62,6 +67,10 @@ create table galleries (
   -- לא נחשף בשום API שהלקוחה נגישה אליו (app/api/gallery/[id]/*), רק דרך
   -- app/api/galleries/[id]/route.ts שרץ עם session הצלם.
   photographer_notes text,
+  -- מתי הצלמת התחילה לערוך את התמונות שנבחרו - שלב ביניים נפרד גם מ-status
+  -- ('completed' אומר רק שהלקוחה סיימה לבחור) וגם מ-delivered_at (מסירת
+  -- הקבצים הסופיים בפועל). null = טרם התחילה עריכה.
+  editing_started_at timestamptz,
   -- מתי הצלמת סימנה שהתמונות הסופיות נמסרו בפועל ללקוחה (לא אוטומטי - "הושלם"
   -- רק אומר שהלקוחה סיימה לבחור, לא שהתמונות המוגמרות כבר יצאו). null = טרם נמסר.
   delivered_at timestamptz,
@@ -271,8 +280,15 @@ create policy "photographers see own sync jobs" on sync_jobs
 -- alter table galleries add column if not exists view_count int default 0 not null;
 -- alter table galleries add column if not exists last_viewed_at timestamptz;
 
+-- אם כבר הרצת גרסה קודמת בלי מונה שימוש יומי ל"עזרי לי לבחור", מריצים גם את זה:
+-- alter table photographers add column if not exists ai_picks_count int default 0 not null;
+-- alter table photographers add column if not exists ai_picks_date date;
+
 -- אם כבר הרצת גרסה קודמת בלי הערות פרטיות של הצלמת על הגלריה, מריצים גם את זה:
 -- alter table galleries add column if not exists photographer_notes text;
+
+-- אם כבר הרצת גרסה קודמת בלי סימון "בעריכה" לגלריה, מריצים גם את זה:
+-- alter table galleries add column if not exists editing_started_at timestamptz;
 
 -- אם כבר הרצת גרסה קודמת בלי חשבונות "ללא הגבלה" (is_unlimited), מריצים גם את זה:
 -- alter table photographers add column if not exists is_unlimited boolean default false not null;
