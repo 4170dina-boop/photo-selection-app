@@ -39,6 +39,10 @@ function contrastTextColor(hex: string): string {
   return luminance > 0.6 ? theme.goldText : '#ffffff';
 }
 
+// כמה זמן יש לבטל אחרי "סיימתי לבחור" לפני שהמייל לצלמת באמת נשלח והגלריה
+// ננעלת - כמו "ביטול שליחה" ב-Gmail, כדי שקליק בטעות/חרטה מיידית לא יהיו סופיים.
+const FINISH_UNDO_SECONDS = 60;
+
 // ראשי תיבות קצרים לתג "מי בחר מה" - שם מלא לא נכנס בעיגול קטן
 function initials(name: string): string {
   return name.trim().charAt(0).toUpperCase() || '?';
@@ -79,6 +83,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [galleryStatus, setGalleryStatus] = useState<string>('sent');
   const [finishing, setFinishing] = useState(false);
+  const [finishCountdown, setFinishCountdown] = useState<number | null>(null);
   const [clearingAll, setClearingAll] = useState(false);
   const [loading, setLoading] = useState(true);
   const [brandColor, setBrandColor] = useState<string | null>(null);
@@ -218,6 +223,21 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myParticipant?.id]);
+
+  // ספירה לאחור ל"סיימתי לבחור" (ראו handleFinish/submitFinish/cancelFinish) -
+  // כל שנייה עד 0, ואז שולחת בפועל. ביטול (cancelFinish) פשוט מאפס את
+  // finishCountdown ל-null, מה שמנקה את ה-interval הזה בלי לקרוא ל-submitFinish.
+  useEffect(() => {
+    if (finishCountdown === null) return;
+    if (finishCountdown <= 0) {
+      submitFinish();
+      setFinishCountdown(null);
+      return;
+    }
+    const timer = setTimeout(() => setFinishCountdown((prev) => (prev === null ? null : prev - 1)), 1000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finishCountdown]);
 
   // הטעינה עצמה היא גם בדיקת האימות: העוגייה httpOnly ולא ניתנת לקריאה
   // מ-JS, אז אי אפשר "לבדוק אם קיימת" מראש - פשוט מנסים לטעון, ו-401 אומר שצריך קוד גישה.
@@ -553,9 +573,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setNoteDraft(myMarks[photoId]?.note ?? '');
   }
 
-  async function handleFinish() {
-    if (!window.confirm('לשלוח את הבחירה? אחרי זה לא ניתן יהיה לשנות אותה.')) return;
-
+  // הלקוחה עדיין רואה ועורכת הכל כרגיל בזמן הספירה - רק בתום ה-60 שניות
+  // (או אם לא ביטלה) קוראים בפועל ל-API, שגם נועל את הגלריה וגם שולח מייל
+  // התראה לצלמת "הלקוחה סיימה" - לא רוצים לשלוח את זה מוקדם מדי ואז לבטל.
+  async function submitFinish() {
     setFinishing(true);
     let res: Response;
     try {
@@ -574,6 +595,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     setActionError('');
     setGalleryStatus('completed');
+  }
+
+  function handleFinish() {
+    if (!window.confirm('לשלוח את הבחירה? אחרי זה לא ניתן יהיה לשנות אותה.')) return;
+    setFinishCountdown(FINISH_UNDO_SECONDS);
+  }
+
+  function cancelFinish() {
+    setFinishCountdown(null);
   }
 
   async function clearAllSelections() {
@@ -908,7 +938,24 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </button>
         )}
 
-        {galleryStatus !== 'completed' && isOwner && (
+        {galleryStatus !== 'completed' && isOwner && finishCountdown !== null && (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem',
+              margin: '0.75rem auto 0', padding: '0.75rem 1rem', maxWidth: 340,
+              background: theme.successBg, color: theme.successText, borderRadius: 8,
+            }}
+          >
+            <span>הבחירה תישלח בעוד {finishCountdown} שניות...</span>
+            <button onClick={cancelFinish} style={{ ...outlineButtonStyle, padding: '0.4rem 1rem' }}>
+              ביטול שליחה
+            </button>
+          </div>
+        )}
+
+        {galleryStatus !== 'completed' && isOwner && finishCountdown === null && (
           <button
             onClick={handleFinish}
             disabled={finishing || ownerSelectedCount === 0}
