@@ -37,6 +37,7 @@ export default function GalleriesDashboard() {
   const [bulkMessage, setBulkMessage] = useState('');
   const [togglingDeliveredId, setTogglingDeliveredId] = useState<string | null>(null);
   const [togglingPaidId, setTogglingPaidId] = useState<string | null>(null);
+  const [coverUrls, setCoverUrls] = useState<Record<string, string>>({});
 
   useEffect(() => {
     loadGalleries();
@@ -156,6 +157,13 @@ export default function GalleriesDashboard() {
 
     setRows(rowsWithCounts);
     setLoading(false);
+
+    // best-effort, נפרד מטעינת הרשימה עצמה - כישלון (או פשוט אין עדיין תמונות
+    // באף גלריה) לא אמור לעכב/לשבור את הרשימה, רק להשאיר אותה בלי תמונות נושא.
+    fetch('/api/galleries/cover-photos')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => data?.covers && setCoverUrls(data.covers))
+      .catch(() => {});
   }
 
   function formatActivity(row: GalleryRow): string {
@@ -442,6 +450,25 @@ export default function GalleriesDashboard() {
               style={{ width: 18, height: 18, cursor: 'pointer', flexShrink: 0 }}
               aria-label={`בחירת גלריה של ${row.clients?.full_name ?? 'ללא שם'} לפעולה מרוכזת`}
             />
+
+            {coverUrls[row.id] ? (
+              <img
+                src={coverUrls[row.id]}
+                alt=""
+                style={{ width: 44, height: 44, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }}
+              />
+            ) : (
+              <div
+                style={{
+                  width: 44, height: 44, borderRadius: 8, flexShrink: 0,
+                  background: theme.bg, border: `1px solid ${theme.border}`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 18, color: theme.textFaint,
+                }}
+              >
+                📷
+              </div>
+            )}
 
             <span
               style={{
