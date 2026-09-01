@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 
@@ -11,17 +12,42 @@ interface CreatedGallery {
 }
 
 export default function NewGalleryPage() {
+  return (
+    <Suspense fallback={null}>
+      <NewGalleryForm />
+    </Suspense>
+  );
+}
+
+function NewGalleryForm() {
+  const searchParams = useSearchParams();
+  const fromGalleryId = searchParams.get('fromGallery');
+
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
   const [includedPhotos, setIncludedPhotos] = useState('30');
   const [basePrice, setBasePrice] = useState('0');
   const [extraPhotoPrice, setExtraPhotoPrice] = useState('0');
   const [expiresAt, setExpiresAt] = useState('');
+  const [duplicatedFrom, setDuplicatedFrom] = useState('');
 
   // ממלאים את השדות מברירות המחדל שהצלמת הגדירה בהגדרות (app/dashboard/settings/page.tsx),
   // כדי שלא תצטרך להקליד את אותם מספרים בכל גלריה - עדיין אפשר לשנות פה לפני היצירה.
+  // אם הגענו משכפול גלריה (?fromGallery=) - החבילה של הגלריה המקורית גוברת על
+  // ברירות המחדל, כי הכוונה המפורשת היא "אותה חבילה בדיוק", לא ברירת המחדל הכללית.
   useEffect(() => {
     (async () => {
+      if (fromGalleryId) {
+        const res = await fetch(`/api/galleries/${fromGalleryId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.packages?.included_photos != null) setIncludedPhotos(String(data.packages.included_photos));
+        if (data.packages?.base_price != null) setBasePrice(String(data.packages.base_price));
+        if (data.packages?.extra_photo_price != null) setExtraPhotoPrice(String(data.packages.extra_photo_price));
+        setDuplicatedFrom(data.clients?.full_name ?? '');
+        return;
+      }
+
       const res = await fetch('/api/photographer');
       if (!res.ok) return;
       const data = await res.json();
@@ -29,7 +55,8 @@ export default function NewGalleryPage() {
       if (data.default_base_price != null) setBasePrice(String(data.default_base_price));
       if (data.default_extra_photo_price != null) setExtraPhotoPrice(String(data.default_extra_photo_price));
     })();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromGalleryId]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -118,7 +145,13 @@ export default function NewGalleryPage() {
 
   return (
     <div style={{ maxWidth: 420 }}>
-      <h1 style={{ fontSize: 20, marginBottom: '1.5rem' }}>גלריה חדשה</h1>
+      <h1 style={{ fontSize: 20, marginBottom: duplicatedFrom ? '0.5rem' : '1.5rem' }}>גלריה חדשה</h1>
+
+      {duplicatedFrom && (
+        <p style={{ background: theme.panel, border: `1px solid ${theme.border}`, color: theme.textMuted, padding: '0.6rem 1rem', borderRadius: 8, marginBottom: '1.5rem', fontSize: 13 }}>
+          החבילה מולאה אוטומטית מהגלריה של <b>{duplicatedFrom}</b> - אפשר לשנות לפני היצירה.
+        </p>
+      )}
 
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>

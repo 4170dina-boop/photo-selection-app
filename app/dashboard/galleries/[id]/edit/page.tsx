@@ -301,6 +301,13 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
               {sendingReminder ? 'שולחת...' : '🔔 שליחת תזכורת עכשיו'}
             </button>
           )}
+          <Link
+            href={`/dashboard/galleries/new?fromGallery=${galleryId}`}
+            title="פתיחת גלריה חדשה עם אותה חבילה (תמונות כלולות ומחירים) - ללקוחה חדשה"
+            style={{ ...outlineButtonStyle, textDecoration: 'none' }}
+          >
+            שכפול גלריה ללקוחה חדשה
+          </Link>
           <Link href="/dashboard/galleries" style={{ ...outlineButtonStyle, textDecoration: 'none' }}>
             ביטול
           </Link>
