@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
+import { toHebrewDateString } from '@/lib/hebrewDate';
 import MagicButton from '@/components/MagicButton';
 
 interface EditGalleryPageProps {
@@ -122,7 +123,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   // (ראו README, "מיילים אוטומטיים"). טקסט פשוט, לא HTML - כדי שיתאים לכל אפליקציה.
   async function handleCopyFormattedMessage() {
     const galleryUrl = `${window.location.origin}/gallery/${galleryId}`;
-    const expiryLine = expiresAt ? `\nהגלריה פתוחה לבחירה עד ${new Date(expiresAt).toLocaleDateString('he-IL')}.` : '';
+    const expiryLine = expiresAt ? `\nהגלריה פתוחה לבחירה עד ${toHebrewDateString(new Date(expiresAt))}.` : '';
     const message = `היי ${clientName || ''}! 📸\n\nהגלריה שלך עם התמונות מוכנה לבחירה.\n\nקישור: ${galleryUrl}\nקוד גישה: ${accessCode}${expiryLine}\n\nמחכה לראות מה תבחרי! ✨`;
 
     await navigator.clipboard.writeText(message);
