@@ -14,6 +14,7 @@ interface GalleryRow {
   last_activity_at: string | null;
   last_reminder_sent_at: string | null;
   sent_at: string | null;
+  delivered_at: string | null;
   owner_participant_id: string | null;
   clients: { full_name: string } | null;
   // packages.gallery_id הוא unique, אז PostgREST מחזיר יחס 1:1 - אובייקט בודד, לא מערך
@@ -30,17 +31,93 @@ export default function GalleriesDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'expired'>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'expiry' | 'activity' | 'name'>('newest');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkWorking, setBulkWorking] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState('');
+  const [togglingDeliveredId, setTogglingDeliveredId] = useState<string | null>(null);
 
   useEffect(() => {
     loadGalleries();
   }, []);
+
+  function toggleSelect(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleToggleDelivered(row: GalleryRow, e: React.MouseEvent) {
+    e.stopPropagation();
+    setTogglingDeliveredId(row.id);
+
+    const res = await fetch(`/api/galleries/${row.id}/toggle-delivered`, { method: 'POST' });
+    setTogglingDeliveredId(null);
+
+    if (!res.ok) return;
+    const data = await res.json();
+    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, delivered_at: data.deliveredAt } : r)));
+  }
+
+  // פעולות מרוכזות - לולאה על ה-API הקיים של פריט בודד (לא route חדש) - פשוט
+  // ובטוח יותר מ-endpoint מרוכז חדש, והכמות (כמה גלריות יש לצלמת אחת) קטנה
+  // מספיק שזה לא בעיית ביצועים.
+  async function handleBulkDelete() {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`למחוק ${selectedIds.size} גלריות? כל התמונות והבחירות שלהן יימחקו לצמיתות - אי אפשר לבטל את זה.`)) return;
+
+    setBulkWorking(true);
+    setBulkMessage('');
+    let succeeded = 0;
+
+    for (const id of selectedIds) {
+      const res = await fetch(`/api/galleries/${id}`, { method: 'DELETE' });
+      if (res.ok) succeeded++;
+    }
+
+    setBulkWorking(false);
+    setBulkMessage(`נמחקו ${succeeded} מתוך ${selectedIds.size} גלריות`);
+    setSelectedIds(new Set());
+    await loadGalleries();
+  }
+
+  async function handleBulkReminder() {
+    if (selectedIds.size === 0) return;
+
+    // תזכורת תפוגה דורשת expires_at - מדלגים בשקט על גלריות בלי תוקף,
+    // אותה בדיקה שכבר קיימת ב-app/api/galleries/[id]/send-reminder.
+    const eligible = rows.filter((r) => selectedIds.has(r.id) && r.expires_at);
+    if (eligible.length === 0) {
+      setBulkMessage('אין בבחירה גלריות עם תוקף מוגדר - אי אפשר לשלוח תזכורת');
+      return;
+    }
+
+    setBulkWorking(true);
+    setBulkMessage('');
+    let sent = 0;
+
+    for (const row of eligible) {
+      const res = await fetch(`/api/galleries/${row.id}/send-reminder`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data.emailSent) sent++;
+      }
+    }
+
+    setBulkWorking(false);
+    setBulkMessage(`נשלחו ${sent} מתוך ${eligible.length} תזכורות (גלריות בלי תוקף דולגו)`);
+    setSelectedIds(new Set());
+  }
 
   async function loadGalleries() {
     setLoading(true);
 
     const { data: galleries } = await supabase
       .from('galleries')
-      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, owner_participant_id, clients(full_name), packages(included_photos, base_price, extra_photo_price)')
+      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, delivered_at, owner_participant_id, clients(full_name), packages(included_photos, base_price, extra_photo_price)')
       .order('created_at', { ascending: false });
 
     if (!galleries) {
@@ -286,6 +363,31 @@ export default function GalleriesDashboard() {
         </div>
       )}
 
+      {selectedIds.size > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10, padding: '0.75rem 1rem' }}>
+          <span style={{ fontSize: 13 }}>{selectedIds.size} נבחרו</span>
+          <button onClick={handleBulkReminder} disabled={bulkWorking} style={{ ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12, opacity: bulkWorking ? 0.6 : 1 }}>
+            🔔 שליחת תזכורת לנבחרות
+          </button>
+          <button
+            onClick={handleBulkDelete}
+            disabled={bulkWorking}
+            style={{ ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12, color: theme.errorText, borderColor: theme.errorText, opacity: bulkWorking ? 0.6 : 1 }}
+          >
+            {bulkWorking ? 'מבצעת...' : '🗑 מחיקת הנבחרות'}
+          </button>
+          <button onClick={() => setSelectedIds(new Set())} style={{ background: 'none', border: 'none', color: theme.textFaint, fontSize: 12, cursor: 'pointer', padding: 0 }}>
+            ביטול בחירה
+          </button>
+        </div>
+      )}
+
+      {bulkMessage && (
+        <p style={{ background: theme.successBg, color: theme.successText, padding: '0.6rem 0.9rem', borderRadius: 8, fontSize: 13 }}>
+          {bulkMessage}
+        </p>
+      )}
+
       {sortedRows.map((row) => {
         const included = row.packages?.included_photos ?? 0;
         const pct = included > 0 ? Math.min(100, Math.round((row.selectedCount / included) * 100)) : 0;
@@ -318,6 +420,15 @@ export default function GalleriesDashboard() {
               color: 'inherit', textDecoration: 'none', cursor: 'pointer',
             }}
           >
+            <input
+              type="checkbox"
+              checked={selectedIds.has(row.id)}
+              onClick={(e) => toggleSelect(row.id, e)}
+              onChange={() => {}}
+              style={{ width: 18, height: 18, cursor: 'pointer', flexShrink: 0 }}
+              aria-label={`בחירת גלריה של ${row.clients?.full_name ?? 'ללא שם'} לפעולה מרוכזת`}
+            />
+
             <span
               style={{
                 padding: '0.25rem 0.75rem', border: `1px solid ${color}`, color,
@@ -326,6 +437,23 @@ export default function GalleriesDashboard() {
             >
               {statusLabel(status)}
             </span>
+
+            {status === 'completed' && (
+              <button
+                onClick={(e) => handleToggleDelivered(row, e)}
+                disabled={togglingDeliveredId === row.id}
+                title={row.delivered_at ? 'לחצי כדי לבטל את סימון המסירה' : 'לחצי אחרי שמסרת ללקוחה את התמונות הסופיות'}
+                style={{
+                  padding: '0.25rem 0.75rem', borderRadius: 16, fontSize: 12, whiteSpace: 'nowrap', cursor: 'pointer',
+                  border: `1px solid ${row.delivered_at ? theme.successText : theme.border}`,
+                  color: row.delivered_at ? theme.successText : theme.textFaint,
+                  background: 'transparent',
+                  opacity: togglingDeliveredId === row.id ? 0.6 : 1,
+                }}
+              >
+                {row.delivered_at ? '✓ נמסר' : 'סימון כנמסר'}
+              </button>
+            )}
 
             <div style={{ minWidth: 160, flex: 1 }}>
               <div style={{ background: theme.border, borderRadius: 4, height: 6, overflow: 'hidden' }}>

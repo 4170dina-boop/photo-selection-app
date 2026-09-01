@@ -55,6 +55,9 @@ create table galleries (
   -- לא נחשף בשום API שהלקוחה נגישה אליו (app/api/gallery/[id]/*), רק דרך
   -- app/api/galleries/[id]/route.ts שרץ עם session הצלם.
   photographer_notes text,
+  -- מתי הצלמת סימנה שהתמונות הסופיות נמסרו בפועל ללקוחה (לא אוטומטי - "הושלם"
+  -- רק אומר שהלקוחה סיימה לבחור, לא שהתמונות המוגמרות כבר יצאו). null = טרם נמסר.
+  delivered_at timestamptz,
   created_at timestamptz default now()
 );
 
@@ -226,6 +229,9 @@ create policy "photographers see own sync jobs" on sync_jobs
 -- alter table photographers add column if not exists default_included_photos int default 30 not null;
 -- alter table photographers add column if not exists default_base_price numeric(10,2) default 0 not null;
 -- alter table photographers add column if not exists default_extra_photo_price numeric(10,2) default 0 not null;
+
+-- אם כבר הרצת גרסה קודמת בלי סימון "נמסר" לגלריה, מריצים גם את זה:
+-- alter table galleries add column if not exists delivered_at timestamptz;
 
 -- אם כבר הרצת גרסה קודמת בלי הערות פרטיות של הצלמת על הגלריה, מריצים גם את זה:
 -- alter table galleries add column if not exists photographer_notes text;
