@@ -40,6 +40,32 @@ function contrastTextColor(hex: string): string {
   return luminance > 0.6 ? theme.goldText : '#ffffff';
 }
 
+// חגיגת קונפטי קצרה כשהבחירה באמת נשלחת (סוף submitFinish) - רגע רגשי אמיתי
+// אחרי תהליך בחירה ארוך, בלי שום קשר לשאלת "מה תמונה טובה". CSS טהור, בלי
+// ספרייה חיצונית.
+const CONFETTI_COLORS = ['#c98f89', '#e3b3ac', '#7fae86', '#8fa8c9'];
+const CONFETTI_PIECE_COUNT = 60;
+
+interface ConfettiPiece {
+  id: number;
+  left: number;
+  size: number;
+  color: string;
+  duration: number;
+  delay: number;
+}
+
+function generateConfetti(): ConfettiPiece[] {
+  return Array.from({ length: CONFETTI_PIECE_COUNT }, (_, id) => ({
+    id,
+    left: Math.random() * 100,
+    size: 6 + Math.random() * 8,
+    color: CONFETTI_COLORS[id % CONFETTI_COLORS.length],
+    duration: 2.5 + Math.random() * 1.5,
+    delay: Math.random() * 0.6,
+  }));
+}
+
 // כמה זמן יש לבטל אחרי "סיימתי לבחור" לפני שהמייל לצלמת באמת נשלח והגלריה
 // ננעלת - כמו "ביטול שליחה" ב-Gmail, כדי שקליק בטעות/חרטה מיידית לא יהיו סופיים.
 const FINISH_UNDO_SECONDS = 60;
@@ -85,6 +111,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [galleryStatus, setGalleryStatus] = useState<string>('sent');
   const [finishing, setFinishing] = useState(false);
   const [finishCountdown, setFinishCountdown] = useState<number | null>(null);
+  const [showCelebration, setShowCelebration] = useState(false);
+  const [confettiPieces, setConfettiPieces] = useState<ConfettiPiece[]>([]);
   const [clearingAll, setClearingAll] = useState(false);
   const [loading, setLoading] = useState(true);
   const [brandColor, setBrandColor] = useState<string | null>(null);
@@ -596,6 +624,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     setActionError('');
     setGalleryStatus('completed');
+    setConfettiPieces(generateConfetti());
+    setShowCelebration(true);
+    setTimeout(() => setShowCelebration(false), 3500);
   }
 
   function handleFinish() {
@@ -1143,6 +1174,37 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </div>
         );
       })()}
+
+      {showCelebration && (
+        <div aria-hidden="true" style={{ position: 'fixed', inset: 0, zIndex: 70, pointerEvents: 'none', overflow: 'hidden' }}>
+          <style>{`
+            @keyframes confetti-fall {
+              0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+              100% { transform: translateY(110vh) rotate(720deg); opacity: 0.9; }
+            }
+          `}</style>
+          {confettiPieces.map((p) => (
+            <div
+              key={p.id}
+              style={{
+                position: 'absolute', top: 0, left: `${p.left}%`,
+                width: p.size, height: p.size * 0.4, background: p.color, borderRadius: 2,
+                animation: `confetti-fall ${p.duration}s linear ${p.delay}s forwards`,
+              }}
+            />
+          ))}
+          <div style={{ position: 'absolute', top: '30%', left: '50%', transform: 'translateX(-50%)', textAlign: 'center', width: '90%', maxWidth: 340 }}>
+            <p
+              style={{
+                fontSize: 20, fontFamily: theme.fontSerif, color: theme.text, background: 'rgba(15,22,38,0.9)',
+                padding: '1rem 1.5rem', borderRadius: 12, border: `1px solid ${theme.border}`, margin: 0,
+              }}
+            >
+              🎉 סיימת! הצלמת שלך כבר מקבלת עדכון
+            </p>
+          </div>
+        </div>
+      )}
 
       {noteEditingId && (
         <div
