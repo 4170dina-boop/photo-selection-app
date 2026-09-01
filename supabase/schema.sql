@@ -58,6 +58,10 @@ create table galleries (
   -- מתי הצלמת סימנה שהתמונות הסופיות נמסרו בפועל ללקוחה (לא אוטומטי - "הושלם"
   -- רק אומר שהלקוחה סיימה לבחור, לא שהתמונות המוגמרות כבר יצאו). null = טרם נמסר.
   delivered_at timestamptz,
+  -- מתי הצלמת סימנה שהתשלום התקבל - עצמאי לגמרי מהסטטוס/מסירה (בדרך כלל
+  -- משולם בהזמנה, הרבה לפני שהלקוחה סיימה לבחור). אין אינטגרציית סליקה
+  -- (ראו README) אז זה סימון ידני בלבד, לא נגזר מכלום אוטומטית. null = טרם שולם.
+  paid_at timestamptz,
   created_at timestamptz default now()
 );
 
@@ -247,6 +251,9 @@ create policy "photographers see own sync jobs" on sync_jobs
 
 -- אם כבר הרצת גרסה קודמת בלי סימון "נמסר" לגלריה, מריצים גם את זה:
 -- alter table galleries add column if not exists delivered_at timestamptz;
+
+-- אם כבר הרצת גרסה קודמת בלי סימון "שולם" לגלריה, מריצים גם את זה:
+-- alter table galleries add column if not exists paid_at timestamptz;
 
 -- אם כבר הרצת גרסה קודמת בלי הערות פרטיות של הצלמת על הגלריה, מריצים גם את זה:
 -- alter table galleries add column if not exists photographer_notes text;

@@ -15,6 +15,7 @@ interface GalleryRow {
   last_reminder_sent_at: string | null;
   sent_at: string | null;
   delivered_at: string | null;
+  paid_at: string | null;
   owner_participant_id: string | null;
   clients: { full_name: string } | null;
   // packages.gallery_id הוא unique, אז PostgREST מחזיר יחס 1:1 - אובייקט בודד, לא מערך
@@ -35,6 +36,7 @@ export default function GalleriesDashboard() {
   const [bulkWorking, setBulkWorking] = useState(false);
   const [bulkMessage, setBulkMessage] = useState('');
   const [togglingDeliveredId, setTogglingDeliveredId] = useState<string | null>(null);
+  const [togglingPaidId, setTogglingPaidId] = useState<string | null>(null);
 
   useEffect(() => {
     loadGalleries();
@@ -60,6 +62,18 @@ export default function GalleriesDashboard() {
     if (!res.ok) return;
     const data = await res.json();
     setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, delivered_at: data.deliveredAt } : r)));
+  }
+
+  async function handleTogglePaid(row: GalleryRow, e: React.MouseEvent) {
+    e.stopPropagation();
+    setTogglingPaidId(row.id);
+
+    const res = await fetch(`/api/galleries/${row.id}/toggle-paid`, { method: 'POST' });
+    setTogglingPaidId(null);
+
+    if (!res.ok) return;
+    const data = await res.json();
+    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, paid_at: data.paidAt } : r)));
   }
 
   // פעולות מרוכזות - לולאה על ה-API הקיים של פריט בודד (לא route חדש) - פשוט
@@ -117,7 +131,7 @@ export default function GalleriesDashboard() {
 
     const { data: galleries } = await supabase
       .from('galleries')
-      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, delivered_at, owner_participant_id, clients(full_name), packages(included_photos, base_price, extra_photo_price)')
+      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, delivered_at, paid_at, owner_participant_id, clients(full_name), packages(included_photos, base_price, extra_photo_price)')
       .order('created_at', { ascending: false });
 
     if (!galleries) {
@@ -454,6 +468,21 @@ export default function GalleriesDashboard() {
                 {row.delivered_at ? '✓ נמסר' : 'סימון כנמסר'}
               </button>
             )}
+
+            <button
+              onClick={(e) => handleTogglePaid(row, e)}
+              disabled={togglingPaidId === row.id}
+              title={row.paid_at ? 'לחצי כדי לבטל את סימון התשלום' : 'לחצי אחרי שקיבלת תשלום על הגלריה הזו'}
+              style={{
+                padding: '0.25rem 0.75rem', borderRadius: 16, fontSize: 12, whiteSpace: 'nowrap', cursor: 'pointer',
+                border: `1px solid ${row.paid_at ? theme.gold : theme.border}`,
+                color: row.paid_at ? theme.gold : theme.textFaint,
+                background: 'transparent',
+                opacity: togglingPaidId === row.id ? 0.6 : 1,
+              }}
+            >
+              {row.paid_at ? '💰 שולם' : 'סימון כשולם'}
+            </button>
 
             <div style={{ minWidth: 160, flex: 1 }}>
               <div style={{ background: theme.border, borderRadius: 4, height: 6, overflow: 'hidden' }}>
