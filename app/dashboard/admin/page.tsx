@@ -21,9 +21,45 @@ export default function AdminPage() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [error, setError] = useState('');
 
+  const [fromEmail, setFromEmail] = useState('');
+  const [fromEmailInput, setFromEmailInput] = useState('');
+  const [savingFromEmail, setSavingFromEmail] = useState(false);
+  const [fromEmailMessage, setFromEmailMessage] = useState('');
+
   useEffect(() => {
     loadPhotographers();
+    loadSettings();
   }, []);
+
+  async function loadSettings() {
+    const res = await fetch('/api/admin/settings');
+    if (!res.ok) return;
+    const data = await res.json();
+    setFromEmail(data.resendFromEmail ?? '');
+    setFromEmailInput(data.resendFromEmail ?? '');
+  }
+
+  async function saveFromEmail() {
+    setFromEmailMessage('');
+    setSavingFromEmail(true);
+
+    const res = await fetch('/api/admin/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resendFromEmail: fromEmailInput.trim() }),
+    });
+
+    setSavingFromEmail(false);
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setFromEmailMessage(data.error || 'העדכון נכשל');
+      return;
+    }
+
+    setFromEmail(fromEmailInput.trim());
+    setFromEmailMessage('נשמר ✓ - מיילים חדשים יישלחו מהכתובת הזו');
+  }
 
   async function loadPhotographers() {
     setLoading(true);
@@ -85,6 +121,39 @@ export default function AdminPage() {
           {error}
         </p>
       )}
+
+      <div style={{ background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10, padding: '1rem', marginBottom: '1.5rem' }}>
+        <div style={{ fontWeight: 'bold', marginBottom: '0.35rem' }}>כתובת שליחת מיילים</div>
+        <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '0.75rem' }}>
+          הכתובת שממנה נשלחים כל המיילים (תזכורות, הזמנות לגלריה וכו'). כרגע: <b>{fromEmail || 'טוען...'}</b>.
+          אחרי שיש דומיין מאומת ב-Resend, אפשר לעדכן כאן בלי לגעת בהגדרות ב-Vercel.
+        </p>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <input
+            type="email"
+            value={fromEmailInput}
+            onChange={(e) => setFromEmailInput(e.target.value)}
+            placeholder="hello@your-domain.co.il"
+            dir="ltr"
+            style={{
+              flex: '1 1 240px', padding: '0.5rem 0.75rem', borderRadius: 8,
+              border: `1px solid ${theme.border}`, background: theme.bg, color: theme.text, fontSize: 14,
+            }}
+          />
+          <button
+            onClick={saveFromEmail}
+            disabled={savingFromEmail || !fromEmailInput.trim() || fromEmailInput.trim() === fromEmail}
+            style={{ ...goldButtonStyle, padding: '0.5rem 1.1rem', fontSize: 13, opacity: savingFromEmail ? 0.6 : 1 }}
+          >
+            {savingFromEmail ? 'שומר...' : 'שמירה'}
+          </button>
+        </div>
+        {fromEmailMessage && (
+          <p style={{ marginTop: '0.5rem', fontSize: 13, color: fromEmailMessage.startsWith('נשמר') ? theme.successText : theme.errorText }}>
+            {fromEmailMessage}
+          </p>
+        )}
+      </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
         {rows.map((row) => (

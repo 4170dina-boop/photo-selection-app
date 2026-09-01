@@ -267,9 +267,11 @@ npm run dev
   `app/dashboard/galleries/page.tsx` כבר מציג לצלמת כמה זה שווה, רק שאין עדיין
   דרך לגבות את זה בפועל
 - דומיין מאומת ב-Resend - כרגע כל המיילים נשלחים מכתובת הסנדבוקס
-  `onboarding@resend.dev` (עם שם תצוגה דינמי, ראו "מיילים ממותגים", אבל
-  הכתובת הטכנית עצמה קבועה). כדי לשלוח מכתובת אמיתית (למשל
-  `hello@<domain-של-דינה>`) צריך קודם דומיין מחובר לחשבון Resend
+  `onboarding@resend.dev` (עם שם תצוגה דינמי, ראו "מיילים ממותגים"). כדי
+  לשלוח מכתובת אמיתית (למשל `hello@<domain-של-דינה>`) צריך קודם דומיין
+  מחובר לחשבון Resend - **אבל אחרי שיש דומיין כזה, אין צורך בשינוי קוד**:
+  את הכתובת עצמה אפשר לעדכן ישירות ב-`/dashboard/admin` (ראו "מיילים
+  ממותגים" למטה)
 
 ## דוח הכנסות חודשי
 
@@ -457,18 +459,24 @@ npm test
   עלול להיראות שבור אצל נמענים עם דריסת-צבעים אוטומטית), כפתור קריאה-לפעולה
   בגרדיאנט הזהב של `goldButtonStyle`, ותג "קופון" לקוד הגישה (`accessCodeBadge()`)
   שקריא ובולט יותר מטקסט רגיל.
-- **שם שולח דינמי**: הכתובת הטכנית (`RESEND_FROM_EMAIL`) נשארת קבועה (עד
-  שיהיה דומיין מאומת ב-Resend - ראו "מה עדיין חסר"), אבל שם התצוגה שרוב
-  תוכנות המייל מציגות בפועל הוא כן דינמי - שם העסק של הצלמת במיילים
-  שהלקוחה מקבלת (`sendGalleryInviteEmail`, `sendExpiryReminderEmail`,
-  `sendClientSelectionSummaryEmail`), ו-"אזור צלמים ✨" במיילים שהצלמת עצמה
-  מקבלת (`sendSelectionCompleteEmail`, `sendQuotaReachedEmail`) - היא לא
-  אמורה "לקבל מייל מעצמה".
+- **שם שולח דינמי**: שם התצוגה שרוב תוכנות המייל מציגות בפועל הוא דינמי -
+  שם העסק של הצלמת במיילים שהלקוחה מקבלת (`sendGalleryInviteEmail`,
+  `sendExpiryReminderEmail`, `sendClientSelectionSummaryEmail`), ו-"אזור
+  צלמים ✨" במיילים שהצלמת עצמה מקבלת (`sendSelectionCompleteEmail`,
+  `sendQuotaReachedEmail`) - היא לא אמורה "לקבל מייל מעצמה".
 - **`reply-to`**: כל המיילים ללקוחה נושאים `reply-to` לכתובת האמייל האמיתית
   של הצלמת (מ-`auth.getUser()` בזרימות עם session צלם, או
   `auth.admin.getUserById` בזרימות ללא session כמו `app/api/cron/tick`) -
   כדי שתשובה של לקוחה על המייל תגיע ישירות לתיבת הדואר שלה, לא לכתובת
   השליחה הטכנית של Resend.
+- **כתובת השליחה הטכנית ניתנת לעריכה מה-`/dashboard/admin`**: טבלת
+  `app_settings` חדשה (`key`/`value`, RLS מופעל בלי אף policy - גישה רק
+  דרך `service_role`, אותו דפוס כמו `is_unlimited`) מחזיקה מפתח בודד
+  `resend_from_email`. `lib/email.ts` שולף אותו בכל שליחה (`getFromAddress()`)
+  עם שרשרת נפילה: הערך בטבלה → משתנה הסביבה `RESEND_FROM_EMAIL` → כתובת
+  הסנדבוקס הקבועה `onboarding@resend.dev`. כך אחרי שיש דומיין מאומת ב-Resend
+  אפשר לעדכן את הכתובת ישירות מהעמוד (`app/api/admin/settings/route.ts`,
+  מוגן ע"י `requireAdmin()`), בלי לגעת במשתני סביבה ב-Vercel ובלי דיפלוי חדש.
 
 ## שחזור סיסמה מול שינוי סיסמה - שתי מערכות שונות
 

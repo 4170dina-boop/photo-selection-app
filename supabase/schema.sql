@@ -131,6 +131,17 @@ create table sync_jobs (
   created_at timestamptz default now()
 );
 
+-- הגדרות כלל-מערכתיות (לא לפי צלם/גלריה) - כרגע רק כתובת השליחה של Resend
+-- (RESEND_FROM_EMAIL), כדי שאפשר יהיה לעדכן אותה מ-/dashboard/admin אחרי
+-- שיש דומיין מאומת, בלי לגעת במשתני סביבה ב-Vercel. RLS מופעל בלי אף
+-- policy בכוונה - גישה רק דרך service_role (app/api/admin/settings), אותו
+-- דפוס כמו is_unlimited על photographers.
+create table app_settings (
+  key text primary key,
+  value text
+);
+alter table app_settings enable row level security;
+
 -- אינדקסים בסיסיים לביצועים
 create index idx_clients_photographer on clients(photographer_id);
 create index idx_galleries_photographer on galleries(photographer_id);
@@ -229,6 +240,10 @@ create policy "photographers see own sync jobs" on sync_jobs
 -- alter table photographers add column if not exists default_included_photos int default 30 not null;
 -- alter table photographers add column if not exists default_base_price numeric(10,2) default 0 not null;
 -- alter table photographers add column if not exists default_extra_photo_price numeric(10,2) default 0 not null;
+
+-- אם כבר הרצת גרסה קודמת בלי טבלת app_settings, מריצים גם את זה:
+-- create table if not exists app_settings (key text primary key, value text);
+-- alter table app_settings enable row level security;
 
 -- אם כבר הרצת גרסה קודמת בלי סימון "נמסר" לגלריה, מריצים גם את זה:
 -- alter table galleries add column if not exists delivered_at timestamptz;

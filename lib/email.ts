@@ -1,9 +1,33 @@
+import { createClient as createAdminClient } from '@supabase/supabase-js';
+
 // שליחת מייל דרך Resend (REST API ישיר, בלי SDK נוסף). אם RESEND_API_KEY לא
 // מוגדר - לא זורקים שגיאה, רק מדלגים ומדפיסים אזהרה. כך גם app/api/cron/tick/route.ts
 // וגם app/api/galleries/route.ts ממשיכים לעבוד (בלי לשלוח בפועל) בסביבת פיתוח
 // בלי שירות מייל מחובר.
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const FROM_ADDRESS = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+
+// כתובת השליחה: קודם app_settings בדאטהבייס (ניתנת לעריכה מ-/dashboard/admin
+// אחרי שיש דומיין מאומת ב-Resend, בלי לגעת ב-Vercel), ואז נופלים חזרה
+// למשתנה הסביבה, ואז לכתובת ה-sandbox הקבועה של Resend. נפח השליחה נמוך
+// מאוד (מייל בודד לפעולה), אז שאילתה נוספת בכל שליחה לא מצריכה caching.
+async function getFromAddress(): Promise<string> {
+  const fallback = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return fallback;
+  }
+
+  try {
+    const supabaseAdmin = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL as string,
+      process.env.SUPABASE_SERVICE_ROLE_KEY as string
+    );
+    const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', 'resend_from_email').single();
+    return data?.value || fallback;
+  } catch {
+    return fallback; // בכוונה שקט - עדיף לשלוח מהכתובת הישנה מאשר לא לשלוח בכלל
+  }
+}
 
 interface SendResult {
   sent: boolean;
@@ -27,7 +51,8 @@ async function sendEmail(to: string, subject: string, html: string, options: Sen
     return { sent: false, error: 'RESEND_API_KEY not configured' };
   }
 
-  const from = options.fromName ? `"${options.fromName}" <${FROM_ADDRESS}>` : FROM_ADDRESS;
+  const fromAddress = await getFromAddress();
+  const from = options.fromName ? `"${options.fromName}" <${fromAddress}>` : fromAddress;
 
   const body: Record<string, unknown> = { from, to, subject, html };
   if (options.replyTo) body.reply_to = options.replyTo;
