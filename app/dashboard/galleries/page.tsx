@@ -231,6 +231,12 @@ export default function GalleriesDashboard() {
   const activeCount = rows.filter((r) => r.status !== 'completed' && r.status !== 'expired').length;
   const freeGalleryLimit = 1;
 
+  // מבט-על מהיר לראש הדף - כמה גלריות יש בסה"כ, כמה עדיין ממתינות לפעולה
+  // (טרם נפתחו/בבחירה - לא כולל הושלמו/פג תוקפן), וכמה הושלמו.
+  const totalCount = rows.length;
+  const pendingActionCount = rows.filter((r) => r.status === 'draft' || r.status === 'sent' || r.status === 'in_progress').length;
+  const completedCount = rows.filter((r) => r.status === 'completed').length;
+
   // סכום חריגות מכל הגלריות יחד - אותו חישוב שכל שורה עושה בנפרד, ראו למטה
   const totalOverage = rows.reduce((sum, row) => {
     const included = row.packages?.included_photos ?? 0;
@@ -306,6 +312,27 @@ export default function GalleriesDashboard() {
           + גלריה חדשה
         </Link>
       </div>
+
+      {rows.length > 0 && (
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          {[
+            { label: 'סה"כ גלריות', value: totalCount, color: theme.text },
+            { label: 'ממתינות לפעולה', value: pendingActionCount, color: theme.gold },
+            { label: 'הושלמו', value: completedCount, color: theme.successText },
+          ].map((stat) => (
+            <div
+              key={stat.label}
+              style={{
+                flex: '1 1 140px', background: theme.panel, border: `1px solid ${theme.border}`,
+                borderRadius: 10, padding: '0.75rem 1rem', textAlign: 'center',
+              }}
+            >
+              <div style={{ fontSize: 24, fontWeight: 'bold', color: stat.color }}>{stat.value}</div>
+              <div style={{ fontSize: 12, color: theme.textMuted, marginTop: '0.15rem' }}>{stat.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '-0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
         <p style={{ color: activeCount >= freeGalleryLimit ? theme.errorText : theme.textMuted, fontSize: 13, margin: 0 }}>
