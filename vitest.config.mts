@@ -14,5 +14,10 @@ export default defineConfig({
     env: {
       SESSION_SECRET: 'test-session-secret-for-vitest-only',
     },
+    // בלי זה, כל worktree זמני שנוצר תחת .claude/worktrees (עבודה מקבילה של
+    // סוכנים) מכיל עותק מלא של הריפו כולל קבצי הבדיקות שלו - vitest מריץ
+    // את כולם ביחד עם הבדיקות האמיתיות, מה שמכפיל את הזמן ובעומס גבוה (הרבה
+    // worktrees בבת אחת) גם גורם לתהליכי הבדיקה עצמם ליפול (spawn ENOENT/UNKNOWN).
+    exclude: ['**/node_modules/**', '**/.claude/worktrees/**'],
   },
 });

@@ -243,8 +243,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         exitSwipeMode();
         return;
       }
-      const idx = findNextUnmarkedIndex(swipeQueue, swipeCursor, (id) => !!myMarks[id]?.status);
-      if (idx >= swipeQueue.length) return; // מסך הסיכום - רק Escape רלוונטי
+      if (swipeCursor >= swipeQueue.length) return; // מסך הסיכום - רק Escape רלוונטי
       if (e.key === 'ArrowRight') handleSwipeAction('selected');
       else if (e.key === 'ArrowLeft') handleSwipeAction(null);
       else if (e.key === 'ArrowDown' || e.key === ' ') handleSwipeAction('maybe');
@@ -811,12 +810,22 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   // בונה את תור התמונות למצב "בחירה מהירה" - סבב 1 עובר על כל התמונות (בסדר
   // הגלריה), סבב 2 מסנן רק לאלה שסומנו "אולי" בסבב הראשון.
+  //
+  // דילוג התחלתי על תמונות שכבר הוכרעו (findNextUnmarkedIndex) רלוונטי רק
+  // לסבב 1 - למשל אם הלקוחה כבר סימנה כמה תמונות דרך הגריד הרגיל לפני
+  // שנכנסה למצב הזה. בסבב 2 כל התמונות בתור כבר מסומנות "אולי" בהגדרה
+  // (זה בדיוק הפילטר שבנה את התור) - אם נשתמש באותה בדיקה שם, כל תמונה
+  // תיחשב "כבר הוכרעה" ומסך הסיכום יופיע מיד בלי להראות אף תמונה. לכן
+  // הדילוג ההתחלתי רץ פעם אחת כאן (רק בסבב 1), ו-swipeCursor הוא מקור
+  // האמת היחיד לאורך שאר הסבב - לא מחשבים findNextUnmarkedIndex מחדש
+  // בהמשך, ראו handleSwipeAction/handleSwipeKeyDown/מסך התצוגה למטה.
   function startSwipeMode(pass: 1 | 2) {
     const queue = pass === 1
       ? photos.map((p) => p.id)
       : photos.filter((p) => myMarks[p.id]?.status === 'maybe').map((p) => p.id);
+    const startIndex = pass === 1 ? findNextUnmarkedIndex(queue, 0, (id) => !!myMarks[id]?.status) : 0;
     setSwipeQueue(queue);
-    setSwipeCursor(0);
+    setSwipeCursor(startIndex);
     setSwipePass(pass);
     setCompareMode(false); // לא לערבב שני מצבי תצוגה מלאה בו-זמנית
     setCompareIds([]);
@@ -827,14 +836,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setSwipeMode(false);
   }
 
-  // מפעילה את הפעולה על התמונה המוצגת כרגע ומתקדמת - findNextUnmarkedIndex
-  // דואג שהתמונה הבאה שתוצג היא תמיד הבאה שעדיין לא הוכרעה, גם אם חלק
-  // מהתמונות בתור כבר סומנו קודם (למשל דרך הגריד הרגיל).
+  // מפעילה את הפעולה על התמונה המוצגת כרגע ומתקדמת - swipeCursor הוא מקור
+  // האמת (ראו הערה ב-startSwipeMode למעלה), לא findNextUnmarkedIndex מחדש.
   async function handleSwipeAction(status: 'maybe' | 'selected' | null) {
-    const idx = findNextUnmarkedIndex(swipeQueue, swipeCursor, (id) => !!myMarks[id]?.status);
-    if (idx >= swipeQueue.length) return;
-    await setPhotoStatus(swipeQueue[idx], status);
-    setSwipeCursor(idx + 1);
+    if (swipeCursor >= swipeQueue.length) return;
+    await setPhotoStatus(swipeQueue[swipeCursor], status);
+    setSwipeCursor((prev) => prev + 1);
   }
 
   // דפדוף בין תמונות במצב הגדלה - בלי לצאת ולהיכנס מחדש מהגריד. מאפסת זום
@@ -1302,7 +1309,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       )}
 
       {swipeMode && (() => {
-        const idx = findNextUnmarkedIndex(swipeQueue, swipeCursor, (id) => !!myMarks[id]?.status);
+        const idx = swipeCursor;
         const total = swipeQueue.length;
         const done = idx >= total;
 
