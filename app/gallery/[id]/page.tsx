@@ -70,6 +70,10 @@ function generateConfetti(): ConfettiPiece[] {
 // ננעלת - כמו "ביטול שליחה" ב-Gmail, כדי שקליק בטעות/חרטה מיידית לא יהיו סופיים.
 const FINISH_UNDO_SECONDS = 60;
 
+// כמה תמונות אפשר להשוות בו-זמנית - יותר מזה נהיה צפוף מדי לראות הבדלים
+// אמיתיים בין תמונות, במיוחד בנייד.
+const MAX_COMPARE = 4;
+
 // ראשי תיבות קצרים לתג "מי בחר מה" - שם מלא לא נכנס בעיגול קטן
 function initials(name: string): string {
   return name.trim().charAt(0).toUpperCase() || '?';
@@ -803,7 +807,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     e.stopPropagation();
     setCompareIds((prev) => {
       if (prev.includes(photoId)) return prev.filter((id) => id !== photoId);
-      if (prev.length >= 2) return [prev[1], photoId]; // מחליף את הישן ביותר
+      if (prev.length >= MAX_COMPARE) return [...prev.slice(1), photoId]; // מחליף את הישנה ביותר
       return [...prev, photoId];
     });
   }
@@ -968,7 +972,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               display: 'flex', flexDirection: 'column', gap: '0.5rem',
             }}
           >
-            <span>⇄ אפשר להשוות בין שתי תמונות זו לצד זו</span>
+            <span>⇄ אפשר להשוות בין כמה תמונות זו לצד זו</span>
             <span>✎ אפשר להוסיף הערה אישית לכל תמונה</span>
             {!isOwner && (
               <span>👀 הבחירות שלך כאן הן קלט לדיון - רק {owner?.displayName ?? 'הלקוחה הראשית'} יכולה לסיים בפועל</span>
@@ -1172,9 +1176,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           }}
           style={{ ...outlineButtonStyle, marginTop: '0.5rem' }}
         >
-          {compareMode ? 'צאי ממצב השוואה' : '⇄ השוואה בין 2 תמונות'}
+          {compareMode ? 'צאי ממצב השוואה' : `⇄ השוואה בין כמה תמונות`}
         </button>
-        {compareMode && <span style={{ marginRight: '0.5rem', fontSize: 13, color: theme.textMuted }}>בחרי שתי תמונות להשוואה ({compareIds.length}/2)</span>}
+        {compareMode && (
+          <span style={{ marginRight: '0.5rem', fontSize: 13, color: theme.textMuted }}>
+            בחרי עד {MAX_COMPARE} תמונות להשוואה ({compareIds.length}/{MAX_COMPARE})
+          </span>
+        )}
 
         {photos.length > 0 && (
           <button onClick={openSlideshow} style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginRight: '0.5rem' }}>
@@ -1242,14 +1250,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         )}
       </div>
 
-      {compareMode && compareIds.length === 2 && (
+      {compareMode && compareIds.length >= 2 && (
         <div
           role="dialog"
           aria-modal="true"
           aria-label="השוואת תמונות"
           style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 50,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2rem',
+            display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2rem',
           }}
           onClick={() => setCompareIds([])}
         >
@@ -1277,7 +1285,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               <div
                 key={id}
                 onClick={(e) => e.stopPropagation()}
-                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem', maxWidth: '45%' }}
+                style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem',
+                  maxWidth: `${Math.min(45, Math.floor(88 / compareIds.length))}%`,
+                }}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -1286,7 +1297,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   draggable={false}
                   onContextMenu={(e) => e.preventDefault()}
                   style={{
-                    maxHeight: '80vh', maxWidth: '100%', objectFit: 'contain', borderRadius: 6,
+                    maxHeight: compareIds.length > 2 ? '45vh' : '80vh', maxWidth: '100%', objectFit: 'contain', borderRadius: 6,
                     WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
                   }}
                 />
