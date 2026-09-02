@@ -12,6 +12,7 @@ interface GalleryRow {
   last_activity_at: string | null;
   last_reminder_sent_at: string | null;
   editing_started_at: string | null;
+  owner_participant_id: string | null;
   view_count: number;
   clients: { full_name: string } | null;
   packages: { included_photos: number; extra_photo_price: number } | null;
@@ -39,7 +40,7 @@ export default function AnalyticsPage() {
     const { data: galleries } = await supabase
       .from('galleries')
       .select(
-        'id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, editing_started_at, view_count, clients(full_name), packages(included_photos, extra_photo_price)'
+        'id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, editing_started_at, owner_participant_id, view_count, clients(full_name), packages(included_photos, extra_photo_price)'
       )
       .order('created_at', { ascending: false });
 
