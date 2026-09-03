@@ -94,7 +94,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         includedPhotos: Number(includedPhotos),
         basePrice: Number(basePrice),
         extraPhotoPrice: Number(extraPhotoPrice),
-        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+        expiresAt: expiresAt ? new Date(`${expiresAt}T23:59:59+03:00`).toISOString() : null,
         photographerNotes,
         reminderDays: reminderDays ? Number(reminderDays) : null,
       }),

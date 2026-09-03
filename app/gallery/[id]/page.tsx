@@ -144,6 +144,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [pendingCount, setPendingCount] = useState(0);
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  // האם תצוגת ההשוואה במסך מלא פתוחה כרגע - נפרד בכוונה מ"האם נבחרו >= 2
+  // תמונות": בלי ההפרדה הזו, ברגע שנבחרת תמונה שנייה התצוגה (fixed, inset:0)
+  // הייתה נפתחת אוטומטית ומכסה את כל הגריד, ולא הייתה שום דרך לחזור אליו
+  // ולבחור תמונה שלישית/רביעית - MAX_COMPARE=4 היה קיים בקוד אבל לא ניתן
+  // להגיע אליו בפועל. עכשיו בוחרים עד 4 בגריד קודם, ופותחים את התצוגה ביוזמה
+  // מפורשת (הכפתור למטה).
+  const [compareViewOpen, setCompareViewOpen] = useState(false);
   const [swipeMode, setSwipeMode] = useState(false);
   const [swipeQueue, setSwipeQueue] = useState<string[]>([]);
   const [swipeCursor, setSwipeCursor] = useState(0);
@@ -1173,6 +1180,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           onClick={() => {
             setCompareMode((prev) => !prev);
             setCompareIds([]);
+            setCompareViewOpen(false);
           }}
           style={{ ...outlineButtonStyle, marginTop: '0.5rem' }}
         >
@@ -1182,6 +1190,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           <span style={{ marginRight: '0.5rem', fontSize: 13, color: theme.textMuted }}>
             בחרי עד {MAX_COMPARE} תמונות להשוואה ({compareIds.length}/{MAX_COMPARE})
           </span>
+        )}
+        {compareMode && compareIds.length >= 2 && (
+          <button
+            onClick={() => setCompareViewOpen(true)}
+            style={{ ...primaryButtonStyle, marginTop: '0.5rem', marginRight: '0.5rem', padding: '0.5rem 1.1rem' }}
+          >
+            השוואה כעת ({compareIds.length})
+          </button>
         )}
 
         {photos.length > 0 && (
@@ -1250,7 +1266,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         )}
       </div>
 
-      {compareMode && compareIds.length >= 2 && (
+      {compareMode && compareViewOpen && compareIds.length >= 2 && (
         <div
           role="dialog"
           aria-modal="true"
@@ -1259,13 +1275,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 50,
             display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2rem',
           }}
-          onClick={() => setCompareIds([])}
+          onClick={() => setCompareViewOpen(false)}
         >
           <button
             onClick={(e) => {
               e.stopPropagation();
               setCompareMode(false);
               setCompareIds([]);
+              setCompareViewOpen(false);
             }}
             title="יציאה ממצב השוואה"
             style={{
@@ -1307,6 +1324,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                       await setPhotoStatus(id, 'selected');
                       setCompareMode(false);
                       setCompareIds([]);
+                      setCompareViewOpen(false);
                     }}
                     style={{ ...primaryButtonStyle, padding: '0.5rem 1.25rem' }}
                   >
