@@ -56,7 +56,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error } = await supabase
     .from('galleries')
-    .select('id, expires_at, reminder_days, photographer_notes, view_count, last_viewed_at, clients(full_name, email, access_code), packages(included_photos, base_price, extra_photo_price)')
+    .select('id, expires_at, reminder_days, photographer_notes, view_count, last_viewed_at, delivered_at, originals_cleaned_up_at, clients(full_name, email, access_code), packages(included_photos, base_price, extra_photo_price)')
     .eq('id', params.id)
     .single();
 

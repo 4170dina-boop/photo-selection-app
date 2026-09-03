@@ -78,6 +78,11 @@ create table galleries (
   -- משולם בהזמנה, הרבה לפני שהלקוחה סיימה לבחור). אין אינטגרציית סליקה
   -- (ראו README) אז זה סימון ידני בלבד, לא נגזר מכלום אוטומטית. null = טרם שולם.
   paid_at timestamptz,
+  -- מתי עבודת הרקע היומית (app/api/cron/tick/route.ts) מחקה את קבצי המקור
+  -- (הלא-ערוכים) של הגלריה הזו מ-Storage, כדי לפנות מקום 30 יום אחרי מסירה -
+  -- null = עדיין לא נוקתה (או שעדיין לא עברו 30 יום מ-delivered_at). לא
+  -- קשור לתמונות הערוכות הסופיות (delivered_photos) - הן אף פעם לא נמחקות אוטומטית.
+  originals_cleaned_up_at timestamptz,
   -- מונה צפיות של הלקוחה בגלריה (כל טעינה מוצלחת, לא ייחודי) - כדי שהצלמת
   -- תדע אם הלקוחה בכלל פתחה את הקישור, לא רק שהמייל "נשלח" (יכול להיחסם
   -- אצל הלקוחה בלי שום דרך אחרת לדעת - ראו app/api/gallery/[id]/route.ts).
@@ -1053,3 +1058,7 @@ create policy "public read logos" on storage.objects
 --       )
 --     )
 --   );
+
+-- אם כבר הרצת גרסה קודמת של הסכמה בלי מחיקה אוטומטית של תמונות מקור אחרי
+-- מסירה (app/api/cron/tick/route.ts, שלב 3), מריצים גם את זה:
+-- alter table galleries add column if not exists originals_cleaned_up_at timestamptz;

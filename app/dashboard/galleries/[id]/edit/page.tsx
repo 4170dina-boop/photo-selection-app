@@ -53,6 +53,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [logoUrl, setLogoUrl] = useState('');
   const [viewCount, setViewCount] = useState(0);
   const [lastViewedAt, setLastViewedAt] = useState<string | null>(null);
+  const [deliveredAt, setDeliveredAt] = useState<string | null>(null);
+  const [originalsCleanedUpAt, setOriginalsCleanedUpAt] = useState<string | null>(null);
 
   const [supabase] = useState(() => createClient());
   const [deliveredPhotos, setDeliveredPhotos] = useState<DeliveredPhoto[]>([]);
@@ -194,6 +196,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setReminderDays(data.reminder_days != null ? String(data.reminder_days) : '');
     setViewCount(data.view_count ?? 0);
     setLastViewedAt(data.last_viewed_at ?? null);
+    setDeliveredAt(data.delivered_at ?? null);
+    setOriginalsCleanedUpAt(data.originals_cleaned_up_at ?? null);
     setLoading(false);
   }
 
@@ -646,6 +650,21 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '1rem' }}>
           העלאת התמונות הערוכות הסופיות - הלקוחה תוכל לצפות ולהוריד אותן (בודדת או כ-ZIP) מאותו קישור וקוד גישה.
         </p>
+
+        {/* מחיקת מקור אוטומטית 30 יום אחרי מסירה (app/api/cron/tick/route.ts) -
+            רק שקיפות, אין כאן שום כפתור/פעולה - זו עבודת רקע יומית. */}
+        {deliveredAt && !originalsCleanedUpAt && (
+          <p style={{ color: theme.textFaint, fontSize: 12, marginBottom: '1rem' }}>
+            💡 תמונות המקור (הלא-ערוכות) יימחקו אוטומטית ב-
+            {toHebrewDateString(new Date(new Date(deliveredAt).getTime() + 30 * 24 * 60 * 60 * 1000))}
+            {' '}כדי לפנות מקום באחסון - התמונות הערוכות שהעלית ללקוחה לא נמחקות.
+          </p>
+        )}
+        {originalsCleanedUpAt && (
+          <p style={{ color: theme.textFaint, fontSize: 12, marginBottom: '1rem' }}>
+            💡 תמונות המקור (הלא-ערוכות) נמחקו אוטומטית ב-{toHebrewDateString(new Date(originalsCleanedUpAt))} כדי לפנות מקום באחסון.
+          </p>
+        )}
 
         <label
           style={{

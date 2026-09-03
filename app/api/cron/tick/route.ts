@@ -103,9 +103,57 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 3. גלריות שנמסרו לפני 30+ יום - מוחקות את קבצי המקור (לא הערוכים!) כדי
+  // לפנות מקום באחסון (חשבון Supabase חינמי, מוגבל ל-1GB - ראו README). בשלב
+  // הזה הלקוחה כבר בחרה והצלמת כבר הורידה/ערכה את המקור אצלה, אז אין עוד
+  // סיבה שהעותק הזה יתפוס מקום ב-Storage.
+  const ORIGINALS_GRACE_DAYS = 30;
+  const cleanupThreshold = new Date(now.getTime() - ORIGINALS_GRACE_DAYS * 24 * 60 * 60 * 1000);
+
+  const { data: deliveredGalleries, error: deliveredError } = await supabaseAdmin
+    .from('galleries')
+    .select('id')
+    .not('delivered_at', 'is', null)
+    .lt('delivered_at', cleanupThreshold.toISOString())
+    .is('originals_cleaned_up_at', null);
+
+  if (deliveredError) {
+    return NextResponse.json({ error: 'שליפת גלריות לניקוי מקור נכשלה' }, { status: 500 });
+  }
+
+  let originalsCleanedGalleries = 0;
+  let originalFilesDeleted = 0;
+
+  for (const gallery of deliveredGalleries ?? []) {
+    const { data: photos } = await supabaseAdmin
+      .from('photos')
+      .select('file_path, thumbnail_path')
+      .eq('gallery_id', gallery.id);
+
+    // מוחקים רק תמונות שבהן יש עותק שני עצמאי (thumbnail בנתיב אחר מהמקור) -
+    // אם עיבוד סימן המים נכשל בזמנו (thumbnail_path == file_path, ראו
+    // .../photos/[photoId]/process/route.ts), זה העותק היחיד של התמונה
+    // ואסור למחוק אותו.
+    const paths = (photos ?? [])
+      .filter((p) => p.thumbnail_path && p.thumbnail_path !== p.file_path)
+      .map((p) => p.file_path);
+
+    if (paths.length > 0) {
+      const { error: removeError } = await supabaseAdmin.storage.from('gallery-photos').remove(paths);
+      if (!removeError) originalFilesDeleted += paths.length;
+    }
+
+    // מסמנים "נוקה" גם אם לא היה מה למחוק (כל התמונות בגלריה נכשלו בעיבוד) -
+    // כדי שלא נבדוק את אותה גלריה שוב בכל ריצה יומית.
+    await supabaseAdmin.from('galleries').update({ originals_cleaned_up_at: now.toISOString() }).eq('id', gallery.id);
+    originalsCleanedGalleries++;
+  }
+
   return NextResponse.json({
     expiredCount: expiredGalleries?.length ?? 0,
     candidatesChecked: candidates?.length ?? 0,
     remindersSent,
+    originalsCleanedGalleries,
+    originalFilesDeleted,
   });
 }
