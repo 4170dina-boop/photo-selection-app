@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
 
   const { data: photographer } = await supabase
     .from('photographers')
-    .select('id, theme_gen_count, theme_gen_date')
+    .select('id')
     .eq('auth_user_id', user.id)
     .single();
 
@@ -73,11 +73,24 @@ export async function POST(req: NextRequest) {
   }
 
   // מגבלה יומית - בעיקר רשת ביטחון נגד שימוש חוזר בלתי צפוי, לא כי העלות
-  // בפועל גבוהה (ראו README - שבריר אגורה לכל קריאה).
-  const today = new Date().toISOString().slice(0, 10);
-  const usedToday = photographer.theme_gen_date === today ? photographer.theme_gen_count ?? 0 : 0;
+  // בפועל גבוהה (ראו README - שבריר אגורה לכל קריאה). הבדיקה וה"תפיסה" של
+  // המכסה (reserve_theme_gen_quota, ראו supabase/schema.sql) קורות יחד באופן
+  // אטומי ב-DB *לפני* קריאת ה-AI - לא רק בדיקה מוקדמת עם כתיבה מאוחרת בסוף
+  // כמו קודם - כדי ששתי בקשות מקבילות (שתי לשוניות פתוחות באותו רגע) לא
+  // יוכלו שתיהן לעבור את הבדיקה על סמך אותו usedToday ולצרוך שתי קריאות AI
+  // בתשלום כשהמונה בפועל מתקדם ב-1 בלבד. לא "מחזירים" מכסה שנתפסה אם קריאת
+  // ה-AI עצמה נכשלת אחר כך - מכסה יומית רכה בלבד, וגם הקוד הקודם לא זיכה
+  // ניסיון חוזר בחינם על כשל.
+  const { data: quotaReserved, error: quotaError } = await supabaseAdmin.rpc('reserve_theme_gen_quota', {
+    p_photographer_id: photographer.id,
+    p_daily_limit: DAILY_LIMIT,
+  });
 
-  if (usedToday >= DAILY_LIMIT) {
+  if (quotaError) {
+    return NextResponse.json({ error: 'שגיאה בבדיקת המכסה היומית, נסי שוב' }, { status: 500 });
+  }
+
+  if (!quotaReserved) {
     return NextResponse.json({ error: `הגעת למגבלה היומית (${DAILY_LIMIT} ניסיונות) - נסי שוב מחר` }, { status: 429 });
   }
 
@@ -121,14 +134,7 @@ export async function POST(req: NextRequest) {
 
   const theme = { bg: parsed.bg, panel: parsed.panel, text: parsed.text, accent: parsed.accent };
 
-  try {
-    await supabaseAdmin
-      .from('photographers')
-      .update({ theme_gen_count: usedToday + 1, theme_gen_date: today })
-      .eq('id', photographer.id);
-  } catch {
-    // שקט - לא קריטי אם עדכון המונה נכשל פעם אחת, לא חוסם את התוצאה
-  }
-
+  // המכסה כבר נתפסה אטומית למעלה (reserve_theme_gen_quota) לפני קריאת ה-AI -
+  // אין צורך בעדכון מונה נוסף כאן.
   return NextResponse.json({ theme });
 }

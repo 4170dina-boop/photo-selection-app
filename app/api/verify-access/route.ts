@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { signSession, safeCompare } from '@/lib/session';
 import { SESSION_MAX_AGE_MS } from '@/lib/gallerySession';
-import { isLockedOut, afterFailedAttempt, clearedLockoutState } from '@/lib/accessLockout';
+import { isLockedOut, clearedLockoutState } from '@/lib/accessLockout';
 
 // שימו לב: כאן (ורק כאן, בצד שרת) משתמשים ב-service_role key, לא ב-anon key.
 // ה-service key חייב להישאר בסביבת השרת בלבד ולעולם לא להגיע לדפדפן.
@@ -46,7 +46,19 @@ export async function POST(req: NextRequest) {
   // השוואה בזמן קבוע - לא חושפת מידע על אורך/תוכן הקוד הנכון דרך תזמון התשובה
   if (!expectedCode || !safeCompare(expectedCode, accessCode)) {
     if (client?.id) {
-      await supabaseAdmin.from('clients').update(afterFailedAttempt(client)).eq('id', client.id);
+      // הרצה אטומית ב-DB (register_failed_access_attempt, ראו supabase/schema.sql)
+      // במקום read-then-write מהערך שכבר נקרא למעלה - כדי לסגור מרוץ בין ניחושים
+      // שמגיעים במקביל (לא ברצף): הפונקציה נועלת את שורת ה-client (SELECT ... FOR
+      // UPDATE) ומחשבת/כותבת את failed_access_attempts/locked_until החדשים באותה
+      // טרנזקציה, כך שבקשות מקבילות מתעדכנות אחת אחרי השנייה ולא כולן מ-"לפני".
+      // afterFailedAttempt נשארת בשימוש רק בתור isLockedOut למעלה (בדיקה מהירה,
+      // בלי I/O) - הלוגיקה הטהורה שלה משוכפלת בכוונה בתוך הפונקציה ב-SQL.
+      const { data: attemptRows, error: attemptError } = await supabaseAdmin.rpc('register_failed_access_attempt', {
+        p_client_id: client.id,
+      });
+      if (!attemptError && attemptRows?.[0]?.already_locked_out) {
+        return NextResponse.json({ error: 'יותר מדי ניסיונות שגויים - נסו שוב בעוד כמה דקות' }, { status: 429 });
+      }
     }
     return NextResponse.json({ error: 'קוד גישה שגוי' }, { status: 401 });
   }

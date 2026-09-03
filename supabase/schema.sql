@@ -558,6 +558,156 @@ create trigger trg_protect_ai_usage_counters
 before insert or update on photographers
 for each row execute function protect_ai_usage_counters();
 
+-- הגנת brute-force על קוד הגישה (clients.failed_access_attempts/locked_until,
+-- ראו lib/accessLockout.ts) הייתה מיושמת ב-app/api/verify-access/route.ts כ-
+-- read-then-write רגיל בקוד ה-JS: קוראים failed_access_attempts, מחשבים בצד
+-- שרת (Node) את הערך הבא, וכותבים UPDATE נפרד. זה TOCTOU קלאסי - כמה בקשות
+-- שגויות שמגיעות במקביל (לא ברצף) כולן קוראות את אותו failed_access_attempts
+-- "לפני" שאף אחת מהן הספיקה לכתוב, כך שכולן עוברות את בדיקת isLockedOut
+-- ומקבלות תשובת "קוד שגוי" משלהן - התוקף יכול לצרוך פי כמה מ-MAX_ATTEMPTS
+-- ניחושים בכל חלון נעילה במקום להיחסם אחרי 5 בדיוק. הפונקציה הבאה מבצעת את
+-- כל הרצף - נעילת השורה, קריאה, חישוב, כתיבה - בטרנזקציה אטומית אחת ב-DB
+-- (SELECT ... FOR UPDATE נועל את שורת ה-client הספציפית עד סוף הטרנזקציה,
+-- אז בקשה מקבילה שנייה על אותו client_id ממתינה בפועל לשחרור הנעילה ורק אז
+-- קוראת את הערך המעודכן - לא את אותו ערך "לפני" כמו קודם). הלוגיקה הפנימית
+-- (מגדילים תמיד, ננעלים רק בהגעה ל-5, לא נועלים מחדש בכל כשל נוסף אחרי
+-- שנעילה קודמת פגה) זהה בכוונה ל-afterFailedAttempt הטהורה ב-lib/accessLockout.ts -
+-- הפונקציה הזו נשארת כמו שהיא (עדיין משמשת לבדיקה המהירה isLockedOut בתחילת
+-- הבקשה, לפני שנוגעים ב-DB בכלל, וב-supabase/../accessLockout.test.ts הקיימים),
+-- רק שנתיב הכשל בפועל (הגדלת המונה + נעילה) עבר לכאן כדי לסגור את המרוץ.
+create or replace function register_failed_access_attempt(p_client_id uuid)
+returns table (already_locked_out boolean, failed_attempts int, locked_until timestamptz) as $$
+declare
+  current_attempts int;
+  current_locked_until timestamptz;
+  new_attempts int;
+  new_locked_until timestamptz;
+begin
+  select c.failed_access_attempts, c.locked_until
+  into current_attempts, current_locked_until
+  from clients c
+  where c.id = p_client_id
+  for update;
+
+  if not found then
+    return query select false, 0, null::timestamptz;
+    return;
+  end if;
+
+  -- כבר נעולה (בקשה מקבילה קודמת באותו בלנטש הספיקה להגיע ל-MAX_ATTEMPTS
+  -- ולנעול, בין שהבקשה הזו קראה את המצב הישן ל-isLockedOut ובין שלא) - לא
+  -- מגדילים הלאה, רק מדווחים שהיא כבר נעולה כדי שה-route יחזיר 429 ולא 401.
+  if current_locked_until is not null and current_locked_until > now() then
+    return query select true, coalesce(current_attempts, 0), current_locked_until;
+    return;
+  end if;
+
+  new_attempts := coalesce(current_attempts, 0) + 1;
+  if new_attempts >= 5 then -- MAX_ATTEMPTS, ראו lib/accessLockout.ts
+    new_locked_until := now() + interval '15 minutes'; -- LOCKOUT_MINUTES, ראו lib/accessLockout.ts
+  else
+    new_locked_until := null;
+  end if;
+
+  update clients
+  set failed_access_attempts = new_attempts,
+      locked_until = new_locked_until
+  where id = p_client_id;
+
+  return query select false, new_attempts, new_locked_until;
+end;
+$$ language plpgsql;
+
+-- אותה בעיה בדיוק (read-then-write על מונה ב-JS, בלי נעילה), אבל על מוני
+-- השימוש היומיים ב-AI (theme_gen_count/date ב-app/api/photographer/design-theme,
+-- ai_picks_count/date ב-app/api/gallery/[id]/ai-picks) - שם המרוץ הוא בין
+-- לשוניות/בני משפחה שלוחצים כמעט יחד, וההשפעה היא עלות (קריאות Anthropic
+-- בתשלום מעבר ל-DAILY_LIMIT), לא אבטחה. אותו פתרון: "reserve" אטומי אחד -
+-- בדיקה + הגדלה יחד, לפני קריאת ה-AI - עם SELECT ... FOR UPDATE שנועל את
+-- שורת הצלמת כדי ששתי בקשות מקבילות לא יקראו שתיהן את אותו usedToday "לפני".
+-- מחזירה true אם "נתפסה" מכסה (מותר להמשיך לקרוא ל-AI), false אם המכסה
+-- היומית כבר נוצלה (כולל ע"י בקשה מקבילה אחרת שזכתה קודם) - ה-route אז
+-- מחזיר 429 בלי לקרוא ל-Anthropic בכלל. בכוונה לא "מחזירים" מכסה שנתפסה אם
+-- קריאת ה-AI עצמה נכשלת אחר כך - מכסות יומיות רכות בלבד, וגם הקוד הקודם לא
+-- זיכה ניסיון חוזר בחינם על כשל.
+create or replace function reserve_theme_gen_quota(p_photographer_id uuid, p_daily_limit int)
+returns boolean as $$
+declare
+  current_count int;
+  current_date_val date;
+  today date := current_date;
+begin
+  select p.theme_gen_count, p.theme_gen_date
+  into current_count, current_date_val
+  from photographers p
+  where p.id = p_photographer_id
+  for update;
+
+  if not found then
+    return false;
+  end if;
+
+  if current_date_val is distinct from today then
+    current_count := 0;
+  end if;
+
+  if coalesce(current_count, 0) >= p_daily_limit then
+    return false;
+  end if;
+
+  update photographers
+  set theme_gen_count = coalesce(current_count, 0) + 1,
+      theme_gen_date = today
+  where id = p_photographer_id;
+
+  return true;
+end;
+$$ language plpgsql;
+
+-- זהה ל-reserve_theme_gen_quota למעלה, על זוג העמודות המקביל ai_picks_count/
+-- ai_picks_date (ראו app/api/gallery/[id]/ai-picks/route.ts) - פונקציה נפרדת
+-- כי אלה שתי מכסות בלתי-תלויות עם תקרות שונות, לא כי הלוגיקה שונה.
+create or replace function reserve_ai_picks_quota(p_photographer_id uuid, p_daily_limit int)
+returns boolean as $$
+declare
+  current_count int;
+  current_date_val date;
+  today date := current_date;
+begin
+  select p.ai_picks_count, p.ai_picks_date
+  into current_count, current_date_val
+  from photographers p
+  where p.id = p_photographer_id
+  for update;
+
+  if not found then
+    return false;
+  end if;
+
+  if current_date_val is distinct from today then
+    current_count := 0;
+  end if;
+
+  if coalesce(current_count, 0) >= p_daily_limit then
+    return false;
+  end if;
+
+  update photographers
+  set ai_picks_count = coalesce(current_count, 0) + 1,
+      ai_picks_date = today
+  where id = p_photographer_id;
+
+  return true;
+end;
+$$ language plpgsql;
+
+-- אם כבר הרצת גרסה קודמת של הסכמה בלי שלוש הפונקציות האטומיות למעלה
+-- (register_failed_access_attempt / reserve_theme_gen_quota / reserve_ai_picks_quota) -
+-- שסוגרות מרוצי בדיקה-ואז-כתיבה (TOCTOU) בין בקשות מקבילות על אותה שורת
+-- client/photographer - פשוט מריצים מחדש את שלוש ה-create or replace function
+-- למעלה על פרויקט Supabase שכבר קיים (create or replace הוא idempotent,
+-- לא צריך drop קודם); אין טריגר/עמודה חדשה שדורשת migration נפרדת כאן.
+
 -- אם כבר הרצת גרסה קודמת של הסכמה בלי ה-with check על "photographers see own
 -- row" ובלי ההגנה על insert/מוני ה-AI (הפגיעות: צלמת מחוברת יכלה למחוק את
 -- השורה שלה וליצור מחדש עם is_unlimited=true, או לאפס בעצמה את ai_picks_count/

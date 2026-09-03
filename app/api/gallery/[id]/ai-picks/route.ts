@@ -71,16 +71,31 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: photographer } = await supabaseAdmin
     .from('photographers')
-    .select('id, ai_picks_count, ai_picks_date')
+    .select('id')
     .eq('id', gallery.photographer_id)
     .single();
   if (!photographer) {
     return NextResponse.json({ error: 'לא נמצא פרופיל צלם' }, { status: 404 });
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-  const usedToday = photographer.ai_picks_date === today ? photographer.ai_picks_count ?? 0 : 0;
-  if (usedToday >= DAILY_LIMIT) {
+  // הבדיקה וה"תפיסה" של המכסה היומית (reserve_ai_picks_quota, ראו
+  // supabase/schema.sql) קורות יחד באופן אטומי ב-DB *לפני* קריאות ה-AI ועיבוד
+  // התמונות למטה - לא רק בדיקה מוקדמת עם כתיבה מאוחרת בסוף כמו קודם - כדי
+  // ששתי בקשות מקבילות (למשל הבעלים ובן משפחה שלוחצים "עזרי לי לבחור" כמעט
+  // יחד) לא יוכלו שתיהן לעבור את הבדיקה על סמך אותו usedToday ולצרוך שתי
+  // הרצות AI בתשלום כשהמונה בפועל מתקדם ב-1 בלבד. לא "מחזירים" מכסה שנתפסה
+  // אם ההרצה עצמה נכשלת/לא מוצאת כלום אחר כך - מכסה יומית רכה בלבד, וגם הקוד
+  // הקודם לא זיכה הרצה חוזרת בחינם על כשל.
+  const { data: quotaReserved, error: quotaError } = await supabaseAdmin.rpc('reserve_ai_picks_quota', {
+    p_photographer_id: photographer.id,
+    p_daily_limit: DAILY_LIMIT,
+  });
+
+  if (quotaError) {
+    return NextResponse.json({ error: 'שגיאה בבדיקת המכסה היומית, נסו שוב' }, { status: 500 });
+  }
+
+  if (!quotaReserved) {
     return NextResponse.json({ error: `הגעתם למגבלה היומית (${DAILY_LIMIT} הרצות) - נסו שוב מחר` }, { status: 429 });
   }
 
@@ -187,12 +202,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
   }
 
-  try {
-    await supabaseAdmin.from('photographers').update({ ai_picks_count: usedToday + 1, ai_picks_date: today }).eq('id', photographer.id);
-  } catch {
-    // שקט - לא קריטי אם עדכון המונה נכשל
-  }
-
+  // המכסה כבר נתפסה אטומית למעלה (reserve_ai_picks_quota) לפני קריאות ה-AI -
+  // אין צורך בעדכון מונה נוסף כאן.
   return NextResponse.json({
     pickedCount: pickedIds.size,
     analyzedCount: ready.length,
