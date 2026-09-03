@@ -53,10 +53,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     gallery.owner_participant_id
       ? supabaseAdmin
           .from('selections')
-          .select('photo_id, status, note')
+          .select('photo_id, status, note, photographer_reply')
           .eq('gallery_id', params.id)
           .eq('participant_id', gallery.owner_participant_id)
-      : Promise.resolve({ data: [] as { photo_id: string; status: string; note: string | null }[] }),
+      : Promise.resolve({ data: [] as { photo_id: string; status: string; note: string | null; photographer_reply: string | null }[] }),
   ]);
 
   const selectionByPhotoId = new Map((selectionsData ?? []).map((s) => [s.photo_id, s]));
@@ -75,6 +75,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         original_filename: photo.original_filename,
         status: (selection?.status as 'maybe' | 'selected' | undefined) ?? null,
         note: selection?.note ?? null,
+        photographerReply: selection?.photographer_reply ?? null,
       };
     })
   );

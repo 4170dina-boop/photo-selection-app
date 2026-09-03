@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { theme, goldButtonStyle } from '@/lib/theme';
+import { theme, goldButtonStyle, inputStyle, outlineButtonStyle } from '@/lib/theme';
 import { useUploadQueue, type UploadItem } from '../../UploadProvider';
 
 interface UploadPageProps {
@@ -15,6 +15,7 @@ interface ExistingPhoto {
   original_filename: string;
   status: 'maybe' | 'selected' | null;
   note: string | null;
+  photographerReply: string | null;
 }
 
 // תואם ל-enforce_photo_limit ב-supabase/schema.sql - אין מקור אמת משותף אחד,
@@ -35,6 +36,13 @@ export default function UploadPage({ params }: UploadPageProps) {
   const [existingPhotos, setExistingPhotos] = useState<ExistingPhoto[] | null>(null);
   const [checkingOwnership, setCheckingOwnership] = useState(true);
   const [notFound, setNotFound] = useState(false);
+
+  // תגובה להערת לקוחה על תמונה - אותו דפוס בדיוק כמו noteEditingId/noteDraft
+  // בגלריית הלקוחה (app/gallery/[id]/page.tsx), רק בכיוון ההפוך.
+  const [replyEditingId, setReplyEditingId] = useState<string | null>(null);
+  const [replyDraft, setReplyDraft] = useState('');
+  const [savingReply, setSavingReply] = useState(false);
+  const [replyError, setReplyError] = useState('');
 
   // מוודאים שהגלריה שייכת לצלמת המחוברת (אותו דפוס כמו דף העריכה) לפני שמציגים
   // את ממשק ההעלאה - בלי זה, כל צלמת יכולה לנווט לפי galleryId של גלריה של
@@ -67,6 +75,39 @@ export default function UploadPage({ params }: UploadPageProps) {
     if (!res.ok) return;
     const data = await res.json();
     setExistingPhotos(data.photos ?? []);
+  }
+
+  function openReplyEditor(photo: ExistingPhoto) {
+    setReplyError('');
+    setReplyEditingId(photo.id);
+    setReplyDraft(photo.photographerReply ?? '');
+  }
+
+  async function saveReply() {
+    if (!replyEditingId) return;
+    const photoId = replyEditingId;
+    const trimmed = replyDraft.trim();
+
+    setSavingReply(true);
+    setReplyError('');
+
+    const res = await fetch(`/api/galleries/${galleryId}/photos/${photoId}/reply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reply: trimmed }),
+    });
+
+    setSavingReply(false);
+
+    if (!res.ok) {
+      setReplyError('שמירת התגובה נכשלה, נסי שוב');
+      return;
+    }
+
+    setExistingPhotos((prev) =>
+      (prev ?? []).map((p) => (p.id === photoId ? { ...p, photographerReply: trimmed || null } : p))
+    );
+    setReplyEditingId(null);
   }
 
   // כשההעלאה שרצה ברקע (ב-context) מסתיימת בזמן שהדף הזה עדיין פתוח, מרעננים
@@ -189,16 +230,17 @@ export default function UploadPage({ params }: UploadPageProps) {
                     </span>
                   )}
                   {photo.note && (
-                    <div
-                      title={photo.note}
+                    <button
+                      onClick={() => openReplyEditor(photo)}
+                      title={photo.photographerReply ? `${photo.note} — התגובה שלך: ${photo.photographerReply}` : `${photo.note} — לחצי כדי להגיב`}
                       style={{
-                        position: 'absolute', bottom: 0, insetInline: 0,
-                        background: 'rgba(0,0,0,0.65)', color: theme.text, fontSize: 10,
+                        position: 'absolute', bottom: 0, insetInline: 0, textAlign: 'right', cursor: 'pointer',
+                        background: 'rgba(0,0,0,0.65)', color: theme.text, fontSize: 10, border: 'none',
                         padding: '3px 7px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       }}
                     >
-                      ✎ {photo.note}
-                    </div>
+                      {photo.photographerReply ? '💬 ' : '✎ '}{photo.note}
+                    </button>
                   )}
                 </div>
               );
@@ -342,6 +384,49 @@ export default function UploadPage({ params }: UploadPageProps) {
           })}
         </div>
       )}
+
+      {replyEditingId && (() => {
+        const photo = (existingPhotos ?? []).find((p) => p.id === replyEditingId);
+        if (!photo) return null;
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onClick={() => setReplyEditingId(null)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              onClick={(e) => e.stopPropagation()}
+              style={{ background: theme.panel, color: theme.text, padding: '1.25rem', borderRadius: 10, width: 340, border: `1px solid ${theme.border}` }}
+            >
+              <div style={{ background: theme.panelInput, borderRadius: 8, padding: '0.6rem 0.75rem', marginBottom: '0.75rem', fontSize: 13 }}>
+                <div style={{ color: theme.textFaint, fontSize: 11, marginBottom: '0.25rem' }}>הערת הלקוחה:</div>
+                {photo.note}
+              </div>
+
+              <label htmlFor="reply-text" style={{ display: 'block', fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.5rem' }}>
+                תגובה שלך
+              </label>
+              <textarea
+                id="reply-text"
+                value={replyDraft}
+                onChange={(e) => setReplyDraft(e.target.value)}
+                rows={3}
+                style={{ ...inputStyle, width: '100%' }}
+                placeholder="למשל: סוכם, נדגיש את זה בעריכה"
+                autoFocus
+              />
+              {replyError && <p style={{ color: theme.errorText, fontSize: 12, marginTop: '0.5rem' }}>{replyError}</p>}
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+                <button onClick={saveReply} disabled={savingReply} style={{ ...goldButtonStyle, padding: '0.5rem 1rem', opacity: savingReply ? 0.6 : 1 }}>
+                  {savingReply ? 'שומרת...' : 'שמירה'}
+                </button>
+                <button onClick={() => setReplyEditingId(null)} style={{ ...outlineButtonStyle, padding: '0.5rem 1rem' }}>ביטול</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

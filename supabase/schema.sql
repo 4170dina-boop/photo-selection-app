@@ -139,6 +139,12 @@ create table selections (
   participant_id uuid references gallery_participants(id) on delete cascade not null,
   status text default 'selected' check (status in ('maybe', 'selected')),
   note text,
+  -- תגובת הצלמת להערה שהלקוחה כתבה (note למעלה) - ראו
+  -- app/api/galleries/[id]/photos/[photoId]/reply/route.ts. עד עכשיו ההערה
+  -- הייתה חד-כיוונית (הלקוחה כותבת, הצלמת רק קוראת ב-app/dashboard/upload/[galleryId]/page.tsx) -
+  -- זה נותן לצלמת דרך לענות ("סוכם!"/לשאול הבהרה) בלי לצאת לוואטסאפ/מייל.
+  photographer_reply text,
+  photographer_reply_at timestamptz,
   selected_at timestamptz default now(),
   unique (gallery_id, photo_id, participant_id)
 );
@@ -1070,3 +1076,7 @@ create policy "public read logos" on storage.objects
 -- אם כבר הרצת גרסה קודמת בלי התראת מייל לצלמת לפני מחיקת המקור
 -- (app/api/cron/tick/route.ts, שלב 3), מריצים גם את זה:
 -- alter table galleries add column if not exists originals_deletion_warning_sent_at timestamptz;
+
+-- אם כבר הרצת גרסה קודמת בלי תגובת צלמת להערת לקוחה, מריצים גם את זה:
+-- alter table selections add column if not exists photographer_reply text;
+-- alter table selections add column if not exists photographer_reply_at timestamptz;

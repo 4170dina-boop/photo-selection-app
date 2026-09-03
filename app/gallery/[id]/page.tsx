@@ -154,7 +154,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [deliveredPhotos, setDeliveredPhotos] = useState<DeliveredPhoto[]>([]);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [myMarks, setMyMarks] = useState<Record<string, { status: 'maybe' | 'selected'; note: string | null }>>({});
+  const [myMarks, setMyMarks] = useState<Record<string, { status: 'maybe' | 'selected'; note: string | null; photographerReply: string | null }>>({});
   const [allMarks, setAllMarks] = useState<Record<string, Mark[]>>({});
   const [packageInfo, setPackageInfo] = useState<{ included: number; extraPrice: number; basePrice: number } | null>(null);
   const [ownerSelectedCount, setOwnerSelectedCount] = useState(0);
@@ -765,7 +765,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       if (next === null) {
         delete nextMarks[photoId];
       } else {
-        nextMarks[photoId] = { status: next, note: prev[photoId]?.note ?? null };
+        nextMarks[photoId] = { status: next, note: prev[photoId]?.note ?? null, photographerReply: prev[photoId]?.photographerReply ?? null };
       }
       return nextMarks;
     });
@@ -1998,6 +1998,18 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             <label htmlFor="note-text" id="note-dialog-title" style={{ display: 'block', fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.75rem' }}>
               הערה לתמונה
             </label>
+
+            {/* תגובת הצלמת להערה - לקריאה בלבד, מוצגת רק אם קיימת (ראו
+                app/api/galleries/[id]/photos/[photoId]/reply/route.ts) */}
+            {myMarks[noteEditingId]?.photographerReply && (
+              <div style={{ background: theme.panelInput, borderRadius: 8, padding: '0.6rem 0.75rem', marginBottom: '0.75rem', fontSize: 13 }}>
+                <div style={{ color: theme.textFaint, fontSize: 11, marginBottom: '0.25rem' }}>
+                  תגובת {photographerName ?? 'הצלמת'}:
+                </div>
+                {myMarks[noteEditingId]?.photographerReply}
+              </div>
+            )}
+
             <textarea
               id="note-text"
               value={noteDraft}

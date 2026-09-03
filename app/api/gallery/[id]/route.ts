@@ -88,7 +88,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const [{ data: photosData }, { data: selectionsData }, { data: packageData }, { data: participantsData }] = await Promise.all([
     supabaseAdmin.from('photos').select('id, file_path, thumbnail_path, original_filename').eq('gallery_id', galleryId),
-    supabaseAdmin.from('selections').select('photo_id, participant_id, note, status').eq('gallery_id', galleryId),
+    supabaseAdmin.from('selections').select('photo_id, participant_id, note, status, photographer_reply').eq('gallery_id', galleryId),
     supabaseAdmin.from('packages').select('included_photos, extra_photo_price, base_price').eq('gallery_id', galleryId).single(),
     supabaseAdmin.from('gallery_participants').select('id, display_name, is_owner').eq('gallery_id', galleryId),
   ]);
@@ -147,12 +147,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // myMarks: רק הסימונים שלי (עורכים דרכם). allMarks: כל הסימונים של כולם,
   // לתגי "מי בחר מה" על כל תמונה - כדי שאפשר יהיה לראות מה בני המשפחה
   // האחרים סימנו, בלי לערבב עם הסימון האישי שלי.
-  const myMarks: Record<string, { status: 'maybe' | 'selected'; note: string | null }> = {};
+  const myMarks: Record<string, { status: 'maybe' | 'selected'; note: string | null; photographerReply: string | null }> = {};
   const allMarks: Record<string, { participantId: string; displayName: string; status: string }[]> = {};
 
   (selectionsData ?? []).forEach((s: any) => {
     if (s.participant_id === session.participantId) {
-      myMarks[s.photo_id] = { status: s.status, note: s.note };
+      myMarks[s.photo_id] = { status: s.status, note: s.note, photographerReply: s.photographer_reply ?? null };
     }
     const participant = participants.find((p) => p.id === s.participant_id);
     if (!participant) return;
