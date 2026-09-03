@@ -134,6 +134,28 @@ create table selections (
   unique (gallery_id, photo_id, participant_id)
 );
 
+-- תמונות ערוכות סופיות שהצלמת מוסרת ללקוחה בתוך האפליקציה (ראו README/התכנון:
+-- "מסירת תמונות ערוכות") - טבלה נפרדת לגמרי מ-photos ולא הרחבה שלה: אין
+-- thumbnail/sharpness/סימן מים, ואין קשר ישיר ל-selections (הצלמת מעלה batch
+-- חופשי של קבצים ערוכים, לא מתאימה קובץ-קובץ לתמונת מקור/בחירה ספציפית).
+create table delivered_photos (
+  id uuid primary key default uuid_generate_v4(),
+  gallery_id uuid references galleries(id) on delete cascade not null,
+  -- נתיב בתוך אותו bucket פרטי gallery-photos, תחת תת-תיקיית {galleryId}/final/ -
+  -- בדיוק כמו thumbs/, ה-URL בפועל נוצר כ-signed URL זמני, ראו app/api/gallery/[id]/route.ts
+  file_path text not null,
+  original_filename text not null,
+  created_at timestamptz default now()
+);
+create index idx_delivered_photos_gallery on delivered_photos(gallery_id);
+alter table delivered_photos enable row level security;
+create policy "photographers see own delivered photos" on delivered_photos
+  for all using (gallery_id in (
+    select id from galleries where photographer_id in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  ));
+
 create table packages (
   id uuid primary key default uuid_generate_v4(),
   gallery_id uuid references galleries(id) on delete cascade not null unique,
@@ -352,6 +374,24 @@ $$ language plpgsql;
 create trigger trg_selections_activity
 after insert or update or delete on selections
 for each row execute function update_gallery_last_activity();
+
+-- מעדכן אוטומטית את delivered_at בהעלאה הראשונה של תמונה סופית (ראו
+-- delivered_photos למעלה) - כך שהצלמת לא צריכה לזכור ללחוץ גם על כפתור
+-- "סימון כנמסר" הידני הקיים (toggle-delivered) בנוסף להעלאה עצמה. coalesce
+-- שומר על התאריך המקורי אם כבר סומן ידנית קודם - לא דורס אותו בכל העלאה
+-- נוספת. בכוונה לא ההפך: מחיקת כל התמונות הסופיות לא "מבטלת" delivered_at -
+-- scope-out מכוון, הצלמת יכולה תמיד להפוך ידנית דרך toggle-delivered.
+create or replace function mark_gallery_delivered()
+returns trigger as $$
+begin
+  update galleries set delivered_at = coalesce(delivered_at, now()) where id = new.gallery_id;
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger trg_delivered_photos_mark_delivered
+after insert on delivered_photos
+for each row execute function mark_gallery_delivered();
 
 -- מתחברת ל-Supabase Auth: כשנרשם משתמש חדש (auth.users), יוצרים לו אוטומטית
 -- שורת photographers מתאימה. שם העסק מגיע מ-user metadata (options.data.business_name
@@ -894,6 +934,34 @@ create policy "photographers upload only to own galleries" on storage.objects
     )
   );
 
+-- שתי ה-policies הבאות (select/delete) היו חסרות עד עכשיו - היה policy יחיד
+-- ל-insert בלבד. המשמעות בפועל: מחיקת גלריה (app/api/galleries/[id]/route.ts,
+-- DELETE) קוראת ל-storage.list()/.remove() עם ה-session client (לא service key),
+-- ובלי policy מתאים ה-RLS חסם את זה בשקט - מחיקת גלריה מעולם לא באמת מחקה
+-- קבצים מה-Storage, רק את רשומות ה-DB (דרך ה-CASCADE). אותו policy דרוש גם
+-- כדי שהצלמת תוכל למחוק תמונות סופיות בודדות שהיא העלתה (delivered_photos,
+-- ראו app/dashboard/galleries/[id]/edit/page.tsx) - אותו תנאי בעלות בדיוק כמו
+-- ה-insert policy למעלה, רק for select/for delete.
+create policy "photographers read own gallery files" on storage.objects
+  for select using (
+    bucket_id = 'gallery-photos'
+    and (storage.foldername(name))[1]::uuid in (
+      select id from galleries where photographer_id in (
+        select id from photographers where auth_user_id = auth.uid()
+      )
+    )
+  );
+
+create policy "photographers delete own gallery files" on storage.objects
+  for delete using (
+    bucket_id = 'gallery-photos'
+    and (storage.foldername(name))[1]::uuid in (
+      select id from galleries where photographer_id in (
+        select id from photographers where auth_user_id = auth.uid()
+      )
+    )
+  );
+
 -- אם כבר הרצת גרסה קודמת של הסכמה עם bucket ציבורי, מריצים גם את זה כדי לנקות:
 -- update storage.buckets set public = false where id = 'gallery-photos';
 -- drop policy if exists "public read gallery photos" on storage.objects;
@@ -927,3 +995,61 @@ create policy "photographers update own logo" on storage.objects
 
 create policy "public read logos" on storage.objects
   for select using (bucket_id = 'photographer-logos');
+
+-- אם כבר הרצת גרסה קודמת של הסכמה בלי מסירת תמונות ערוכות בתוך האפליקציה
+-- (delivered_photos, הטריגר mark_gallery_delivered, ו-policies select/delete
+-- ל-gallery-photos - האחרונות מתקנות גם באג קיים: מחיקת גלריה מעולם לא באמת
+-- מחקה קבצים מה-Storage כי היה policy יחיד ל-insert בלבד), מריצים גם את זה
+-- על פרויקט Supabase שכבר קיים:
+--
+-- create table if not exists delivered_photos (
+--   id uuid primary key default uuid_generate_v4(),
+--   gallery_id uuid references galleries(id) on delete cascade not null,
+--   file_path text not null,
+--   original_filename text not null,
+--   created_at timestamptz default now()
+-- );
+-- create index if not exists idx_delivered_photos_gallery on delivered_photos(gallery_id);
+-- alter table delivered_photos enable row level security;
+-- drop policy if exists "photographers see own delivered photos" on delivered_photos;
+-- create policy "photographers see own delivered photos" on delivered_photos
+--   for all using (gallery_id in (
+--     select id from galleries where photographer_id in (
+--       select id from photographers where auth_user_id = auth.uid()
+--     )
+--   ));
+--
+-- create or replace function mark_gallery_delivered()
+-- returns trigger as $$
+-- begin
+--   update galleries set delivered_at = coalesce(delivered_at, now()) where id = new.gallery_id;
+--   return new;
+-- end;
+-- $$ language plpgsql;
+--
+-- drop trigger if exists trg_delivered_photos_mark_delivered on delivered_photos;
+-- create trigger trg_delivered_photos_mark_delivered
+-- after insert on delivered_photos
+-- for each row execute function mark_gallery_delivered();
+--
+-- drop policy if exists "photographers read own gallery files" on storage.objects;
+-- create policy "photographers read own gallery files" on storage.objects
+--   for select using (
+--     bucket_id = 'gallery-photos'
+--     and (storage.foldername(name))[1]::uuid in (
+--       select id from galleries where photographer_id in (
+--         select id from photographers where auth_user_id = auth.uid()
+--       )
+--     )
+--   );
+--
+-- drop policy if exists "photographers delete own gallery files" on storage.objects;
+-- create policy "photographers delete own gallery files" on storage.objects
+--   for delete using (
+--     bucket_id = 'gallery-photos'
+--     and (storage.foldername(name))[1]::uuid in (
+--       select id from galleries where photographer_id in (
+--         select id from photographers where auth_user_id = auth.uid()
+--       )
+--     )
+--   );

@@ -245,6 +245,37 @@ export async function sendQuotaReachedEmail(params: QuotaReachedParams): Promise
   return sendEmail(params.to, `${params.clientName} הגיעה למכסת התמונות בחבילה`, html, { fromName: 'אזור צלמים ✨' });
 }
 
+interface FinalPhotosReadyParams {
+  to: string;
+  clientName: string;
+  businessName: string;
+  count: number;
+  galleryUrl: string;
+  replyTo?: string;
+}
+
+// מודיעה ללקוחה שהתמונות הערוכות הסופיות (delivered_photos) מוכנות לצפייה/הורדה
+// באותו קישור/קוד גישה שהיא כבר מכירה - נשלחת ביוזמת הצלמת (כפתור "שליחת
+// התראה" ב-app/dashboard/galleries/[id]/edit/page.tsx), לא אוטומטית בכל
+// העלאה, כי הצלמת בדרך כלל מעלה כמה תמונות בכמה פעימות ולא רוצה הצפה של מיילים.
+export async function sendFinalPhotosReadyEmail(params: FinalPhotosReadyParams): Promise<SendResult> {
+  const html = wrapEmailHtml({
+    headerText: params.businessName,
+    bodyHtml: `
+      <p style="margin: 0 0 8px;">היי ${params.clientName},</p>
+      <p style="margin: 0 0 8px;">התמונות הערוכות הסופיות שלך אצל <b>${params.businessName}</b> מוכנות! ✨</p>
+      <p style="margin: 0; font-size: 13px; color: #6b6156;">${params.count} תמונות מחכות לך לצפייה ולהורדה, באותו קישור וקוד גישה שכבר יש לך.</p>
+    `,
+    ctaText: 'כניסה לגלריה',
+    ctaUrl: params.galleryUrl,
+  });
+
+  return sendEmail(params.to, `התמונות הסופיות שלך אצל ${params.businessName} מוכנות!`, html, {
+    fromName: params.businessName,
+    replyTo: params.replyTo,
+  });
+}
+
 interface ClientSelectionSummaryParams {
   to: string;
   clientName: string;

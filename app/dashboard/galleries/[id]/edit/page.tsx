@@ -6,7 +6,19 @@ import Link from 'next/link';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import { toHebrewDateString } from '@/lib/hebrewDate';
 import { israelEndOfDayIso } from '@/lib/israelTime';
+import { createClient } from '@/lib/supabase/client';
 import MagicButton from '@/components/MagicButton';
+
+// כמה זמן ה-signed URL של תצוגה מקדימה בגריד הצלמת נשאר תקף - מספיק לישיבת
+// עריכה אחת, אותו סדר גודל כמו SIGNED_URL_TTL_SECONDS ב-app/api/gallery/[id]/route.ts.
+const DELIVERED_PREVIEW_TTL_SECONDS = 60 * 60;
+
+interface DeliveredPhoto {
+  id: string;
+  path: string;
+  filename: string;
+  url: string | null;
+}
 
 interface EditGalleryPageProps {
   params: { id: string };
@@ -42,8 +54,18 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [viewCount, setViewCount] = useState(0);
   const [lastViewedAt, setLastViewedAt] = useState<string | null>(null);
 
+  const [supabase] = useState(() => createClient());
+  const [deliveredPhotos, setDeliveredPhotos] = useState<DeliveredPhoto[]>([]);
+  const [loadingDelivered, setLoadingDelivered] = useState(true);
+  const [uploadingFinal, setUploadingFinal] = useState(false);
+  const [deletingFinalId, setDeletingFinalId] = useState<string | null>(null);
+  const [finalError, setFinalError] = useState('');
+  const [notifying, setNotifying] = useState(false);
+  const [notifyMessage, setNotifyMessage] = useState('');
+
   useEffect(() => {
     loadGallery();
+    loadDeliveredPhotos();
     // רק למותג בהודעה המוכנה להעתקה (handleCopyFormattedMessage) - לא
     // קריטי לשאר הדף, אז כישלון כאן פשוט משאיר כותרת גנרית ולא חוסם כלום.
     (async () => {
@@ -55,6 +77,99 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [galleryId]);
+
+  // ישירות מול DB/Storage עם ה-session client (לא route ייעודי) - ה-RLS
+  // (policies "photographers see own delivered photos"/"photographers read
+  // own gallery files" ב-schema.sql) כבר דואג שאי אפשר לגעת בגלריה של צלמת
+  // אחרת, כך שאין צורך ב-API route נפרד רק בשביל קריאה.
+  async function loadDeliveredPhotos() {
+    setLoadingDelivered(true);
+
+    const { data } = await supabase
+      .from('delivered_photos')
+      .select('id, file_path, original_filename')
+      .eq('gallery_id', galleryId)
+      .order('created_at', { ascending: false });
+
+    const withUrls = await Promise.all(
+      (data ?? []).map(async (row) => {
+        const { data: signed } = await supabase.storage
+          .from('gallery-photos')
+          .createSignedUrl(row.file_path, DELIVERED_PREVIEW_TTL_SECONDS);
+        return { id: row.id, path: row.file_path, filename: row.original_filename, url: signed?.signedUrl ?? null };
+      })
+    );
+
+    setDeliveredPhotos(withUrls);
+    setLoadingDelivered(false);
+  }
+
+  // בלי דחיסה ובלי /process (סימן מים/thumbnail) - זה הקובץ הערוך הסופי בעצמו,
+  // לא preview ללקוחה שעדיין בוחרת, אז מעלים כמו שהוא. concurrency פשוט
+  // (Promise.all, בלי worker-pool כמו UploadProvider) - כמות קבצים כאן קטנה
+  // בהרבה מהעלאת גלריה שלמה, ואין מגבלת 25 תמונות (enforce_photo_limit רץ
+  // רק על טבלת photos, לא על delivered_photos).
+  async function handleUploadFinalPhotos(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ''; // מאפשר לבחור שוב את אותם קבצים בהעלאה נוספת
+    if (files.length === 0) return;
+
+    setFinalError('');
+    setUploadingFinal(true);
+
+    const results = await Promise.all(
+      files.map(async (file) => {
+        const path = `${galleryId}/final/${crypto.randomUUID()}-${file.name}`;
+        const { error: uploadError } = await supabase.storage.from('gallery-photos').upload(path, file, { upsert: false });
+        if (uploadError) return false;
+
+        const { error: dbError } = await supabase
+          .from('delivered_photos')
+          .insert({ gallery_id: galleryId, file_path: path, original_filename: file.name });
+        return !dbError;
+      })
+    );
+
+    setUploadingFinal(false);
+    if (results.some((ok) => !ok)) {
+      setFinalError('חלק מהתמונות לא הועלו בהצלחה - נסי שוב');
+    }
+    await loadDeliveredPhotos();
+  }
+
+  async function handleDeleteFinalPhoto(photo: DeliveredPhoto) {
+    if (!window.confirm('למחוק את התמונה הזו? הלקוחה כבר לא תוכל לראות או להוריד אותה.')) return;
+
+    setFinalError('');
+    setDeletingFinalId(photo.id);
+
+    await supabase.storage.from('gallery-photos').remove([photo.path]);
+    const { error } = await supabase.from('delivered_photos').delete().eq('id', photo.id);
+
+    setDeletingFinalId(null);
+    if (error) {
+      setFinalError('מחיקת התמונה נכשלה - נסי שוב');
+      return;
+    }
+    setDeliveredPhotos((prev) => prev.filter((p) => p.id !== photo.id));
+  }
+
+  async function handleSendDeliveryNotification() {
+    setNotifyMessage('');
+    setFinalError('');
+    setNotifying(true);
+
+    const res = await fetch(`/api/galleries/${galleryId}/send-delivery-notification`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    setNotifying(false);
+
+    if (!res.ok) {
+      setFinalError(data.error ?? 'שליחת ההתראה נכשלה');
+      return;
+    }
+
+    setNotifyMessage(data.emailSent ? 'ההתראה נשלחה בהצלחה' : 'שליחת המייל נכשלה - ודאו ששירות המייל מוגדר');
+  }
 
   async function loadGallery() {
     setLoading(true);
@@ -463,6 +578,89 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
             ייצוא ל-Lightroom/Capture One (CSV)
           </a>
         </div>
+      </div>
+
+      <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
+        <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.5rem' }}>מסירת תמונות סופיות</h2>
+        <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '1rem' }}>
+          העלאת התמונות הערוכות הסופיות - הלקוחה תוכל לצפות ולהוריד אותן (בודדת או כ-ZIP) מאותו קישור וקוד גישה.
+        </p>
+
+        <label
+          style={{
+            ...outlineButtonStyle,
+            display: 'inline-block',
+            cursor: uploadingFinal ? 'default' : 'pointer',
+            opacity: uploadingFinal ? 0.6 : 1,
+          }}
+        >
+          {uploadingFinal ? 'מעלה...' : '+ העלאת תמונות סופיות'}
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handleUploadFinalPhotos}
+            disabled={uploadingFinal}
+            style={{ display: 'none' }}
+          />
+        </label>
+
+        {!loadingDelivered && deliveredPhotos.length > 0 && (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
+              gap: '0.6rem',
+              marginTop: '1rem',
+            }}
+          >
+            {deliveredPhotos.map((photo) => (
+              <div key={photo.id} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: `1px solid ${theme.border}` }}>
+                {photo.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={photo.url} alt={photo.filename} style={{ width: '100%', height: 110, objectFit: 'cover', display: 'block' }} />
+                ) : (
+                  <div style={{ width: '100%', height: 110, background: theme.panelInput }} />
+                )}
+                <button
+                  onClick={() => handleDeleteFinalPhoto(photo)}
+                  disabled={deletingFinalId === photo.id}
+                  title="מחיקת התמונה"
+                  style={{
+                    position: 'absolute', top: 4, left: 4, width: 26, height: 26, borderRadius: '50%',
+                    background: 'rgba(0,0,0,0.65)', color: '#fff', border: 'none', cursor: 'pointer',
+                    opacity: deletingFinalId === photo.id ? 0.5 : 1, fontSize: 14, lineHeight: '26px', padding: 0,
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {deliveredPhotos.length > 0 && (
+          <button
+            type="button"
+            onClick={handleSendDeliveryNotification}
+            disabled={notifying}
+            style={{ ...outlineButtonStyle, opacity: notifying ? 0.6 : 1, marginTop: '1rem', borderColor: theme.gold, color: theme.gold }}
+          >
+            {notifying ? 'שולחת...' : '🔔 שליחת התראה - התמונות מוכנות'}
+          </button>
+        )}
+
+        {notifyMessage && (
+          <p style={{ background: theme.successBg, color: theme.successText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
+            {notifyMessage}
+          </p>
+        )}
+
+        {finalError && (
+          <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
+            {finalError}
+          </p>
+        )}
       </div>
 
       <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>

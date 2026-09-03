@@ -57,6 +57,24 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     .eq('id', galleryId)
     .then(() => {}, () => {});
 
+  // תמונות סופיות שנמסרו (delivered_photos) - תוצאה סופית לכולם, לא בחירה
+  // אישית כמו selections, אז לא תלוי ב-session.participantId ונטען עוד לפני
+  // בדיקת הזיהוי למטה (מוצג גם למי שעוד לא זוהה/תה).
+  const { data: deliveredPhotosData } = await supabaseAdmin
+    .from('delivered_photos')
+    .select('id, file_path, original_filename')
+    .eq('gallery_id', galleryId);
+
+  const deliveredPhotos = await Promise.all(
+    (deliveredPhotosData ?? []).map(async (photo) => {
+      const { data: signed } = await supabaseAdmin.storage
+        .from('gallery-photos')
+        .createSignedUrl(photo.file_path, SIGNED_URL_TTL_SECONDS);
+
+      return { id: photo.id, url: signed?.signedUrl ?? null, filename: photo.original_filename };
+    })
+  );
+
   // שיתוף גלריה משפחתי: קוד הגישה כבר אומת, אבל עדיין לא ידוע מי בפועל
   // נכנס/ת (הבעלים הרשומה, או בן משפחה אחר) - ראו app/api/gallery/[id]/identify/route.ts.
   // מחזירים את שם הבעלים הרשום כדי שהמסך יוכל להציע "זאת [שם]?" ישירות.
@@ -64,6 +82,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({
       needsIdentity: true,
       registeredName: (gallery as any).clients?.full_name ?? null,
+      deliveredPhotos,
     });
   }
 
@@ -150,6 +169,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json({
     status: gallery.status,
     photos,
+    deliveredPhotos,
     myParticipant,
     participants,
     myMarks,

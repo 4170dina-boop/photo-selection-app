@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import JSZip from 'jszip';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import { toHebrewDateString } from '@/lib/hebrewDate';
 
@@ -14,6 +15,12 @@ interface GalleryPhoto {
   fullUrl: string | null;
   original_filename: string;
   possiblyBlurry: boolean;
+}
+
+interface DeliveredPhoto {
+  id: string;
+  url: string | null;
+  filename: string;
 }
 
 interface Participant {
@@ -144,6 +151,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const galleryId = params.id;
 
   const [photos, setPhotos] = useState<GalleryPhoto[]>([]);
+  const [deliveredPhotos, setDeliveredPhotos] = useState<DeliveredPhoto[]>([]);
+  const [downloadingZip, setDownloadingZip] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [myMarks, setMyMarks] = useState<Record<string, { status: 'maybe' | 'selected'; note: string | null }>>({});
   const [allMarks, setAllMarks] = useState<Record<string, Mark[]>>({});
   const [packageInfo, setPackageInfo] = useState<{ included: number; extraPrice: number; basePrice: number } | null>(null);
@@ -447,6 +457,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     setNeedsIdentity(false);
     setPhotos(data.photos ?? []);
+    setDeliveredPhotos(data.deliveredPhotos ?? []);
     setMyMarks(data.myMarks ?? {});
     setAllMarks(data.allMarks ?? {});
     setPackageInfo(data.package ?? null);
@@ -474,6 +485,58 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     setCheckingAuth(false);
     setLoading(false);
+  }
+
+  // signed URL הוא cross-origin ל-Supabase (בניגוד לתמונות הבחירה, שרק נצפות
+  // ולא מורדות) - הדפדפן מתעלם מ-<a download> בין origins, אז אי אפשר פשוט
+  // לקשר אליו. fetch ל-blob + createObjectURL + קליק תכנותי, בדיוק כמו
+  // handleZipDownload ב-components/MagicButton.tsx.
+  async function handleDownloadDeliveredPhoto(photo: DeliveredPhoto) {
+    if (!photo.url) return;
+    setDownloadingId(photo.id);
+    try {
+      const res = await fetch(photo.url);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = photo.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      setActionError('הורדת התמונה נכשלה, נסי שוב');
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
+  async function handleDownloadAllDelivered() {
+    setDownloadingZip(true);
+    try {
+      const zip = new JSZip();
+      for (const photo of deliveredPhotos) {
+        if (!photo.url) continue;
+        const res = await fetch(photo.url);
+        if (!res.ok) continue;
+        zip.file(photo.filename, await res.blob());
+      }
+
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = 'תמונות-סופיות.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      setActionError('הכנת ה-ZIP נכשלה, נסי שוב');
+    } finally {
+      setDownloadingZip(false);
+    }
   }
 
   function dismissWelcome() {
@@ -1316,6 +1379,60 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           <p style={{ color: theme.textFaint, fontSize: 12, marginTop: '1rem' }}>
             ✓ אפשר עדיין לצפות בתמונות למטה, אבל לא לשנות את הבחירה.
           </p>
+        </div>
+      )}
+
+      {/* תמונות ערוכות סופיות שהצלמת מסרה - עצמאי לגמרי מ-galleryStatus (יכול
+          להופיע גם לפני שהלקוחה סיימה לבחור, אם הצלמת כבר מסרה חלק מהתמונות). */}
+      {deliveredPhotos.length > 0 && (
+        <div
+          style={{
+            margin: '1rem 1.5rem 0', padding: '1.5rem', borderRadius: 14,
+            background: theme.panel, border: `1px solid ${accent}55`,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+            <div>
+              <p style={{ fontSize: 18, fontFamily: theme.fontSerif, color: theme.text, marginBottom: '0.25rem' }}>
+                💛 התמונות הסופיות שלך מוכנות!
+              </p>
+              <p style={{ color: theme.textMuted, fontSize: 13 }}>
+                {deliveredPhotos.length} תמונות ערוכות - אפשר לצפות ולהוריד, בודדת או הכל יחד.
+              </p>
+            </div>
+            <button
+              onClick={handleDownloadAllDelivered}
+              disabled={downloadingZip}
+              style={{ ...primaryButtonStyle, opacity: downloadingZip ? 0.6 : 1 }}
+            >
+              {downloadingZip ? 'מכינה ZIP...' : '📦 הורדת הכל כ-ZIP'}
+            </button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '0.75rem' }}>
+            {deliveredPhotos.map((photo) => (
+              <div key={photo.id} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: `1px solid ${theme.border}` }}>
+                {photo.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={photo.url} alt={photo.filename} style={{ width: '100%', height: 130, objectFit: 'cover', display: 'block' }} />
+                ) : (
+                  <div style={{ width: '100%', height: 130, background: theme.panelInput }} />
+                )}
+                <button
+                  onClick={() => handleDownloadDeliveredPhoto(photo)}
+                  disabled={downloadingId === photo.id}
+                  title="הורדת התמונה"
+                  style={{
+                    position: 'absolute', bottom: 6, left: 6, right: 6, padding: '0.4rem', borderRadius: 8,
+                    background: 'rgba(0,0,0,0.65)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 12,
+                    opacity: downloadingId === photo.id ? 0.6 : 1,
+                  }}
+                >
+                  {downloadingId === photo.id ? 'מורידה...' : '⬇ הורדה'}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

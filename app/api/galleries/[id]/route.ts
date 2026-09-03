@@ -154,16 +154,19 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   }
 
   // מוחקים קודם את הקבצים מה-Storage - מחיקת שורת הגלריה (למטה) לא עושה את זה
-  // אוטומטית, ה-CASCADE ב-DB מוחק רק את רשומות ה-photos, לא את הקבצים בפועל.
-  // thumbs/ הוא תת-תיקייה נפרדת (ראו .../process/route.ts) - list() לא רקורסיבי,
-  // אז בלי לשאול אותה בנפרד נשארים קבצים יתומים בStorage שממשיכים לתפוס מקום.
-  const [rootFiles, thumbFiles] = await Promise.all([
+  // אוטומטית, ה-CASCADE ב-DB מוחק רק את רשומות ה-photos/delivered_photos, לא
+  // את הקבצים בפועל. thumbs/ ו-final/ הן תתי-תיקיות נפרדות (ראו .../process/route.ts
+  // וה-סעיף "מסירת תמונות סופיות" בדף העריכה) - list() לא רקורסיבי, אז בלי
+  // לשאול אותן בנפרד נשארים קבצים יתומים בStorage שממשיכים לתפוס מקום.
+  const [rootFiles, thumbFiles, finalFiles] = await Promise.all([
     listAllFiles(supabase, 'gallery-photos', gallery.id),
     listAllFiles(supabase, 'gallery-photos', `${gallery.id}/thumbs`),
+    listAllFiles(supabase, 'gallery-photos', `${gallery.id}/final`),
   ]);
   const paths = [
     ...rootFiles.filter((f) => f.id).map((f) => `${gallery.id}/${f.name}`),
     ...thumbFiles.filter((f) => f.id).map((f) => `${gallery.id}/thumbs/${f.name}`),
+    ...finalFiles.filter((f) => f.id).map((f) => `${gallery.id}/final/${f.name}`),
   ];
   if (paths.length > 0) {
     await supabase.storage.from('gallery-photos').remove(paths);

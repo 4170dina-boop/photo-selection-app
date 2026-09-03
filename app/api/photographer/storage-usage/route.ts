@@ -57,17 +57,20 @@ export async function GET(req: NextRequest) {
 
   let totalBytes = 0;
 
-  // originals ותמונות ה-thumbs יושבים בשתי "תיקיות" נפרדות בתוך אותה גלריה
+  // originals, תמונות ה-thumbs, והתמונות הסופיות שנמסרו (final/, ראו "מסירת
+  // תמונות סופיות" בדף העריכה) יושבים בשלוש "תיקיות" נפרדות בתוך אותה גלריה
   // (ראו app/dashboard/upload/[galleryId]/page.tsx ו-.../process/route.ts) -
-  // list() לא רקורסיבי, אז צריך לשאול את שתיהן בנפרד לכל גלריה.
+  // list() לא רקורסיבי, אז צריך לשאול את כולן בנפרד לכל גלריה. final/ יכולה
+  // לתפוס נפח משמעותי - קבצים ערוכים מלאים, לא preview דחוס כמו thumbs/.
   await Promise.all(
     (galleries ?? []).map(async (gallery) => {
-      const [rootFiles, thumbFiles] = await Promise.all([
+      const [rootFiles, thumbFiles, finalFiles] = await Promise.all([
         listAllFiles(BUCKET, gallery.id),
         listAllFiles(BUCKET, `${gallery.id}/thumbs`),
+        listAllFiles(BUCKET, `${gallery.id}/final`),
       ]);
 
-      for (const file of [...rootFiles, ...thumbFiles]) {
+      for (const file of [...rootFiles, ...thumbFiles, ...finalFiles]) {
         if (file.metadata?.size) totalBytes += file.metadata.size;
       }
     })
