@@ -113,6 +113,33 @@ function savePendingQueue(galleryId: string, participantId: string, queue: Pendi
   localStorage.setItem(pendingQueueKey(galleryId, participantId), JSON.stringify(queue));
 }
 
+// יעד הספירה לאחור של "סיימתי לבחור" (ראו FINISH_UNDO_SECONDS למעלה), נשמר
+// כ-timestamp מוחלט (Date.now() + 60s) ולא כמונה טיקים - דפדפני מובייל מקפיאים
+// setTimeout/setInterval בטאב שברקע, אז אם מסתמכים על ספירת טיקים הספירה פשוט
+// נתקעת והבחירה אף פעם לא נשלחת בפועל (ראו הערה מפורטת יותר ליד useEffect
+// שמשתמש בזה). ה-timestamp המוחלט מאפשר לחשב את הזמן הנותר מול השעון האמיתי
+// בכל רגע - גם אחרי שהטאב חזר מהשהיה, וגם בטעינה חדשה לגמרי (טאב שנסגר
+// לגמרי וטעינה מחדש ימים אחר כך).
+function finishDeadlineKey(galleryId: string, participantId: string): string {
+  return `gallery_finish_deadline_${galleryId}_${participantId}`;
+}
+
+function loadFinishDeadline(galleryId: string, participantId: string): number | null {
+  if (typeof window === 'undefined') return null;
+  const raw = localStorage.getItem(finishDeadlineKey(galleryId, participantId));
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function saveFinishDeadline(galleryId: string, participantId: string, deadline: number) {
+  localStorage.setItem(finishDeadlineKey(galleryId, participantId), String(deadline));
+}
+
+function clearFinishDeadline(galleryId: string, participantId: string) {
+  localStorage.removeItem(finishDeadlineKey(galleryId, participantId));
+}
+
 export default function GalleryPage({ params }: GalleryPageProps) {
   const galleryId = params.id;
 
@@ -125,6 +152,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [galleryStatus, setGalleryStatus] = useState<string>('sent');
   const [finishing, setFinishing] = useState(false);
   const [finishCountdown, setFinishCountdown] = useState<number | null>(null);
+  // ה-timestamp המוחלט שממנו finishCountdown מחושב בכל טיק (ראו finishDeadlineKey
+  // למעלה, וה-useEffect שמאזין לזה למטה) - null כשאין ספירה פעילה.
+  const [finishDeadline, setFinishDeadline] = useState<number | null>(null);
+  // מונע שליחת finish כפולה במקביל (למשל אם הטיימר הגיע בדיוק ל-0 באותו רגע
+  // שהטאב חוזר לפוקוס ו-visibilitychange גם מנסה לתפוס פספוס) - ref ולא state
+  // כי הבדיקה חייבת להיות מיידית וסינכרונית, בלי לחכות לרינדור מחדש.
+  const finishInFlightRef = useRef(false);
   const [showCelebration, setShowCelebration] = useState(false);
   const [confettiPieces, setConfettiPieces] = useState<ConfettiPiece[]>([]);
   const [clearingAll, setClearingAll] = useState(false);
@@ -325,19 +359,50 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   }, [myParticipant?.id]);
 
   // ספירה לאחור ל"סיימתי לבחור" (ראו handleFinish/submitFinish/cancelFinish) -
-  // כל שנייה עד 0, ואז שולחת בפועל. ביטול (cancelFinish) פשוט מאפס את
-  // finishCountdown ל-null, מה שמנקה את ה-interval הזה בלי לקרוא ל-submitFinish.
+  // מחושבת בכל טיק מול finishDeadline (timestamp מוחלט, ראו finishDeadlineKey
+  // למעלה) ולא ע"י החסרת 1 כל שנייה, כי setInterval/setTimeout מוקפאים בדפדפני
+  // מובייל כשהטאב ברקע. אם היינו סופרים טיקים, טאב שהוקפא באמצע הספירה פשוט
+  // "עוצר" ו-submitFinish אף פעם לא נקראת - הבחירה אובדת בשקט. עם timestamp
+  // מוחלט, גם טיק שמאחר (כי הטיימר קפא זמן-מה) מחשב נכון כמה זמן *באמת* נשאר
+  // מול השעון, ואם כבר עבר - שולחת מיד באיחור במקום לא לשלוח בכלל. ה-tick
+  // הראשון רץ סינכרונית (לא מחכה ל-interval הראשון) כדי שגם חידוש ספירה קיימת
+  // (checkPendingFinish, כתגובה לטעינת עמוד/חזרה לפוקוס) יציג מספר נכון מיד.
   useEffect(() => {
-    if (finishCountdown === null) return;
-    if (finishCountdown <= 0) {
-      submitFinish();
-      setFinishCountdown(null);
-      return;
+    if (finishDeadline === null) return;
+
+    function tick() {
+      const remaining = Math.ceil(((finishDeadline as number) - Date.now()) / 1000);
+      if (remaining <= 0) {
+        setFinishCountdown(0);
+        setFinishDeadline(null); // מנקה את ה-effect הזה (לא קוראים שוב ל-submitFinish מהטיימר הבא)
+        submitFinish();
+        return;
+      }
+      setFinishCountdown(remaining);
     }
-    const timer = setTimeout(() => setFinishCountdown((prev) => (prev === null ? null : prev - 1)), 1000);
-    return () => clearTimeout(timer);
+
+    tick();
+    const interval = setInterval(tick, 250);
+    return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [finishCountdown]);
+  }, [finishDeadline]);
+
+  // ממשיכה/משלימה ספירת "סיימתי לבחור" שהתחילה לפני שהטאב הוקפא/נסגר - ראו
+  // checkPendingFinish. שני טריגרים: טעינת עמוד מחדש (loadGallery, מכסה גם
+  // טאב שנסגר לגמרי ונפתח מחדש ימים אחר כך) ו-visibilitychange (מכסה טאב
+  // שנשאר פתוח אך הוקפא ברקע - ברגע שחוזרים לפוקוס מחשבים מול השעון האמיתי
+  // במקום לסמוך על כך שה-setInterval שלמעלה יתעורר תוך זמן סביר).
+  useEffect(() => {
+    if (!myParticipant) return;
+    function handleVisibility() {
+      if (document.visibilityState === 'visible' && myParticipant) {
+        checkPendingFinish(myParticipant.id);
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myParticipant?.id]);
 
   // הטעינה עצמה היא גם בדיקת האימות: העוגייה httpOnly ולא ניתנת לקריאה
   // מ-JS, אז אי אפשר "לבדוק אם קיימת" מראש - פשוט מנסים לטעון, ו-401 אומר שצריך קוד גישה.
@@ -393,6 +458,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setPhotographerLogo(data.photographerLogo ?? null);
     setMyParticipant(data.myParticipant ?? null);
     setParticipants(data.participants ?? []);
+
+    // ממשיכה/משלימה ספירת "סיימתי לבחור" שאולי נשארה תלויה מהפעלה קודמת של
+    // העמוד (טאב שנסגר/הוקפא לפני שהספירה הספיקה להסתיים) - ראו checkPendingFinish.
+    if (data.myParticipant) {
+      checkPendingFinish(data.myParticipant.id, data.status);
+    }
 
     // שער פתיחה: מוצג פעם אחת לכל משתתף/ת בכל גלריה (נשמר ב-localStorage,
     // לא ב-DB - זו רק נוחות תצוגה, לא מידע קריטי ששווה טבלה/עמודה בשבילו).
@@ -676,17 +747,41 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // הלקוחה עדיין רואה ועורכת הכל כרגיל בזמן הספירה - רק בתום ה-60 שניות
   // (או אם לא ביטלה) קוראים בפועל ל-API, שגם נועל את הגלריה וגם שולח מייל
   // התראה לצלמת "הלקוחה סיימה" - לא רוצים לשלוח את זה מוקדם מדי ואז לבטל.
-  async function submitFinish() {
+  //
+  // participantIdForCleanup מתקבל כפרמטר (ולא רק נלקח מ-myParticipant הסטייט)
+  // כי checkPendingFinish עשויה לקרוא לפונקציה הזו מתוך loadGallery, לפני
+  // שסטייט ה-myParticipant הספיק להתעדכן (setState אסינכרוני) - כדי לנקות את
+  // מפתח ה-localStorage הנכון גם במקרה הזה.
+  //
+  // /api/gallery/[id]/finish אידמפוטנטי (בודק gallery.status !== 'completed'
+  // לפני שהוא שולח מיילים) - קריאה כפולה לא גורמת למייל כפול, אבל
+  // finishInFlightRef עדיין מונע שתי בקשות במקביל (למשל טיימר שהגיע ל-0 בדיוק
+  // כשחוזרים לפוקוס והדפדפן גם שולח אירוע visibilitychange על אותו רגע).
+  async function submitFinish(participantIdForCleanup?: string) {
+    if (finishInFlightRef.current) return;
+    finishInFlightRef.current = true;
     setFinishing(true);
     let res: Response;
     try {
       res = await fetch(`/api/gallery/${galleryId}/finish`, { method: 'POST' });
     } catch {
+      finishInFlightRef.current = false;
       setFinishing(false);
       setActionError('אין חיבור לאינטרנט כרגע - נסי שוב כשהחיבור יחזור.');
+      // לא מנקים את ה-localStorage כאן - זו לא כשלון סופי, רק ניתוק. הרשומה
+      // נשארת, וה"סיימתי לבחור" יושלם אוטומטית בפעם הבאה שהעמוד ייטען או
+      // שהטאב יחזור לפוקוס (checkPendingFinish), בלי שהלקוחה תצטרך ללחוץ שוב.
       return;
     }
+    finishInFlightRef.current = false;
     setFinishing(false);
+
+    const participantId = participantIdForCleanup ?? myParticipant?.id;
+    if (participantId) {
+      // בין אם הצליחה ובין אם השרת דחה סופית (403/410 וכו') - אין טעם לנסות
+      // שוב את אותה בקשה, אז מנקים את הרשומה השמורה בכל מקרה מכאן והלאה.
+      clearFinishDeadline(galleryId, participantId);
+    }
 
     if (!res.ok) {
       setActionError('שליחת הבחירה נכשלה, נסי שוב.');
@@ -700,12 +795,45 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setTimeout(() => setShowCelebration(false), 3500);
   }
 
+  // בודקת אם יש ספירת "סיימתי לבחור" ממתינה שהתחילה בהפעלה קודמת של העמוד
+  // (נשמרה ב-localStorage ע"י handleFinish) - ראו הערה מפורטת ליד ה-useEffect
+  // שמאזין ל-finishDeadline, ואת שני מקומות הקריאה (loadGallery, ו-
+  // visibilitychange). currentStatus מועבר רק כשידוע טרי מהשרת (loadGallery);
+  // אם הגלריה כבר completed אין טעם לנסות לשלוח שוב - רק מנקים רשומה ישנה.
+  function checkPendingFinish(participantId: string, currentStatus?: string) {
+    const deadline = loadFinishDeadline(galleryId, participantId);
+    if (deadline === null) return;
+
+    if (currentStatus === 'completed') {
+      clearFinishDeadline(galleryId, participantId);
+      return;
+    }
+
+    if (Date.now() >= deadline) {
+      // הספירה כבר הייתה אמורה להסתיים בזמן שהטאב היה ברקע/סגור - שולחים
+      // עכשיו במקום לאבד את הבחירה בשקט (זה בדיוק התרחיש שהתיקון הזה פותר).
+      submitFinish(participantId);
+    } else {
+      setFinishDeadline(deadline);
+      setFinishCountdown(Math.max(1, Math.ceil((deadline - Date.now()) / 1000)));
+    }
+  }
+
   function handleFinish() {
     if (!window.confirm('לשלוח את הבחירה? אחרי זה לא ניתן יהיה לשנות אותה.')) return;
+    const deadline = Date.now() + FINISH_UNDO_SECONDS * 1000;
+    if (myParticipant) {
+      saveFinishDeadline(galleryId, myParticipant.id, deadline);
+    }
     setFinishCountdown(FINISH_UNDO_SECONDS);
+    setFinishDeadline(deadline);
   }
 
   function cancelFinish() {
+    if (myParticipant) {
+      clearFinishDeadline(galleryId, myParticipant.id);
+    }
+    setFinishDeadline(null);
     setFinishCountdown(null);
   }
 
