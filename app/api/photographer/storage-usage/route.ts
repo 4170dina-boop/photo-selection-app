@@ -14,6 +14,25 @@ const supabaseAdmin = createServiceClient(
 const FREE_PLAN_STORAGE_LIMIT_GB = 1;
 const BUCKET = 'gallery-photos';
 
+// list() בStorage מחזיר עמוד יחיד בלבד - גם עם limit: 1000 מפורש, בלי דפדוף
+// על offset גלריה עם יותר מ-1000 קבצים בתיקייה (originals או thumbs) הייתה
+// מדווחת על נפח אחסון נמוך מהאמיתי.
+type StorageEntry = { metadata: { size?: number } | null };
+
+async function listAllFiles(bucket: string, path: string): Promise<StorageEntry[]> {
+  const pageSize = 1000;
+  const all: StorageEntry[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabaseAdmin.storage.from(bucket).list(path, { limit: pageSize, offset });
+    if (error || !data) break;
+    all.push(...data);
+    if (data.length < pageSize) break;
+    offset += pageSize;
+  }
+  return all;
+}
+
 export async function GET(req: NextRequest) {
   const supabase = createClient();
   const {
@@ -43,12 +62,12 @@ export async function GET(req: NextRequest) {
   // list() לא רקורסיבי, אז צריך לשאול את שתיהן בנפרד לכל גלריה.
   await Promise.all(
     (galleries ?? []).map(async (gallery) => {
-      const [{ data: rootFiles }, { data: thumbFiles }] = await Promise.all([
-        supabaseAdmin.storage.from(BUCKET).list(gallery.id, { limit: 1000 }),
-        supabaseAdmin.storage.from(BUCKET).list(`${gallery.id}/thumbs`, { limit: 1000 }),
+      const [rootFiles, thumbFiles] = await Promise.all([
+        listAllFiles(BUCKET, gallery.id),
+        listAllFiles(BUCKET, `${gallery.id}/thumbs`),
       ]);
 
-      for (const file of [...(rootFiles ?? []), ...(thumbFiles ?? [])]) {
+      for (const file of [...rootFiles, ...thumbFiles]) {
         if (file.metadata?.size) totalBytes += file.metadata.size;
       }
     })

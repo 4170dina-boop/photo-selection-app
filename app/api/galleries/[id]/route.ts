@@ -1,6 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
+// list() בStorage מחזיר עמוד יחיד בלבד (ברירת מחדל 100 שורות אם לא מציינים
+// limit) - בלי לדפדף על offset, גלריות עם הרבה תמונות (אין הגבלת כמות
+// לצלמות is_unlimited, ראו enforce_photo_limit ב-supabase/schema.sql)
+// היו משאירות קבצים "יתומים" ב-Storage אחרי מחיקת הגלריה.
+type StorageEntry = { id: string | null; name: string };
+
+async function listAllFiles(supabase: ReturnType<typeof createClient>, bucket: string, path: string): Promise<StorageEntry[]> {
+  const pageSize = 1000;
+  const all: StorageEntry[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase.storage.from(bucket).list(path, { limit: pageSize, offset });
+    if (error || !data) break;
+    all.push(...data);
+    if (data.length < pageSize) break;
+    offset += pageSize;
+  }
+  return all;
+}
+
 // עריכה/מחיקה של גלריה קיימת, בדיוק כמו app/api/galleries/route.ts (יצירה) -
 // רץ עם session הצלם (לא service key), כך שה-RLS הקיים כבר דואג שאי אפשר
 // לגעת בגלריה של צלם אחר.
@@ -137,13 +157,13 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   // אוטומטית, ה-CASCADE ב-DB מוחק רק את רשומות ה-photos, לא את הקבצים בפועל.
   // thumbs/ הוא תת-תיקייה נפרדת (ראו .../process/route.ts) - list() לא רקורסיבי,
   // אז בלי לשאול אותה בנפרד נשארים קבצים יתומים בStorage שממשיכים לתפוס מקום.
-  const [{ data: rootFiles }, { data: thumbFiles }] = await Promise.all([
-    supabase.storage.from('gallery-photos').list(gallery.id),
-    supabase.storage.from('gallery-photos').list(`${gallery.id}/thumbs`),
+  const [rootFiles, thumbFiles] = await Promise.all([
+    listAllFiles(supabase, 'gallery-photos', gallery.id),
+    listAllFiles(supabase, 'gallery-photos', `${gallery.id}/thumbs`),
   ]);
   const paths = [
-    ...(rootFiles ?? []).filter((f) => f.id).map((f) => `${gallery.id}/${f.name}`),
-    ...(thumbFiles ?? []).filter((f) => f.id).map((f) => `${gallery.id}/thumbs/${f.name}`),
+    ...rootFiles.filter((f) => f.id).map((f) => `${gallery.id}/${f.name}`),
+    ...thumbFiles.filter((f) => f.id).map((f) => `${gallery.id}/thumbs/${f.name}`),
   ];
   if (paths.length > 0) {
     await supabase.storage.from('gallery-photos').remove(paths);
