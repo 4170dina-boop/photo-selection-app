@@ -62,6 +62,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [finalError, setFinalError] = useState('');
   const [notifying, setNotifying] = useState(false);
   const [notifyMessage, setNotifyMessage] = useState('');
+  const [deliveryMessageCopied, setDeliveryMessageCopied] = useState(false);
 
   useEffect(() => {
     loadGallery();
@@ -291,6 +292,66 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         </table>
       </div>
     `;
+  }
+
+  // אותו רעיון בדיוק כמו buildInviteEmailHtml למעלה, לשלב "התמונות הסופיות
+  // מוכנות" - בלי תג קוד גישה (הלקוחה כבר בפנים, לא נכנסת בפעם הראשונה),
+  // עם ספירת התמונות שנמסרו במקום זה.
+  function buildDeliveryEmailHtml(galleryUrl: string, count: number) {
+    return `
+      <div dir="rtl" style="font-family: sans-serif; background: #f4f1ec; padding: 32px 16px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e7e0d5;">
+          <tr>
+            <td style="background: #0f1626; padding: 20px 28px; text-align: center;">
+              ${
+                logoUrl
+                  ? `<img src="${logoUrl}" alt="${businessName || 'הגלריה שלך'}" width="44" height="44" style="width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid #e3b3ac; display: block; margin: 0 auto 8px;" />`
+                  : ''
+              }
+              <span style="font-family: sans-serif; font-size: 18px; font-weight: 700; color: #e3b3ac;">${logoUrl ? '' : '✨ '}${businessName || 'הגלריה שלך'}</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 28px; text-align: center; color: #2a2420; font-size: 15px; line-height: 1.7;">
+              <p style="margin: 0 0 8px;">היי ${clientName || ''}! 💛</p>
+              <p style="margin: 0 0 8px;">התמונות הסופיות שלך אצל <b>${businessName || 'הגלריה שלך'}</b> מוכנות - ${count} תמונות מחכות בגלריה.</p>
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 24px auto 0;">
+                <tr>
+                  <td style="border-radius: 8px; background: linear-gradient(135deg, #e3b3ac, #c98f89);">
+                    <a href="${galleryUrl}" style="display: inline-block; padding: 14px 32px; font-family: sans-serif; font-size: 15px; font-weight: 700; color: #20120f; text-decoration: none;">
+                      צפייה והורדה
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </div>
+    `;
+  }
+
+  // אותו דפוס בדיוק כמו handleCopyFormattedMessage למטה - גיבוי ידני (וואטסאפ/
+  // מייל) למקרה שהשליחה האוטומטית (handleSendDeliveryNotification) נכשלת,
+  // בלי לגרום לצלמת להקליד הודעה מאפס.
+  async function handleCopyDeliveryMessage() {
+    const galleryUrl = `${window.location.origin}/gallery/${galleryId}`;
+    const message = `היי ${clientName || ''}! 💛\n\nהתמונות הסופיות שלך אצל ${businessName || 'הגלריה שלך'} מוכנות - ${deliveredPhotos.length} תמונות מחכות בגלריה.\n\nקישור: ${galleryUrl}`;
+
+    try {
+      const html = buildDeliveryEmailHtml(galleryUrl, deliveredPhotos.length);
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/plain': new Blob([message], { type: 'text/plain' }),
+          'text/html': new Blob([html], { type: 'text/html' }),
+        }),
+      ]);
+    } catch {
+      await navigator.clipboard.writeText(message);
+    }
+
+    setDeliveryMessageCopied(true);
+    setTimeout(() => setDeliveryMessageCopied(false), 2000);
   }
 
   // הודעה חמה ומוכנה לשליחה ידנית (וואטסאפ/מייל רגיל) - הפתרון המעשי כל עוד
@@ -640,14 +701,24 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         )}
 
         {deliveredPhotos.length > 0 && (
-          <button
-            type="button"
-            onClick={handleSendDeliveryNotification}
-            disabled={notifying}
-            style={{ ...outlineButtonStyle, opacity: notifying ? 0.6 : 1, marginTop: '1rem', borderColor: theme.gold, color: theme.gold }}
-          >
-            {notifying ? 'שולחת...' : '🔔 שליחת התראה - התמונות מוכנות'}
-          </button>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '1rem' }}>
+            <button
+              type="button"
+              onClick={handleSendDeliveryNotification}
+              disabled={notifying}
+              style={{ ...outlineButtonStyle, opacity: notifying ? 0.6 : 1, borderColor: theme.gold, color: theme.gold }}
+            >
+              {notifying ? 'שולחת...' : '🔔 שליחת התראה - התמונות מוכנות'}
+            </button>
+            <button
+              type="button"
+              onClick={handleCopyDeliveryMessage}
+              title="גיבוי ידני למקרה שהמייל האוטומטי לא נשלח/הגיע - הודעה מוכנה להדבקה בוואטסאפ או במייל"
+              style={outlineButtonStyle}
+            >
+              {deliveryMessageCopied ? 'הועתק!' : '✎ העתקת הודעה מוכנה לשליחה'}
+            </button>
+          </div>
         )}
 
         {notifyMessage && (
