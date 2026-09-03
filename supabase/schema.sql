@@ -376,16 +376,44 @@ for each row execute function public.handle_new_photographer();
 -- אחת בכל רגע נתון, ועד 25 תמונות בגלריה. מספיק כדי לנסות את המערכת, לא מספיק
 -- כדי לנהל איתה עסק צילום אמיתי. אכיפה ברמת ה-DB (טריגר, לא רק בקוד ה-API) כדי
 -- שאי אפשר יהיה לעקוף את זה דרך קריאה ישירה ל-Supabase.
+-- before insert or update (לא רק insert!): אחרת צלמת מחוברת יכלה לעקוף את
+-- המגבלה לגמרי ע"י UPDATE ישיר על גלריה completed/expired קיימת שלה בחזרה
+-- לסטטוס פעיל (draft/sent/in_progress) - קריאת update אף פעם לא מפעילה
+-- טריגר שמוגדר רק על insert. בודקים את הספירה רק כשגלריה בפועל "נפתחת" -
+-- insert של גלריה לא-completed/expired, או update שהופך גלריה completed/
+-- expired ללא-כזו - כדי לא להריץ את הבדיקה בכל update רגיל של גלריה שכבר
+-- פעילה (למשל מעבר sent -> in_progress בכל כניסה של לקוחה, ראו
+-- app/api/gallery/[id]/route.ts).
 create or replace function enforce_active_gallery_limit()
 returns trigger as $$
 declare
   active_count int;
   unlimited boolean;
+  should_check boolean;
 begin
+  if new.status in ('completed', 'expired') then
+    should_check := false;
+  elsif tg_op = 'INSERT' then
+    should_check := true;
+  else
+    should_check := old.status in ('completed', 'expired');
+  end if;
+
+  if not should_check then
+    return new;
+  end if;
+
   select is_unlimited into unlimited from photographers where id = new.photographer_id;
   if unlimited then
     return new;
   end if;
+
+  -- מנעול advisory בתוך הטרנזקציה (לפי photographer_id), לפני הספירה: בלי זה
+  -- שתי הכנסות/עדכונים מקבילים על אותה צלמת יכולים לקרוא את אותה ספירה
+  -- "לפני" ולעבור את הבדיקה שניהם (race condition קלאסי - TOCTOU), ולחרוג
+  -- בפועל ממגבלת גלריה פעילה אחת. המנעול משתחרר אוטומטית בסוף הטרנזקציה,
+  -- אין row ממשי לנעול כי הספירה נגזרת (derived) ולא שורה בודדת.
+  perform pg_advisory_xact_lock(hashtext(new.photographer_id::text));
 
   select count(*) into active_count
   from galleries
@@ -401,15 +429,34 @@ end;
 $$ language plpgsql;
 
 create trigger trg_enforce_active_gallery_limit
-before insert on galleries
+before insert or update on galleries
 for each row execute function enforce_active_gallery_limit();
 
+-- before insert or update (לא רק insert!): אחרת צלמת מחוברת יכלה לעקוף את
+-- מגבלת 25 התמונות ע"י UPDATE של gallery_id על תמונה קיימת שלה (מגלריה
+-- אחרת) לתוך גלריה שכבר מלאה - קריאת update אף פעם לא מפעילה טריגר שמוגדר
+-- רק על insert. בודקים את הספירה רק כשה-gallery_id בפועל משתנה (insert, או
+-- update שמעביר תמונה לגלריה אחרת) - כדי לא להריץ את הבדיקה בכל update רגיל
+-- של תמונה בתוך אותה גלריה (למשל עדכון thumbnail_path/sharpness_score, ראו
+-- app/api/galleries/[id]/photos/[photoId]/process/route.ts), שהיה חוסם
+-- בטעות עדכונים כאלה ברגע שגלריה כבר בדיוק במגבלה.
 create or replace function enforce_photo_limit()
 returns trigger as $$
 declare
   photo_count int;
   unlimited boolean;
+  should_check boolean;
 begin
+  if tg_op = 'INSERT' then
+    should_check := true;
+  else
+    should_check := new.gallery_id is distinct from old.gallery_id;
+  end if;
+
+  if not should_check then
+    return new;
+  end if;
+
   select p.is_unlimited into unlimited
   from galleries g join photographers p on p.id = g.photographer_id
   where g.id = new.gallery_id;
@@ -417,6 +464,13 @@ begin
   if unlimited then
     return new;
   end if;
+
+  -- מנעול advisory בתוך הטרנזקציה (לפי gallery_id), מאותה סיבה בדיוק כמו
+  -- ב-enforce_active_gallery_limit למעלה: בלי זה, הכנסות מקבילות לאותה
+  -- גלריה (למשל 8 הכנסות תמונות במקביל באפלוד - UPLOAD_CONCURRENCY ב-
+  -- app/dashboard/upload/[galleryId]/page.tsx) יכולות כולן לקרוא את אותה
+  -- ספירה "לפני" ולעבור את הבדיקה, ולחרוג בפועל מ-25 התמונות המותרות.
+  perform pg_advisory_xact_lock(hashtext(new.gallery_id::text));
 
   select count(*) into photo_count
   from photos
@@ -431,7 +485,7 @@ end;
 $$ language plpgsql;
 
 create trigger trg_enforce_photo_limit
-before insert on photos
+before insert or update on photos
 for each row execute function enforce_photo_limit();
 
 -- מונע מצלמת לסמן את עצמה כ"ללא הגבלה" - ה-RLS "photographers see own row"
@@ -571,6 +625,101 @@ for each row execute function protect_ai_usage_counters();
 -- create trigger trg_protect_ai_usage_counters
 -- before insert or update on photographers
 -- for each row execute function protect_ai_usage_counters();
+
+-- אם כבר הרצת גרסה קודמת של הסכמה שבה enforce_active_gallery_limit/
+-- enforce_photo_limit רצו רק על before insert (הפגיעות: צלמת מחוברת יכלה
+-- לעקוף את המגבלות דרך UPDATE ישיר - להחזיר גלריה completed/expired שלה
+-- לסטטוס פעיל, או להעביר gallery_id של תמונה לגלריה מלאה - וגם race
+-- condition בין הכנסות מקבילות שיכול לחרוג מהמגבלה בפועל), מריצים גם את זה
+-- על פרויקט Supabase שכבר קיים:
+--
+-- create or replace function enforce_active_gallery_limit()
+-- returns trigger as $$
+-- declare
+--   active_count int;
+--   unlimited boolean;
+--   should_check boolean;
+-- begin
+--   if new.status in ('completed', 'expired') then
+--     should_check := false;
+--   elsif tg_op = 'INSERT' then
+--     should_check := true;
+--   else
+--     should_check := old.status in ('completed', 'expired');
+--   end if;
+--
+--   if not should_check then
+--     return new;
+--   end if;
+--
+--   select is_unlimited into unlimited from photographers where id = new.photographer_id;
+--   if unlimited then
+--     return new;
+--   end if;
+--
+--   perform pg_advisory_xact_lock(hashtext(new.photographer_id::text));
+--
+--   select count(*) into active_count
+--   from galleries
+--   where photographer_id = new.photographer_id
+--     and status not in ('completed', 'expired');
+--
+--   if active_count >= 1 then
+--     raise exception 'LIMIT_ACTIVE_GALLERY: חשבון חינמי מוגבל לגלריה פעילה אחת - השלימי או מחקי גלריה קיימת כדי ליצור חדשה';
+--   end if;
+--
+--   return new;
+-- end;
+-- $$ language plpgsql;
+--
+-- drop trigger if exists trg_enforce_active_gallery_limit on galleries;
+-- create trigger trg_enforce_active_gallery_limit
+-- before insert or update on galleries
+-- for each row execute function enforce_active_gallery_limit();
+--
+-- create or replace function enforce_photo_limit()
+-- returns trigger as $$
+-- declare
+--   photo_count int;
+--   unlimited boolean;
+--   should_check boolean;
+-- begin
+--   if tg_op = 'INSERT' then
+--     should_check := true;
+--   else
+--     should_check := new.gallery_id is distinct from old.gallery_id;
+--   end if;
+--
+--   if not should_check then
+--     return new;
+--   end if;
+--
+--   select p.is_unlimited into unlimited
+--   from galleries g join photographers p on p.id = g.photographer_id
+--   where g.id = new.gallery_id;
+--
+--   if unlimited then
+--     return new;
+--   end if;
+--
+--   perform pg_advisory_xact_lock(hashtext(new.gallery_id::text));
+--
+--   select count(*) into photo_count
+--   from photos
+--   where gallery_id = new.gallery_id;
+--
+--   if photo_count >= 25 then
+--     raise exception 'LIMIT_PHOTOS: חשבון חינמי מוגבל ל-25 תמונות בגלריה';
+--   end if;
+--
+--   return new;
+-- end;
+-- $$ language plpgsql;
+--
+-- drop trigger if exists trg_enforce_photo_limit on photos;
+-- create trigger trg_enforce_photo_limit
+-- before insert or update on photos
+-- for each row execute function enforce_photo_limit();
 
 -- Storage: bucket לתמונות הגלריה
 -- מריצים את זה, או יוצרים ידנית ב-Dashboard > Storage > New bucket (שם: gallery-photos, פרטי!)
