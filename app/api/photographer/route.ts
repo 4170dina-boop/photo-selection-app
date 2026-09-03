@@ -57,19 +57,32 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'גוף בקשה לא תקין' }, { status: 400 });
   }
 
-  const watermarkText = body.watermarkText?.trim() || null;
-
-  if (watermarkText && watermarkText.length > WATERMARK_TEXT_MAX_LENGTH) {
-    return NextResponse.json({ error: `הטקסט ארוך מדי (מקסימום ${WATERMARK_TEXT_MAX_LENGTH} תווים)` }, { status: 400 });
+  if ('watermarkText' in body) {
+    const watermarkText = body.watermarkText?.trim() || null;
+    if (watermarkText && watermarkText.length > WATERMARK_TEXT_MAX_LENGTH) {
+      return NextResponse.json({ error: `הטקסט ארוך מדי (מקסימום ${WATERMARK_TEXT_MAX_LENGTH} תווים)` }, { status: 400 });
+    }
   }
 
-  const brandColor = body.brandColor?.trim() || null;
-
-  if (brandColor && !/^#[0-9a-fA-F]{6}$/.test(brandColor)) {
-    return NextResponse.json({ error: 'צבע מותג לא תקין' }, { status: 400 });
+  if ('brandColor' in body) {
+    const brandColor = body.brandColor?.trim() || null;
+    if (brandColor && !/^#[0-9a-fA-F]{6}$/.test(brandColor)) {
+      return NextResponse.json({ error: 'צבע מותג לא תקין' }, { status: 400 });
+    }
   }
 
-  const update: Record<string, unknown> = { watermark_text: watermarkText, brand_color: brandColor ?? '#000000' };
+  const update: Record<string, unknown> = {};
+
+  // watermarkText/brandColor מגיעים רק כשהם באמת חלק מהבקשה - PATCH חלקי
+  // (כמו שמירת/איפוס עיצוב מה-AI theme designer, ששולח רק customTheme) לא
+  // שולח את השדות האלה בכלל, כדי לא לדרוס בטעות ערכים קיימים.
+  if ('watermarkText' in body) {
+    update.watermark_text = body.watermarkText?.trim() || null;
+  }
+
+  if ('brandColor' in body) {
+    update.brand_color = body.brandColor?.trim() || '#000000';
+  }
 
   // logoUrl מגיע רק כשהוא באמת השתנה (העלאה חדשה/הסרה) - PATCH הרגיל של שאר
   // ההגדרות לא שולח את השדה הזה בכלל, כדי לא לדרוס בטעות לוגו קיים ב-null.
