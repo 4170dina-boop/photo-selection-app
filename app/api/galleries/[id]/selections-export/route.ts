@@ -48,14 +48,20 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
+  if (!gallery.owner_participant_id) {
+    return NextResponse.json({ error: 'לגלריה הזו אין בעלים רשומה - לא ניתן לייצא' }, { status: 500 });
+  }
+
   // רק בחירות הבעלים (שיתוף גלריה משפחתי) - זו הרשימה הרשמית למסירה,
   // קלט של בני משפחה אחרים לא נכלל בייצוא הזה.
-  const { data: selections } = await supabaseAdmin
-    .from('selections')
-    .select('note, photos(original_filename)')
-    .eq('gallery_id', params.id)
-    .eq('participant_id', gallery.owner_participant_id)
-    .eq('status', 'selected');
+  const { data: selections } = await (gallery.owner_participant_id
+    ? supabaseAdmin
+        .from('selections')
+        .select('note, photos(original_filename)')
+        .eq('gallery_id', params.id)
+        .eq('participant_id', gallery.owner_participant_id)
+        .eq('status', 'selected')
+    : Promise.resolve({ data: [] }));
 
   const rows = (selections ?? [])
     .filter((s: any) => s.photos)
