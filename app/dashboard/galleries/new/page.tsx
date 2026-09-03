@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
+import { israelEndOfDayIso } from '@/lib/israelTime';
 
 interface CreatedGallery {
   galleryId: string;
@@ -77,7 +78,7 @@ function NewGalleryForm() {
         includedPhotos: Number(includedPhotos),
         basePrice: Number(basePrice),
         extraPhotoPrice: Number(extraPhotoPrice),
-        expiresAt: expiresAt ? new Date(`${expiresAt}T23:59:59+03:00`).toISOString() : null,
+        expiresAt: expiresAt ? israelEndOfDayIso(expiresAt) : null,
       }),
     });
 

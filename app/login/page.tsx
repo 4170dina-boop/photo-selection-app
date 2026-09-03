@@ -14,10 +14,20 @@ export default function LoginPage() {
   );
 }
 
+const SAFE_DEFAULT_NEXT = '/dashboard/galleries';
+
+// מוודא ש-next הוא נתיב פנימי יחסי, לא הפניה לאתר חיצוני - אותה בעיה בדיוק
+// כמו ב-app/auth/callback/route.ts (?next=//evil.com או ?next=https://evil.com),
+// רק כאן בצד לקוח: מספיק לבדוק "/" יחיד בהתחלה (לא "//" - protocol-relative).
+function isSafeNext(next: string): boolean {
+  return next.startsWith('/') && !next.startsWith('//');
+}
+
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get('next') ?? '/dashboard/galleries';
+  const rawNext = searchParams.get('next');
+  const next = rawNext && isSafeNext(rawNext) ? rawNext : SAFE_DEFAULT_NEXT;
 
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
