@@ -58,14 +58,14 @@ export async function PATCH(req: NextRequest) {
   }
 
   if ('watermarkText' in body) {
-    const watermarkText = body.watermarkText?.trim() || null;
+    const watermarkText = (typeof body.watermarkText === 'string' ? body.watermarkText.trim() : '') || null;
     if (watermarkText && watermarkText.length > WATERMARK_TEXT_MAX_LENGTH) {
       return NextResponse.json({ error: `הטקסט ארוך מדי (מקסימום ${WATERMARK_TEXT_MAX_LENGTH} תווים)` }, { status: 400 });
     }
   }
 
   if ('brandColor' in body) {
-    const brandColor = body.brandColor?.trim() || null;
+    const brandColor = (typeof body.brandColor === 'string' ? body.brandColor.trim() : '') || null;
     if (brandColor && !/^#[0-9a-fA-F]{6}$/.test(brandColor)) {
       return NextResponse.json({ error: 'צבע מותג לא תקין' }, { status: 400 });
     }

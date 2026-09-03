@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'גוף בקשה לא תקין' }, { status: 400 });
   }
 
-  const description = body.description?.trim();
+  const description = typeof body.description === 'string' ? body.description.trim() : '';
   if (!description) {
     return NextResponse.json({ error: 'צריך לתאר איך רוצים שהגלריה תיראה' }, { status: 400 });
   }

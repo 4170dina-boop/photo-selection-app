@@ -40,7 +40,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'גוף בקשה לא תקין' }, { status: 400 });
   }
 
-  const value = body.resendFromEmail?.trim();
+  const value = typeof body.resendFromEmail === 'string' ? body.resendFromEmail.trim() : '';
   if (!value || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
     return NextResponse.json({ error: 'כתובת מייל לא תקינה' }, { status: 400 });
   }
