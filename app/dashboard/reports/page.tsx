@@ -120,10 +120,10 @@ export default function ReportsPage() {
   const grandTotal = months.reduce((sum, m) => sum + m.basePriceSum + m.overageSum, 0);
 
   const storageColor =
-    storageUsage && storageUsage.percentUsed >= 80
-      ? theme.warningText
-      : storageUsage && storageUsage.percentUsed >= 100
+    storageUsage && storageUsage.percentUsed >= 100
       ? theme.errorText
+      : storageUsage && storageUsage.percentUsed >= 80
+      ? theme.warningText
       : theme.gold;
 
   return (
