@@ -184,8 +184,14 @@ alter table packages enable row level security;
 alter table sync_jobs enable row level security;
 alter table gallery_participants enable row level security;
 
+-- with check זהה ל-using: "for all" בלי with check מפורש היה גורם ל-postgres
+-- להשתמש ב-using כברירת מחדל גם בשביל insert/update, אבל זה עדיין היה מתיר
+-- לצלמת מחוברת לכתוב ערך שרירותי בכל עמודה אחרת בשורה שלה (is_unlimited,
+-- ai_picks_count/date, theme_gen_count/date) - הבדיקה האמיתית לעמודות האלה
+-- היא בטריגרים protect_is_unlimited/protect_ai_usage_counters למטה, לא כאן.
 create policy "photographers see own row" on photographers
-  for all using (auth.uid() = auth_user_id);
+  for all using (auth.uid() = auth_user_id)
+  with check (auth.uid() = auth_user_id);
 
 create policy "photographers see own clients" on clients
   for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()));
@@ -429,22 +435,142 @@ before insert on photos
 for each row execute function enforce_photo_limit();
 
 -- מונע מצלמת לסמן את עצמה כ"ללא הגבלה" - ה-RLS "photographers see own row"
--- (for all) מאפשר לה לעדכן את השורה שלה בעצמה, אז בלי ההגנה הזו כל אחת
--- הייתה יכולה לפתוח את קונסולת הדפדפן ולעקוף את מגבלת החשבון החינמי בעצמה.
--- רק עדכון עם מפתח service_role (ראו app/api/admin/*) יכול לשנות את השדה הזה.
+-- (for all, עם with check שבודק רק auth_user_id) מאפשר לה לעדכן את השורה שלה
+-- בעצמה, אז בלי ההגנה הזו כל אחת הייתה יכולה לפתוח את קונסולת הדפדפן ולעקוף
+-- את מגבלת החשבון החינמי בעצמה. כולל גם before insert (לא רק update!) - אחרת
+-- צלמת יכלה לעקוף את זה ע"י מחיקת השורה שלה (delete, מותר לה ב-RLS) ויצירת
+-- שורה חדשה עם is_unlimited=true ישירות ב-insert. רק עדכון/הכנסה עם מפתח
+-- service_role (ראו app/api/admin/*) יכולים לשנות את השדה הזה.
 create or replace function protect_is_unlimited()
 returns trigger as $$
 begin
-  if new.is_unlimited is distinct from old.is_unlimited and current_setting('role', true) <> 'service_role' then
+  if current_setting('role', true) = 'service_role' then
+    return new;
+  end if;
+
+  if tg_op = 'INSERT' then
+    new.is_unlimited := false;
+  elsif new.is_unlimited is distinct from old.is_unlimited then
     new.is_unlimited := old.is_unlimited;
   end if;
+
   return new;
 end;
 $$ language plpgsql;
 
 create trigger trg_protect_is_unlimited
-before update on photographers
+before insert or update on photographers
 for each row execute function protect_is_unlimited();
+
+-- אותה הגנה בדיוק, אבל על מוני השימוש היומיים ל-AI: ai_picks_count/ai_picks_date
+-- ("עזרי לי לבחור", app/api/gallery/[id]/ai-picks/route.ts) ו-theme_gen_count/
+-- theme_gen_date ("עיצוב הגלריה עם AI", app/api/photographer/design-theme/route.ts).
+-- בלי הגנה כאן, צלמת מחוברת יכלה לאפס את המונים האלה מקונסולת הדפדפן ולקבל
+-- קריאות AI חינמיות ללא הגבלה (עלות בפועל מול Anthropic). שני ה-routes האלה
+-- כותבים לעמודות האלה אך ורק עם מפתח service_role, אז זה בטוח לחסום כל כתיבה
+-- אחרת - כולל insert, מאותה סיבה שמוסברת ב-protect_is_unlimited למעלה.
+create or replace function protect_ai_usage_counters()
+returns trigger as $$
+begin
+  if current_setting('role', true) = 'service_role' then
+    return new;
+  end if;
+
+  if tg_op = 'INSERT' then
+    new.ai_picks_count := 0;
+    new.ai_picks_date := null;
+    new.theme_gen_count := 0;
+    new.theme_gen_date := null;
+  else
+    if new.ai_picks_count is distinct from old.ai_picks_count then
+      new.ai_picks_count := old.ai_picks_count;
+    end if;
+    if new.ai_picks_date is distinct from old.ai_picks_date then
+      new.ai_picks_date := old.ai_picks_date;
+    end if;
+    if new.theme_gen_count is distinct from old.theme_gen_count then
+      new.theme_gen_count := old.theme_gen_count;
+    end if;
+    if new.theme_gen_date is distinct from old.theme_gen_date then
+      new.theme_gen_date := old.theme_gen_date;
+    end if;
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger trg_protect_ai_usage_counters
+before insert or update on photographers
+for each row execute function protect_ai_usage_counters();
+
+-- אם כבר הרצת גרסה קודמת של הסכמה בלי ה-with check על "photographers see own
+-- row" ובלי ההגנה על insert/מוני ה-AI (הפגיעות: צלמת מחוברת יכלה למחוק את
+-- השורה שלה וליצור מחדש עם is_unlimited=true, או לאפס בעצמה את ai_picks_count/
+-- theme_gen_count), מריצים גם את זה על פרויקט Supabase שכבר קיים:
+--
+-- drop policy if exists "photographers see own row" on photographers;
+-- create policy "photographers see own row" on photographers
+--   for all using (auth.uid() = auth_user_id)
+--   with check (auth.uid() = auth_user_id);
+--
+-- create or replace function protect_is_unlimited()
+-- returns trigger as $$
+-- begin
+--   if current_setting('role', true) = 'service_role' then
+--     return new;
+--   end if;
+--
+--   if tg_op = 'INSERT' then
+--     new.is_unlimited := false;
+--   elsif new.is_unlimited is distinct from old.is_unlimited then
+--     new.is_unlimited := old.is_unlimited;
+--   end if;
+--
+--   return new;
+-- end;
+-- $$ language plpgsql;
+--
+-- drop trigger if exists trg_protect_is_unlimited on photographers;
+-- create trigger trg_protect_is_unlimited
+-- before insert or update on photographers
+-- for each row execute function protect_is_unlimited();
+--
+-- create or replace function protect_ai_usage_counters()
+-- returns trigger as $$
+-- begin
+--   if current_setting('role', true) = 'service_role' then
+--     return new;
+--   end if;
+--
+--   if tg_op = 'INSERT' then
+--     new.ai_picks_count := 0;
+--     new.ai_picks_date := null;
+--     new.theme_gen_count := 0;
+--     new.theme_gen_date := null;
+--   else
+--     if new.ai_picks_count is distinct from old.ai_picks_count then
+--       new.ai_picks_count := old.ai_picks_count;
+--     end if;
+--     if new.ai_picks_date is distinct from old.ai_picks_date then
+--       new.ai_picks_date := old.ai_picks_date;
+--     end if;
+--     if new.theme_gen_count is distinct from old.theme_gen_count then
+--       new.theme_gen_count := old.theme_gen_count;
+--     end if;
+--     if new.theme_gen_date is distinct from old.theme_gen_date then
+--       new.theme_gen_date := old.theme_gen_date;
+--     end if;
+--   end if;
+--
+--   return new;
+-- end;
+-- $$ language plpgsql;
+--
+-- drop trigger if exists trg_protect_ai_usage_counters on photographers;
+-- create trigger trg_protect_ai_usage_counters
+-- before insert or update on photographers
+-- for each row execute function protect_ai_usage_counters();
 
 -- Storage: bucket לתמונות הגלריה
 -- מריצים את זה, או יוצרים ידנית ב-Dashboard > Storage > New bucket (שם: gallery-photos, פרטי!)
