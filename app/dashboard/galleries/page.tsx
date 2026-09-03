@@ -33,6 +33,7 @@ export default function GalleriesDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'expired'>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'expiry' | 'activity' | 'name'>('newest');
+  const [loadError, setLoadError] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
   const [bulkMessage, setBulkMessage] = useState('');
@@ -143,12 +144,21 @@ export default function GalleriesDashboard() {
 
   async function loadGalleries() {
     setLoading(true);
+    setLoadError('');
 
-    const { data: galleries } = await supabase
+    const { data: galleries, error } = await supabase
       .from('galleries')
       .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, editing_started_at, delivered_at, paid_at, owner_participant_id, clients(full_name), packages(included_photos, base_price, extra_photo_price)')
       .order('created_at', { ascending: false });
 
+    // בלי הבדיקה הזו, שגיאת שאילתה (למשל RLS, או עמודה חסרה אם המיגרציה
+    // ב-supabase/schema.sql לא רצה במלואה) הייתה נראית בדיוק כמו "אין גלריות
+    // בכלל" - הצלמת הייתה רואה רשימה ריקה בלי שום רמז שמשהו נכשל.
+    if (error) {
+      setLoadError(error.message);
+      setLoading(false);
+      return;
+    }
     if (!galleries) {
       setLoading(false);
       return;
@@ -237,6 +247,19 @@ export default function GalleriesDashboard() {
   }
 
   if (loading) return <p style={{ color: theme.textMuted }}>טוען...</p>;
+
+  if (loadError) {
+    return (
+      <div>
+        <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem' }}>
+          טעינת רשימת הגלריות נכשלה: {loadError}
+        </p>
+        <button onClick={loadGalleries} style={outlineButtonStyle}>
+          נסי שוב
+        </button>
+      </div>
+    );
+  }
 
   // תואם ל-enforce_active_gallery_limit ב-supabase/schema.sql - סופר לפי הסטטוס
   // הגולמי (לא effectiveStatus), כי זה גם מה שה-trigger בודק בפועל: גלריה שפג
