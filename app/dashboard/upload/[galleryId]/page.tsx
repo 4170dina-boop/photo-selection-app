@@ -1,21 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/client';
 import { theme, goldButtonStyle } from '@/lib/theme';
+import { useUploadQueue, type UploadItem } from '../../UploadProvider';
 
 interface UploadPageProps {
   params: { galleryId: string };
-}
-
-interface UploadItem {
-  file: File;
-  previewUrl: string;
-  status: 'pending' | 'uploading' | 'done' | 'error';
-  error?: string;
-  isDuplicateExisting?: boolean; // כבר קיים בגלריה (לפי original_filename)
-  isDuplicateInSelection?: boolean; // נבחר יותר מפעם אחת בבחירה הנוכחית
 }
 
 interface ExistingPhoto {
@@ -34,9 +25,13 @@ const FREE_PHOTO_LIMIT = 25;
 export default function UploadPage({ params }: UploadPageProps) {
   const { galleryId } = params;
 
-  const [supabase] = useState(() => createClient());
-  const [items, setItems] = useState<UploadItem[]>([]);
-  const [uploading, setUploading] = useState(false);
+  // תור ההעלאה עצמו (items/uploading) חי ב-context משותף לכל הדשבורד (ראו
+  // app/dashboard/UploadProvider.tsx), כדי שהוא ישרוד ניווט לדף אחר - הדף הזה
+  // רק קורא את הפרוסה שלו (לפי galleryId) ומפעיל עליה פעולות. סקירת התמונות
+  // הקיימות, בדיקת הבעלות, וזיהוי כפילויות נשארים מקומיים לדף - אלה קריאות
+  // מידע ספציפיות לדף, לא חלק ממנוע ההעלאה שצריך להמשיך לרוץ ברקע.
+  const { items, uploading, setItems, setClientName, startUpload } = useUploadQueue(galleryId);
+
   const [existingPhotos, setExistingPhotos] = useState<ExistingPhoto[] | null>(null);
   const [checkingOwnership, setCheckingOwnership] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -45,6 +40,12 @@ export default function UploadPage({ params }: UploadPageProps) {
   // את ממשק ההעלאה - בלי זה, כל צלמת יכולה לנווט לפי galleryId של גלריה של
   // צלמת אחרת ולראות ממשק העלאה שלא באמת עובד (ה-RLS חוסם את הכתיבה בפועל,
   // אבל בלי הבדיקה הזו זה מרגיש שבור במקום שיגיד בבירור "לא נמצא").
+  //
+  // checkingOwnership מפסיק לחסום רק אחרי ששתי הבקשות (בדיקת בעלות + טעינת
+  // התמונות הקיימות) הסתיימו, לא רק הראשונה - קודם setCheckingOwnership(false)
+  // היה קורה כבר אחרי הבקשה הראשונה, לפני ש-existingPhotos התמלא, וזה פתח חלון
+  // (סבב רשת אחד) שבו אפשר לבחור קבצים כש-buildItems עדיין רואה existingPhotos
+  // כ-null (=[]) ומפספס כפילויות אמיתיות מול תמונות שכבר קיימות בגלריה.
   useEffect(() => {
     (async () => {
       const res = await fetch(`/api/galleries/${galleryId}`);
@@ -53,8 +54,10 @@ export default function UploadPage({ params }: UploadPageProps) {
         setCheckingOwnership(false);
         return;
       }
-      setCheckingOwnership(false);
+      const gallery = await res.json().catch(() => null);
+      setClientName(gallery?.clients?.full_name ?? null);
       await loadExistingPhotos();
+      setCheckingOwnership(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [galleryId]);
@@ -66,13 +69,19 @@ export default function UploadPage({ params }: UploadPageProps) {
     setExistingPhotos(data.photos ?? []);
   }
 
-  // מנקה object URLs של תצוגה מקדימה כשעוזבים את הדף, כדי לא לדלוף זיכרון
+  // כשההעלאה שרצה ברקע (ב-context) מסתיימת בזמן שהדף הזה עדיין פתוח, מרעננים
+  // את סקירת התמונות הקיימות כדי לכלול את החדשות - בדיוק כמו שהדף עשה בעבר
+  // מיד אחרי handleUpload. אם הדף נטען מחדש אחרי שההעלאה כבר הסתיימה (למשל
+  // חזרה מדף אחר), האפקט שלמעלה כבר טוען גרסה עדכנית ממילא - זה רק בשביל
+  // המעבר "עדיין פה כשזה נגמר".
+  const prevUploadingRef = useRef(uploading);
   useEffect(() => {
-    return () => {
-      items.forEach((item) => URL.revokeObjectURL(item.previewUrl));
-    };
+    if (prevUploadingRef.current && !uploading) {
+      loadExistingPhotos();
+    }
+    prevUploadingRef.current = uploading;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [uploading]);
 
   // מסמנים קבצים ששמם חוזר על עצמו בתוך הבחירה הנוכחית, או שכבר קיימים
   // בגלריה (לפי original_filename) - השוואה מדויקת של השם, בלי נרמול.
@@ -103,113 +112,6 @@ export default function UploadPage({ params }: UploadPageProps) {
     const selected = Array.from(e.target.files ?? []).filter((file) => file.type.startsWith('image/'));
     items.forEach((item) => URL.revokeObjectURL(item.previewUrl));
     setItems(buildItems(selected));
-  }
-
-  // כמה תמונות מעלים בו-זמנית. קודם זה היה אחת-אחת (תור) - עכשיו גם לא
-  // מחכים יותר לעיבוד סימן המים לפני שעוברים לתמונה הבאה (ראו הערה למטה),
-  // אז שלב ההעלאה עצמו (Storage + DB) מהיר בהרבה, ואפשר להעלות יותר תמונות
-  // בו-זמנית בלי לחשוש שכל "עובד" תקוע מחכה לעיבוד איטי בצד שרת.
-  const UPLOAD_CONCURRENCY = 8;
-
-  // דחיסת JPEG לפני העלאה, כדי לקצר משמעותית את זמן ההעלאה בפועל (פחות בייטים
-  // לשלוח, לא רק פחות המתנה לעיבוד). לא נוגעים ברזולוציה (רק באיכות ה-JPEG) -
-  // אין הבדל נראה לעין במסך או בהדפסה רגילה, וממילא הקובץ הזה לא הקובץ שהצלמת
-  // עורכת בפועל (היא עובדת על המקור המקומי שלה, ראו MagicButton) - הוא רק
-  // לתצוגה/בחירה של הלקוחה. אם הדחיסה נכשלת או לא משפרת, מעלים את המקור כמו שהוא.
-  const COMPRESSED_JPEG_QUALITY = 0.85;
-
-  async function compressForUpload(file: File): Promise<File> {
-    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return file;
-
-    try {
-      const bitmap = await createImageBitmap(file);
-      const canvas = document.createElement('canvas');
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return file;
-      ctx.drawImage(bitmap, 0, 0);
-
-      const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', COMPRESSED_JPEG_QUALITY));
-      if (!blob || blob.size >= file.size) return file;
-
-      return new File([blob], file.name, { type: 'image/jpeg' });
-    } catch {
-      return file;
-    }
-  }
-
-  async function uploadOne(i: number) {
-    const originalFile = items[i].file;
-    setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'uploading' } : it)));
-
-    try {
-      const file = await compressForUpload(originalFile);
-      // נתיב ייחודי בתוך ה-bucket, מסודר לפי גלריה
-      const path = `${galleryId}/${crypto.randomUUID()}-${file.name}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('gallery-photos')
-        .upload(path, file, { upsert: false });
-
-      if (uploadError) throw uploadError;
-
-      // ה-bucket פרטי (לא public) - שומרים את הנתיב בתוך ה-bucket, לא URL.
-      // ה-URL בפועל (signed, זמני) נוצר רק כשלקוחה צופה בגלריה - ראו
-      // app/api/gallery/[id]/route.ts. thumbnail_path מתחיל זהה ל-file_path
-      // (נופל בחזרה למקור אם העיבוד למטה נכשל), ומוחלף בגרסה עם סימן מים
-      // ברגע שה-route בצד שרת מסיים.
-      const { data: photo, error: dbError } = await supabase
-        .from('photos')
-        .insert({
-          gallery_id: galleryId,
-          file_path: path,
-          thumbnail_path: path,
-          original_filename: file.name,
-        })
-        .select('id')
-        .single();
-
-      if (dbError) throw dbError;
-
-      // התמונה כבר בטוחה ב-Storage וב-DB - זה מה שקובע "הועלה בהצלחה" מבחינת
-      // הלקוחה/המכסה. עיבוד סימן המים לא מחכים לו יותר (fire-and-forget) - הוא
-      // best-effort ממילא (אם נכשל, thumbnail_path נשאר המקור, ראו הערה למעלה),
-      // אז אין סיבה שהתמונה הבאה בתור תחכה לו. זה הצעד שבאמת קיצר את הזמן
-      // הכולל בהעלאה של הרבה תמונות - הורדה+שינוי גודל+הטבעה בצד שרת הם החלק
-      // האיטי, לא ההעלאה עצמה.
-      fetch(`/api/galleries/${galleryId}/photos/${photo.id}/process`, { method: 'POST' }).catch(() => {});
-
-      setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'done' } : it)));
-    } catch (err: any) {
-      // מגבלת חשבון חינמי (טריגר enforce_photo_limit ב-DB) - ראו supabase/schema.sql
-      const message: string = err.message ?? 'שגיאה לא ידועה';
-      const displayMessage = message.includes('LIMIT_PHOTOS')
-        ? 'חשבון חינמי מוגבל ל-25 תמונות בגלריה'
-        : message;
-      setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'error', error: displayMessage } : it)));
-    }
-  }
-
-  async function handleUpload() {
-    if (items.length === 0) return;
-
-    setUploading(true);
-
-    // "מאגר עובדים" קטן: כל "עובד" מושך את האינדקס הבא בתור ומעלה אותו, עד
-    // שנגמרים - כך יש תמיד עד UPLOAD_CONCURRENCY העלאות פעילות בו-זמנית,
-    // בלי תזמון מסובך יותר מזה.
-    let nextIndex = 0;
-    async function worker() {
-      while (nextIndex < items.length) {
-        const i = nextIndex++;
-        await uploadOne(i);
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, items.length) }, worker));
-
-    setUploading(false);
-    await loadExistingPhotos(); // רענון סקירת התמונות הקיימות עם החדשות שהתווספו
   }
 
   const doneCount = items.filter((it) => it.status === 'done').length;
@@ -344,7 +246,7 @@ export default function UploadPage({ params }: UploadPageProps) {
 
         {items.length > 0 && (
           <button
-            onClick={handleUpload}
+            onClick={startUpload}
             disabled={uploading || items.length === 0}
             style={{
               ...goldButtonStyle,
