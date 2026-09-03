@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { sendExpiryReminderEmail } from '@/lib/email';
+import { israelDateString, daysBetweenDateStrings } from '@/lib/israelTime';
 
 // Endpoint אחד שמופעל ע"י תזמון חיצוני (Vercel Cron / Supabase pg_cron / כל
 // שירות cron אחר) - ראו README.md ("תזכורות וסטטוס אוטומטי") להוראות הפעלה.
@@ -65,9 +66,14 @@ export async function GET(req: NextRequest) {
 
     const reminderDays = gallery.reminder_days ?? photographer.reminder_days_default ?? 5;
     const expiresAt = new Date(gallery.expires_at);
-    const reminderThreshold = new Date(expiresAt.getTime() - reminderDays * 24 * 60 * 60 * 1000);
 
-    if (now < reminderThreshold) continue; // עוד לא הגיע הזמן להזכיר
+    // משווים תאריכים אזרחיים בזמן ישראל (לא הפרש מדויק במילישניות) - expires_at
+    // נשמר בערך כ-23:59:59 (או 21:59:59 בשעון חורף) בזמן ישראל, אז השוואת
+    // timestamp מדויק מול "עכשיו" הייתה תלויה בשעה שבה ה-cron היומי רץ (ראו
+    // vercel.json - 08:00 UTC) וגורמת לתזכורת להישלח יום אחרי המיועד.
+    const daysUntilExpiry = daysBetweenDateStrings(israelDateString(now), israelDateString(expiresAt));
+
+    if (daysUntilExpiry > reminderDays) continue; // עוד לא הגיע הזמן להזכיר
 
     // best-effort - כדי שתשובה של הלקוחה תגיע ישירות לצלמת. אם השליפה נכשלת
     // (למשל המשתמש כבר לא קיים), פשוט שולחים בלי reply-to במקום להפיל את כל הריצה.
