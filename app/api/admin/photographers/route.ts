@@ -24,9 +24,24 @@ export async function GET() {
     return NextResponse.json({ error: 'שליפת הצלמות נכשלה' }, { status: 500 });
   }
 
-  // מייל לא נשמר בטבלת photographers - שולפים פעם אחת מ-auth.users ומצמידים לפי id
-  const { data: usersData } = await supabaseAdmin.auth.admin.listUsers();
-  const emailByUserId = new Map((usersData?.users ?? []).map((u) => [u.id, u.email]));
+  // מייל לא נשמר בטבלת photographers - שולפים מ-auth.users ומצמידים לפי id.
+  // listUsers() מחזיר עמוד אחד בלבד (ברירת מחדל page:1, perPage:50) - עם יותר מ-50
+  // משתמשי auth בפרויקט (לא רק צלמות) צריך לדפדף על כל העמודים, בדיוק כמו
+  // listAllFiles ב-app/api/galleries/[id]/route.ts עבור Storage .list().
+  const allUsers: { id: string; email?: string }[] = [];
+  let page = 1;
+  const perPage = 1000; // המקסימום הנתמך ב-SDK (auth.admin.listUsers)
+  while (true) {
+    const { data: usersPage, error: usersError } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+    // שגיאה באמצע הדפדוף עוצרת כאן במקום ללולאה אינסופית או קריסת הבקשה כולה -
+    // הצלמות עצמן כבר נשלפו בהצלחה למעלה, אז מציגים אותן עם המיילים שכן הצלחנו
+    // לשלוף (חלק עלול לצאת null) במקום להפיל את כל הבקשה על שגיאה בהעשרת מייל בלבד.
+    if (usersError || !usersPage) break;
+    allUsers.push(...usersPage.users);
+    if (usersPage.users.length < perPage) break; // עמוד לא מלא = העמוד האחרון
+    page += 1;
+  }
+  const emailByUserId = new Map(allUsers.map((u) => [u.id, u.email]));
 
   const rows = (photographers ?? []).map((p) => ({
     id: p.id,

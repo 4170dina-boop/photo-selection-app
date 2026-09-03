@@ -660,17 +660,29 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (queue.length === 0) return;
 
     let stoppedAt = queue.length;
+    let hadServerError = false;
     for (let i = 0; i < queue.length; i++) {
       const result = await postAction(queue[i]);
       if (result === 'network-error') {
         stoppedAt = i; // עדיין בלי חיבור - עוצרים כאן, מנסים שוב בפעם הבאה
         break;
       }
-      // 'ok' או 'server-error' - בשני המקרים לא מנסים שוב את אותה פעולה
+      if (result === 'server-error') {
+        hadServerError = true; // לא ניתוק אלא דחייה אמיתית (למשל הגלריה כבר ננעלה) - לא מנסים שוב, אבל צריך לבטל את העדכון האופטימי ולהודיע
+      }
+      // 'ok' - לא מנסים שוב את אותה פעולה
     }
     const remaining = queue.slice(stoppedAt);
     savePendingQueue(galleryId, myParticipant.id, remaining);
     setPendingCount(remaining.length);
+
+    if (hadServerError) {
+      // לפעולות בתור אין את המצב "לפני" (current) כמו ב-setPhotoStatus, אז אי
+      // אפשר לבטל בדיוק את אותה פעולה עם applyStatusChange - במקום זאת טוענים
+      // מחדש את כל הגלריה מהשרת, כדי שהמסך יחזור להיות אמת אחת עם מה שבאמת נשמר.
+      await loadGallery();
+      setActionError('חלק מהבחירות שביצעת במצב אופליין לא נשמרו - ייתכן שהגלריה כבר ננעלה');
+    }
   }
 
   function cycleStatus(photoId: string) {
@@ -916,6 +928,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (!noteEditingId) return;
     const photoId = noteEditingId;
     const trimmed = noteDraft.trim();
+    const previousNote = myMarks[photoId]?.note ?? null; // נשמר לפני העדכון האופטימי, לביטול אם השרת ידחה (כמו current ב-setPhotoStatus)
 
     setMyMarks((prev) => {
       const existing = prev[photoId];
@@ -932,6 +945,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       return;
     }
     if (result === 'server-error') {
+      // ביטול העדכון האופטימי - שגיאה אמיתית (למשל הבחירה שההערה תלויה בה כבר
+      // הוסרה בינתיים), לא ניתוק
+      setMyMarks((prev) => {
+        const existing = prev[photoId];
+        if (!existing) return prev;
+        return { ...prev, [photoId]: { ...existing, note: previousNote } };
+      });
       setActionError('ההערה לא נשמרה, נסי שוב.');
       return;
     }
