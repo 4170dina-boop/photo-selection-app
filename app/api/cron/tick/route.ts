@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { sendExpiryReminderEmail } from '@/lib/email';
+import { sendExpiryReminderEmail, sendOriginalsDeletionWarningEmail } from '@/lib/email';
 import { israelDateString, daysBetweenDateStrings } from '@/lib/israelTime';
+import { toHebrewDateString } from '@/lib/hebrewDate';
 
 // Endpoint אחד שמופעל ע"י תזמון חיצוני (Vercel Cron / Supabase pg_cron / כל
 // שירות cron אחר) - ראו README.md ("תזכורות וסטטוס אוטומטי") להוראות הפעלה.
@@ -103,11 +104,60 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 3. גלריות שנמסרו לפני 30+ יום - מוחקות את קבצי המקור (לא הערוכים!) כדי
+  // 3. גלריות שיעברו 30 יום ממסירה בעוד 5 ימים או פחות (25+ יום שכבר עברו) -
+  // התראת מייל חד-פעמית לצלמת, כדי שתספיק להוריד את המקור בעצמה אם היא
+  // עוד לא עשתה את זה, לפני שהמחיקה הבלתי-הפיכה בשלב 4 למטה קורית.
+  const ORIGINALS_WARNING_DAYS_BEFORE = 5;
+  const ORIGINALS_GRACE_DAYS = 30;
+  const warningThreshold = new Date(now.getTime() - (ORIGINALS_GRACE_DAYS - ORIGINALS_WARNING_DAYS_BEFORE) * 24 * 60 * 60 * 1000);
+
+  const { data: warningCandidates, error: warningError } = await supabaseAdmin
+    .from('galleries')
+    .select('id, delivered_at, clients(full_name), photographers(auth_user_id)')
+    .not('delivered_at', 'is', null)
+    .lt('delivered_at', warningThreshold.toISOString())
+    .is('originals_cleaned_up_at', null)
+    .is('originals_deletion_warning_sent_at', null);
+
+  if (warningError) {
+    return NextResponse.json({ error: 'שליפת מועמדות להתראת מחיקת מקור נכשלה' }, { status: 500 });
+  }
+
+  let originalsWarningsSent = 0;
+
+  for (const gallery of warningCandidates ?? []) {
+    const client = (gallery as any).clients;
+    const photographer = (gallery as any).photographers;
+    if (!client?.full_name || !photographer?.auth_user_id || !gallery.delivered_at) continue;
+
+    let photographerEmail: string | undefined;
+    try {
+      const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(photographer.auth_user_id);
+      photographerEmail = authUser?.user?.email;
+    } catch {
+      // בכוונה שקט - ראו הערה דומה בשלב 2 למעלה
+    }
+    if (!photographerEmail) continue;
+
+    const deletionDate = new Date(new Date(gallery.delivered_at).getTime() + ORIGINALS_GRACE_DAYS * 24 * 60 * 60 * 1000);
+
+    const result = await sendOriginalsDeletionWarningEmail({
+      to: photographerEmail,
+      clientName: client.full_name,
+      deletionDate: toHebrewDateString(deletionDate),
+      dashboardUrl: `${siteUrl}/dashboard/galleries/${gallery.id}/edit`,
+    });
+
+    if (result.sent) {
+      await supabaseAdmin.from('galleries').update({ originals_deletion_warning_sent_at: now.toISOString() }).eq('id', gallery.id);
+      originalsWarningsSent++;
+    }
+  }
+
+  // 4. גלריות שנמסרו לפני 30+ יום - מוחקות את קבצי המקור (לא הערוכים!) כדי
   // לפנות מקום באחסון (חשבון Supabase חינמי, מוגבל ל-1GB - ראו README). בשלב
   // הזה הלקוחה כבר בחרה והצלמת כבר הורידה/ערכה את המקור אצלה, אז אין עוד
   // סיבה שהעותק הזה יתפוס מקום ב-Storage.
-  const ORIGINALS_GRACE_DAYS = 30;
   const cleanupThreshold = new Date(now.getTime() - ORIGINALS_GRACE_DAYS * 24 * 60 * 60 * 1000);
 
   const { data: deliveredGalleries, error: deliveredError } = await supabaseAdmin
@@ -153,6 +203,7 @@ export async function GET(req: NextRequest) {
     expiredCount: expiredGalleries?.length ?? 0,
     candidatesChecked: candidates?.length ?? 0,
     remindersSent,
+    originalsWarningsSent,
     originalsCleanedGalleries,
     originalFilesDeleted,
   });

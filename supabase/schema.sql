@@ -83,6 +83,10 @@ create table galleries (
   -- null = עדיין לא נוקתה (או שעדיין לא עברו 30 יום מ-delivered_at). לא
   -- קשור לתמונות הערוכות הסופיות (delivered_photos) - הן אף פעם לא נמחקות אוטומטית.
   originals_cleaned_up_at timestamptz,
+  -- מתי נשלחה לצלמת התראה שתמונות המקור עומדות להימחק בקרוב (ראו
+  -- sendOriginalsDeletionWarningEmail ב-lib/email.ts) - null = טרם נשלחה.
+  -- חד-פעמית, אותו דפוס בדיוק כמו last_reminder_sent_at למעלה.
+  originals_deletion_warning_sent_at timestamptz,
   -- מונה צפיות של הלקוחה בגלריה (כל טעינה מוצלחת, לא ייחודי) - כדי שהצלמת
   -- תדע אם הלקוחה בכלל פתחה את הקישור, לא רק שהמייל "נשלח" (יכול להיחסם
   -- אצל הלקוחה בלי שום דרך אחרת לדעת - ראו app/api/gallery/[id]/route.ts).
@@ -1062,3 +1066,7 @@ create policy "public read logos" on storage.objects
 -- אם כבר הרצת גרסה קודמת של הסכמה בלי מחיקה אוטומטית של תמונות מקור אחרי
 -- מסירה (app/api/cron/tick/route.ts, שלב 3), מריצים גם את זה:
 -- alter table galleries add column if not exists originals_cleaned_up_at timestamptz;
+
+-- אם כבר הרצת גרסה קודמת בלי התראת מייל לצלמת לפני מחיקת המקור
+-- (app/api/cron/tick/route.ts, שלב 3), מריצים גם את זה:
+-- alter table galleries add column if not exists originals_deletion_warning_sent_at timestamptz;

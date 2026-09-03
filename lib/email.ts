@@ -276,6 +276,33 @@ export async function sendFinalPhotosReadyEmail(params: FinalPhotosReadyParams):
   });
 }
 
+interface OriginalsDeletionWarningParams {
+  to: string;
+  clientName: string;
+  deletionDate: string;
+  dashboardUrl: string;
+}
+
+// מודיעה לצלמת שתמונות המקור (הלא-ערוכות) של גלריה עומדות להימחק אוטומטית
+// בעוד כ-5 ימים (ראו app/api/cron/tick/route.ts, "שלב 4") - כדי שתספיק
+// להוריד אותן בעצמה אם היא עוד לא עשתה את זה, לפני שהמחיקה הבלתי-הפיכה
+// קורית. אותו "אזור צלמים" ולא שם הלקוחה - זו התראה מהמערכת, לא מייל
+// בשם הלקוחה.
+export async function sendOriginalsDeletionWarningEmail(params: OriginalsDeletionWarningParams): Promise<SendResult> {
+  const html = wrapEmailHtml({
+    headerText: 'אזור צלמים',
+    bodyHtml: `
+      <p style="margin: 0 0 8px;">היי,</p>
+      <p style="margin: 0 0 8px;">תמונות המקור (הלא-ערוכות) בגלריה של <b>${params.clientName}</b> יימחקו אוטומטית לצמיתות בתאריך <b>${params.deletionDate}</b>, כדי לפנות מקום באחסון.</p>
+      <p style="margin: 0; font-size: 13px; color: #6b6156;">התמונות הערוכות הסופיות שהעלית ללקוחה לא נמחקות - זה רק על קבצי המקור המקוריים. אם את עדיין צריכה אותן, זה הזמן להוריד.</p>
+    `,
+    ctaText: 'צפייה בגלריה',
+    ctaUrl: params.dashboardUrl,
+  });
+
+  return sendEmail(params.to, `תמונות המקור של ${params.clientName} יימחקו בקרוב`, html, { fromName: 'אזור צלמים ✨' });
+}
+
 interface ClientSelectionSummaryParams {
   to: string;
   clientName: string;
