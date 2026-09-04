@@ -127,6 +127,14 @@ create table photos (
   -- לא ML. ערך נמוך = כנראה מטושטשת. נחשב פעם אחת בעיבוד (ראו lib/sharpness.ts),
   -- לא בכל בקשה. null עד שהעיבוד רץ, או אם הוא נכשל - לא חוסם שום דבר.
   sharpness_score numeric,
+  -- מתי הקובץ הזה הועבר בפועל ל-Cloudflare R2 (מעבר אחסון חד-פעמי, ראו
+  -- app/api/admin/migrate-storage/route.ts) - null = עדיין ב-Supabase Storage
+  -- בלבד (או שהמקור כבר נוקה ע"י ניקוי המקור האוטומטי, ראו app/api/cron/tick/route.ts,
+  -- ואז אין מה להעביר בפועל, אבל עדיין מסמנים "הועבר" כדי לא לבדוק שוב).
+  -- שני עמודות נפרדות (לא עמודה אחת ל"כל הקובץ") כי file_path ו-thumbnail_path
+  -- הם שני אובייקטים עצמאיים ב-Storage, שיכולים להימחק/להתקיים בנפרד.
+  file_migrated_at timestamptz,
+  thumbnail_migrated_at timestamptz,
   created_at timestamptz default now()
 );
 
@@ -160,6 +168,11 @@ create table delivered_photos (
   -- בדיוק כמו thumbs/, ה-URL בפועל נוצר כ-signed URL זמני, ראו app/api/gallery/[id]/route.ts
   file_path text not null,
   original_filename text not null,
+  -- מתי הקובץ הזה הועבר בפועל ל-Cloudflare R2 (מעבר אחסון חד-פעמי, ראו
+  -- app/api/admin/migrate-storage/route.ts) - null = עדיין ב-Supabase Storage
+  -- בלבד. בניגוד ל-photos למעלה, יש כאן רק עמודה אחת כי לתמונה סופית אין
+  -- thumbnail נפרד - זה הקובץ הערוך המלא בעצמו.
+  file_migrated_at timestamptz,
   created_at timestamptz default now()
 );
 create index idx_delivered_photos_gallery on delivered_photos(gallery_id);
@@ -1080,3 +1093,9 @@ create policy "public read logos" on storage.objects
 -- אם כבר הרצת גרסה קודמת בלי תגובת צלמת להערת לקוחה, מריצים גם את זה:
 -- alter table selections add column if not exists photographer_reply text;
 -- alter table selections add column if not exists photographer_reply_at timestamptz;
+
+-- אם כבר הרצת גרסה קודמת בלי מעקב מעבר אחסון ל-Cloudflare R2
+-- (app/api/admin/migrate-storage/route.ts), מריצים גם את זה:
+-- alter table photos add column if not exists file_migrated_at timestamptz;
+-- alter table photos add column if not exists thumbnail_migrated_at timestamptz;
+-- alter table delivered_photos add column if not exists file_migrated_at timestamptz;
