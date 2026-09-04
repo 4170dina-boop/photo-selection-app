@@ -3,14 +3,11 @@ import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { getPresignedUploadUrl } from '@/lib/r2';
 
-// מחליף (בעתיד - שלב נפרד, ראו תוכנית המעבר) את ההעלאה הישירה מהדפדפן
-// ל-Supabase Storage ב-app/dashboard/UploadProvider.tsx: ל-R2 (כמו S3) אין
-// מקבילה ל-RLS שמאפשרת לדפדפן לדבר ישירות עם האחסון בבטחה, אז חתימת ה-URL
-// חייבת לקרות כאן, בצד שרת, עם מפתחות סודיים שאסור לחשוף ללקוח. הנתיב עצמו
-// חשוב שייקבע כאן ולא יתקבל מהלקוח - אחרת אין מניעה שהיא תבקש path שדורך
-// על תמונה של גלריה אחרת.
-//
-// עדיין לא בשימוש בפועל - נוסף כתשתית תוסף בלבד לפני המעבר האטומי.
+// מחליף את ההעלאה הישירה מהדפדפן ל-Supabase Storage שהייתה קודם ב-
+// app/dashboard/UploadProvider.tsx: ל-R2 (כמו S3) אין מקבילה ל-RLS שמאפשרת
+// לדפדפן לדבר ישירות עם האחסון בבטחה, אז חתימת ה-URL חייבת לקרות כאן, בצד
+// שרת, עם מפתחות סודיים שאסור לחשוף ללקוח. הנתיב עצמו חשוב שייקבע כאן ולא
+// יתקבל מהלקוח - אחרת אין מניעה שהיא תבקש path שדורך על תמונה של גלריה אחרת.
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient();
   const {

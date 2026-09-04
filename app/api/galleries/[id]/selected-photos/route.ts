@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { getPresignedDownloadUrl } from '@/lib/r2';
 
 // מחזיר לצלמת המחוברת שם קובץ + signed URL זמני לכל תמונה שסומנה "נבחר" בגלריה שלה.
 // משמש את כפתור הקסם (התאמת שמות קבצים מקומיים) ואת ה-ZIP fallback (הורדה בפועל).
 // בודקים בעלות עם לקוח השרת (session, לא service key) כי RLS כבר אוכף את זה על
-// הטבלאות; signed URLs עצמם חייבים service key כי ה-bucket פרטי (ראו app/api/gallery/[id]/route.ts).
+// הטבלאות; signed URLs עצמם נוצרים דרך lib/r2.ts עם מפתחות R2 סודיים (ה-bucket פרטי).
 const supabaseAdmin = createAdminClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
   process.env.SUPABASE_SERVICE_ROLE_KEY as string
@@ -61,13 +62,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const photos = await Promise.all(
     (selections ?? [])
       .filter((s: any) => s.photos)
-      .map(async (s: any) => {
-        const { data: signed } = await supabaseAdmin.storage
-          .from('gallery-photos')
-          .createSignedUrl(s.photos.file_path, SIGNED_URL_TTL_SECONDS);
-
-        return { filename: s.photos.original_filename as string, url: signed?.signedUrl ?? null };
-      })
+      .map(async (s: any) => ({
+        filename: s.photos.original_filename as string,
+        url: await getPresignedDownloadUrl(s.photos.file_path, SIGNED_URL_TTL_SECONDS),
+      }))
   );
 
   return NextResponse.json({ photos: photos.filter((p) => p.url) });

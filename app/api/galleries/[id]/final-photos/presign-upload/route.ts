@@ -3,12 +3,10 @@ import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { getPresignedUploadUrl } from '@/lib/r2';
 
-// מקביל ל-.../photos/presign-upload/route.ts, אבל לתת-התיקייה final/ - יחליף
-// (בעתיד) את ההעלאה הישירה של תמונות סופיות ב-handleUploadFinalPhotos
+// מקביל ל-.../photos/presign-upload/route.ts, אבל לתת-התיקייה final/ - מחליף
+// את ההעלאה הישירה של תמונות סופיות ב-handleUploadFinalPhotos
 // (app/dashboard/galleries/[id]/edit/page.tsx). אותה סיבה בדיוק: אין RLS
 // ב-R2, אז חתימת ה-URL וקביעת הנתיב חייבות לקרות בצד שרת.
-//
-// עדיין לא בשימוש בפועל - נוסף כתשתית תוסף בלבד לפני המעבר האטומי.
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient();
   const {

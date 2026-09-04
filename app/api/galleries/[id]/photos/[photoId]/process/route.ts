@@ -1,21 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
-import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { downloadToBuffer, uploadBuffer } from '@/lib/r2';
 import { createWatermarkedPreview } from '@/lib/watermark';
 import { computeSharpnessScore } from '@/lib/sharpness';
 
 // יוצרת thumbnail_path אמיתי: מקטינה ומטביעה סימן מים על התמונה שהועלתה.
-// רצה אחרי שהמקור כבר הועלה ישירות מהדפדפן ל-Storage (app/dashboard/upload/[galleryId]/page.tsx) -
-// כך שאין בעיית מגבלת גודל בקשה של Vercel (הקובץ המקורי לא עובר דרך ה-route הזה
-// בכלל, רק ה-photoId; ה-route מוריד את המקור בעצמו מ-Storage בצד שרת).
+// רצה אחרי שהמקור כבר הועלה ישירות מהדפדפן ל-R2 (app/dashboard/UploadProvider.tsx,
+// דרך URL חתום) - כך שאין בעיית מגבלת גודל בקשה של Vercel (הקובץ המקורי לא
+// עובר דרך ה-route הזה בכלל, רק ה-photoId; ה-route מוריד את המקור בעצמו
+// מ-R2 בצד שרת).
 //
-// בעלות נבדקת עם session הצלם (לא service key) - אותו דפוס כמו שאר ה-routes
-// תחת app/api/galleries/*. ה-service key נדרש רק להורדה/העלאה מה-bucket הפרטי.
-const supabaseAdmin = createAdminClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-  process.env.SUPABASE_SERVICE_ROLE_KEY as string
-);
+// בעלות נבדקת עם session הצלם - אותו דפוס כמו שאר ה-routes תחת
+// app/api/galleries/*. גישת ה-Storage עצמה (הורדה/העלאה) עוברת דרך lib/r2.ts
+// עם מפתחות R2 סודיים, בלי קשר ל-RLS של Supabase.
 
 export async function POST(req: NextRequest, { params }: { params: { id: string; photoId: string } }) {
   const supabase = createClient();
@@ -59,15 +57,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     return NextResponse.json({ error: 'תמונה לא נמצאה' }, { status: 404 });
   }
 
-  const { data: original, error: downloadError } = await supabaseAdmin.storage
-    .from('gallery-photos')
-    .download(photo.file_path);
+  const originalBuffer = await downloadToBuffer(photo.file_path);
 
-  if (downloadError || !original) {
+  if (!originalBuffer) {
     return NextResponse.json({ error: 'הורדת התמונה המקורית נכשלה' }, { status: 500 });
   }
-
-  const originalBuffer = Buffer.from(await original.arrayBuffer());
 
   // מעדיפים את הלוגו של הצלמת כסימן מים (עוקף את באג הפונט העברי ב-SVG טקסט);
   // אם אין לוגו, או שההורדה שלו נכשלת, נופלים חזרה לסימן המים הטקסטואלי הקיים
@@ -96,11 +90,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
 
   const thumbnailPath = `${params.id}/thumbs/${crypto.randomUUID()}.jpg`;
 
-  const { error: uploadError } = await supabaseAdmin.storage
-    .from('gallery-photos')
-    .upload(thumbnailPath, watermarked, { contentType: 'image/jpeg', upsert: false });
-
-  if (uploadError) {
+  try {
+    await uploadBuffer(thumbnailPath, watermarked, 'image/jpeg');
+  } catch (err) {
     return NextResponse.json({ error: 'העלאת התצוגה המעובדת נכשלה' }, { status: 500 });
   }
 

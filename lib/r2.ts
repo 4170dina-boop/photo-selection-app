@@ -14,9 +14,12 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 // ה-bucket ב-R2 נשאר **פרטי** (לא מפעילים r2.dev ציבורי) - אותו מודל אבטחה
 // בדיוק כמו gallery-photos היום: כל גישה עוברת חתימת URL זמנית בצד שרת.
 //
-// חשוב: המודול הזה נבנה להיות תוסף בלבד בשלב הזה - אף touchpoint קיים
-// (UploadProvider, process/route, ai-picks, וכו') לא משתמש בו עדיין. הוא
-// ישמש רק ב-routes החדשים ובמיגרציה החד-פעמית, עד למעבר האטומי (deploy אחד).
+// המעבר האטומי (שלב 2) כבר בוצע - כל touchpoint שנגע קודם ב-Supabase Storage
+// (UploadProvider, process/route, ai-picks, review, selected-photos,
+// cover-photos, מחיקת גלריה, storage-usage, cron/tick) עובר עכשיו דרך המודול
+// הזה. לא נגענו בנתוני Supabase Storage הישנים (הוחלט לוותר על מיגרציה בפועל -
+// כל מה שהיה שם היה נתוני בדיקה חד-פעמיים) - app/api/admin/migrate-storage/route.ts
+// נשאר כקוד מת בכוונה, לא בשימוש.
 //
 // R2_ENDPOINT_OVERRIDE מאפשר להצביע את אותו קוד בדיוק על שרת S3-compatible
 // מקומי (למשל MinIO/s3rver) לבדיקות, בלי לגעת בלוגיקה - forcePathStyle נדרש
@@ -114,12 +117,21 @@ export async function deleteObjects(keys: string[]): Promise<void> {
   }
 }
 
-// רשימת כל המפתחות תחת prefix נתון - pagination אמיתי עם ContinuationToken
+export interface R2Object {
+  key: string;
+  size: number;
+}
+
+// רשימת כל האובייקטים תחת prefix נתון - pagination אמיתי עם ContinuationToken
 // (לא offset כמו הפגינציה הקודמת של Supabase Storage ב-storage-usage/route.ts
 // שהייתה מוגבלת לעמוד יחיד בפועל) - כדי שגם תיקייה עם יותר מ-1000 קבצים
-// תיספר עד הסוף.
-export async function listAllKeys(prefix?: string): Promise<string[]> {
-  const keys: string[] = [];
+// תיספר עד הסוף. מחזירה גם size לכל אובייקט (ListObjectsV2 מחזיר אותו בכל
+// מקרה בחינם) כדי ש-storage-usage/route.ts לא יצטרך HeadObject נפרד לכל קובץ.
+// ל-S3/R2 אין "תיקיות" אמיתיות - prefix בלי delimiter כולל אוטומטית את כל
+// תתי-התיקיות (thumbs/, final/) תחת אותו gallery id, בניגוד ל-list() הלא-רקורסיבי
+// של Supabase Storage שדרש שאילתה נפרדת לכל תת-תיקייה.
+export async function listAllKeys(prefix?: string): Promise<R2Object[]> {
+  const objects: R2Object[] = [];
   let continuationToken: string | undefined;
 
   do {
@@ -127,10 +139,10 @@ export async function listAllKeys(prefix?: string): Promise<string[]> {
       new ListObjectsV2Command({ Bucket: R2_BUCKET_NAME, Prefix: prefix, ContinuationToken: continuationToken })
     );
     for (const obj of result.Contents ?? []) {
-      if (obj.Key) keys.push(obj.Key);
+      if (obj.Key) objects.push({ key: obj.Key, size: obj.Size ?? 0 });
     }
     continuationToken = result.IsTruncated ? result.NextContinuationToken : undefined;
   } while (continuationToken);
 
-  return keys;
+  return objects;
 }

@@ -940,6 +940,13 @@ $$ language plpgsql;
 -- for each row execute function enforce_photo_limit();
 
 -- Storage: bucket לתמונות הגלריה
+--
+-- *** עבר ל-Cloudflare R2 (ראו lib/r2.ts) - ה-bucket וה-policies למטה כבר
+-- *** לא מקבלים קריאה/כתיבה בפועל מהאפליקציה. משאירים אותם כאן בכוונה (לא
+-- *** מוחקים) - נתונים ישנים עדיין יושבים ב-bucket הזה (לא הועברו, הוחלט
+-- *** שהם חד-פעמיים/disposable) והמדיניות לא מזיקה במצב רדום. אם/כשמנקים את
+-- *** ה-bucket הישן ידנית בעתיד, אפשר גם להסיר את השורות האלה.
+--
 -- מריצים את זה, או יוצרים ידנית ב-Dashboard > Storage > New bucket (שם: gallery-photos, פרטי!)
 insert into storage.buckets (id, name, public)
 values ('gallery-photos', 'gallery-photos', false)
@@ -949,6 +956,7 @@ on conflict (id) do update set public = false;
 -- הצפייה בתמונות (גם של הלקוחה בגלריה) קורית אך ורק דרך signed URL זמני שנוצר
 -- בצד שרת עם service_role key, אחרי אימות session - ראו app/api/gallery/[id]/route.ts.
 -- זה נותן שליטה אמיתית על תוקף הגישה (לא כמו bucket ציבורי, שאין לו "פקיעת תוקף").
+-- (הערה: זה תיאור היסטורי - הצפייה בפועל עברה ל-signed URL של R2, ראו למעלה.)
 
 -- רק צלמים מחוברים יכולים להעלות, ורק לתוך תיקיית גלריה ששייכת להם
 -- (הנתיב בבאקט הוא bucket/{galleryId}/... ולכן בודקים ש-galleryId שייך לצלם המחובר)

@@ -136,7 +136,7 @@ export default function ReportsPage() {
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '0.5rem' }}>
-            <span style={{ fontWeight: 'bold' }}>📦 אחסון תמונות (חשבון חינמי)</span>
+            <span style={{ fontWeight: 'bold' }}>📦 אחסון תמונות (Cloudflare R2, חשבון חינמי)</span>
             <span style={{ color: storageColor, fontSize: 13 }}>
               {storageUsage.totalGB.toFixed(2)} / {storageUsage.freeLimitGB} GB ({storageUsage.percentUsed}%)
             </span>
@@ -152,15 +152,15 @@ export default function ReportsPage() {
             <div style={{ width: `${Math.min(100, storageUsage.percentUsed)}%`, background: storageColor, height: '100%' }} />
           </div>
           <p style={{ color: theme.textFaint, fontSize: 12, marginTop: '0.6rem', marginBottom: 0 }}>
-            {storageUsage.galleryCount} גלריות בסה״כ. בתוכנית החינמית של Supabase אין חיוב אוטומטי על חריגה - השירות עלול להיות
-            מוגבל עד לאיפוס החודשי, לא חשבונית בהפתעה. לא כולל תעבורה (הורדת תמונות ע״י לקוחות) - למספרים המלאים, ראו{' '}
+            {storageUsage.galleryCount} גלריות בסה״כ. בתוכנית החינמית של Cloudflare R2 אין חיוב אוטומטי על חריגה - השירות עלול
+            להיות מוגבל עד לאיפוס החודשי, לא חשבונית בהפתעה. למספרים המלאים, ראו{' '}
             <a
-              href="https://supabase.com/dashboard/org/mahledermeqmnbveccnx/usage"
+              href="https://dash.cloudflare.com"
               target="_blank"
               rel="noreferrer"
               style={{ color: theme.textMuted, textDecoration: 'underline' }}
             >
-              דשבורד Supabase
+              דשבורד Cloudflare
             </a>
             .
           </p>

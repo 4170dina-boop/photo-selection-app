@@ -2,11 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { deleteObjects } from '@/lib/r2';
 
-// יחליף (בעתיד) את handleDeleteFinalPhoto ב-app/dashboard/galleries/[id]/edit/page.tsx.
+// מחליף את handleDeleteFinalPhoto ב-app/dashboard/galleries/[id]/edit/page.tsx.
 // כמו ב-GET final-photos/route.ts - אין RLS ב-R2, אז מחיקת הקובץ עצמו חייבת
 // לעבור route ייעודי בצד שרת אחרי בדיקת בעלות.
-//
-// עדיין לא בשימוש בפועל - נוסף כתשתית תוסף בלבד לפני המעבר האטומי.
 export async function DELETE(req: NextRequest, { params }: { params: { id: string; photoId: string } }) {
   const supabase = createClient();
   const {

@@ -130,16 +130,23 @@ export function UploadProvider({ children }: { children: ReactNode }) {
 
     try {
       const file = await compressForUpload(originalFile);
-      // נתיב ייחודי בתוך ה-bucket, מסודר לפי גלריה
-      const path = `${galleryId}/${crypto.randomUUID()}-${file.name}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from('gallery-photos')
-        .upload(path, file, { upsert: false });
+      // אחסון עבר ל-Cloudflare R2 (ראו lib/r2.ts) - ל-R2 (כמו S3) אין מקבילה
+      // ל-RLS שמאפשרת לדפדפן להעלות ישירות בבטחה, אז מבקשים URL חתום מהשרת
+      // (הוא גם קובע את הנתיב עצמו, לא מתקבל מהלקוח) ומעלים אליו ישירות -
+      // הבייטים עצמם עדיין לא עוברים דרך שרת האפליקציה שלנו, בדיוק כמו קודם.
+      const presignRes = await fetch(`/api/galleries/${galleryId}/photos/presign-upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name }),
+      });
+      if (!presignRes.ok) throw new Error('בקשת URL להעלאה נכשלה');
+      const { path, uploadUrl } = await presignRes.json();
 
-      if (uploadError) throw uploadError;
+      const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
+      if (!putRes.ok) throw new Error('העלאת הקובץ נכשלה');
 
-      // ה-bucket פרטי (לא public) - שומרים את הנתיב בתוך ה-bucket, לא URL.
+      // ה-bucket ב-R2 פרטי - שומרים את הנתיב בתוכו, לא URL.
       // ה-URL בפועל (signed, זמני) נוצר רק כשלקוחה צופה בגלריה - ראו
       // app/api/gallery/[id]/route.ts. thumbnail_path מתחיל זהה ל-file_path
       // (נופל בחזרה למקור אם העיבוד למטה נכשל), ומוחלף בגרסה עם סימן מים

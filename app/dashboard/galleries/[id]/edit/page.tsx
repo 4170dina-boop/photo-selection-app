@@ -9,10 +9,6 @@ import { israelEndOfDayIso } from '@/lib/israelTime';
 import { createClient } from '@/lib/supabase/client';
 import MagicButton from '@/components/MagicButton';
 
-// כמה זמן ה-signed URL של תצוגה מקדימה בגריד הצלמת נשאר תקף - מספיק לישיבת
-// עריכה אחת, אותו סדר גודל כמו SIGNED_URL_TTL_SECONDS ב-app/api/gallery/[id]/route.ts.
-const DELIVERED_PREVIEW_TTL_SECONDS = 60 * 60;
-
 interface DeliveredPhoto {
   id: string;
   path: string;
@@ -81,29 +77,15 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [galleryId]);
 
-  // ישירות מול DB/Storage עם ה-session client (לא route ייעודי) - ה-RLS
-  // (policies "photographers see own delivered photos"/"photographers read
-  // own gallery files" ב-schema.sql) כבר דואג שאי אפשר לגעת בגלריה של צלמת
-  // אחרת, כך שאין צורך ב-API route נפרד רק בשביל קריאה.
+  // ל-R2 (בשונה מ-Supabase Storage) אין מקבילה ל-RLS שמאפשרת לדפדפן לחתום
+  // URL בעצמו, אז זה עובר route ייעודי בצד שרת (בודק בעלות מול ה-session,
+  // בדיוק כמו שאר ה-API routes תחת app/api/galleries/*) - ראו
+  // app/api/galleries/[id]/final-photos/route.ts.
   async function loadDeliveredPhotos() {
     setLoadingDelivered(true);
 
-    const { data } = await supabase
-      .from('delivered_photos')
-      .select('id, file_path, original_filename')
-      .eq('gallery_id', galleryId)
-      .order('created_at', { ascending: false });
-
-    const withUrls = await Promise.all(
-      (data ?? []).map(async (row) => {
-        const { data: signed } = await supabase.storage
-          .from('gallery-photos')
-          .createSignedUrl(row.file_path, DELIVERED_PREVIEW_TTL_SECONDS);
-        return { id: row.id, path: row.file_path, filename: row.original_filename, url: signed?.signedUrl ?? null };
-      })
-    );
-
-    setDeliveredPhotos(withUrls);
+    const res = await fetch(`/api/galleries/${galleryId}/final-photos`);
+    setDeliveredPhotos(res.ok ? await res.json() : []);
     setLoadingDelivered(false);
   }
 
@@ -112,6 +94,10 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   // (Promise.all, בלי worker-pool כמו UploadProvider) - כמות קבצים כאן קטנה
   // בהרבה מהעלאת גלריה שלמה, ואין מגבלת 25 תמונות (enforce_photo_limit רץ
   // רק על טבלת photos, לא על delivered_photos).
+  //
+  // כמו ב-UploadProvider.tsx: route ייעודי חותם URL להעלאה (R2 אין לו RLS),
+  // ואז ה-insert ל-delivered_photos נשאר כאן עם ה-session client - route
+  // ה-presign עצמו רק חותם, לא נוגע ב-DB (ראו .../final-photos/presign-upload/route.ts).
   async function handleUploadFinalPhotos(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = ''; // מאפשר לבחור שוב את אותם קבצים בהעלאה נוספת
@@ -122,9 +108,16 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
 
     const results = await Promise.all(
       files.map(async (file) => {
-        const path = `${galleryId}/final/${crypto.randomUUID()}-${file.name}`;
-        const { error: uploadError } = await supabase.storage.from('gallery-photos').upload(path, file, { upsert: false });
-        if (uploadError) return false;
+        const presignRes = await fetch(`/api/galleries/${galleryId}/final-photos/presign-upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: file.name }),
+        });
+        if (!presignRes.ok) return false;
+        const { path, uploadUrl } = await presignRes.json();
+
+        const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
+        if (!putRes.ok) return false;
 
         const { error: dbError } = await supabase
           .from('delivered_photos')
@@ -146,11 +139,12 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setFinalError('');
     setDeletingFinalId(photo.id);
 
-    await supabase.storage.from('gallery-photos').remove([photo.path]);
-    const { error } = await supabase.from('delivered_photos').delete().eq('id', photo.id);
+    // ה-route עצמו מוחק גם את הקובץ מ-R2 וגם את שורת ה-DB (ראו
+    // .../final-photos/[photoId]/route.ts) - אין צורך במחיקת DB נפרדת כאן.
+    const res = await fetch(`/api/galleries/${galleryId}/final-photos/${photo.id}`, { method: 'DELETE' });
 
     setDeletingFinalId(null);
-    if (error) {
+    if (!res.ok) {
       setFinalError('מחיקת התמונה נכשלה - נסי שוב');
       return;
     }

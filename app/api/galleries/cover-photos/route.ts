@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { getPresignedDownloadUrl } from '@/lib/r2';
 
 // signed URL של התמונה הראשונה שהועלתה לכל גלריה של הצלמת המחוברת - לתמונה
 // קטנה ברשימת הגלריות (app/dashboard/galleries/page.tsx) כדי שיהיה קל לזהות
-// ויזואלית איזו גלריה זו, לא רק לפי שם לקוחה. ה-bucket פרטי בלי policy לקריאה
-// (ראו supabase/schema.sql) אז חייבים service_role ליצור signed URL, בדיוק
-// כמו app/api/galleries/[id]/selected-photos/route.ts.
+// ויזואלית איזו גלריה זו, לא רק לפי שם לקוחה. ה-bucket ב-R2 פרטי - חתימת ה-URL
+// עוברת דרך lib/r2.ts עם מפתחות R2 סודיים, בדיוק כמו app/api/galleries/[id]/selected-photos/route.ts.
 const supabaseAdmin = createAdminClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
   process.env.SUPABASE_SERVICE_ROLE_KEY as string
@@ -58,8 +58,8 @@ export async function GET() {
   const covers: Record<string, string> = {};
   await Promise.all(
     Array.from(firstPhotoByGallery.entries()).map(async ([galleryId, path]) => {
-      const { data: signed } = await supabaseAdmin.storage.from('gallery-photos').createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
-      if (signed?.signedUrl) covers[galleryId] = signed.signedUrl;
+      const url = await getPresignedDownloadUrl(path, SIGNED_URL_TTL_SECONDS);
+      if (url) covers[galleryId] = url;
     })
   );
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { getPresignedDownloadUrl } from '@/lib/r2';
 
 // מחזירה לצלמת המחוברת תצוגה לקריאה בלבד של התמונות בגלריה: thumbnail + הסטטוס
 // הרשמי (של הבעלים בלבד - שיתוף גלריה משפחתי, בדיוק כמו app/dashboard/galleries/page.tsx
@@ -64,14 +65,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const photos = await Promise.all(
     (photosData ?? []).map(async (photo) => {
       const thumbPath = photo.thumbnail_path ?? photo.file_path;
-      const { data: signed } = await supabaseAdmin.storage
-        .from('gallery-photos')
-        .createSignedUrl(thumbPath, SIGNED_URL_TTL_SECONDS);
+      const thumbnailUrl = await getPresignedDownloadUrl(thumbPath, SIGNED_URL_TTL_SECONDS);
 
       const selection = selectionByPhotoId.get(photo.id);
       return {
         id: photo.id,
-        thumbnailUrl: signed?.signedUrl ?? null,
+        thumbnailUrl,
         original_filename: photo.original_filename,
         status: (selection?.status as 'maybe' | 'selected' | undefined) ?? null,
         note: selection?.note ?? null,

@@ -2,11 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getPresignedDownloadUrl } from '@/lib/r2';
 
-// יחליף (בעתיד) את loadDeliveredPhotos ב-app/dashboard/galleries/[id]/edit/page.tsx,
-// שהיום קורא ל-Supabase ישירות עם ה-session client (RLS דואג לבעלות שם) - ל-R2
-// אין מקבילה ל-RLS, אז בדיקת הבעלות וחתימת ה-URL עוברות route ייעודי כאן.
-//
-// עדיין לא בשימוש בפועל - נוסף כתשתית תוסף בלבד לפני המעבר האטומי.
+// מחליף את loadDeliveredPhotos ב-app/dashboard/galleries/[id]/edit/page.tsx, שקודם
+// קרא ל-Supabase ישירות עם ה-session client (RLS דאג לבעלות שם) - ל-R2 אין
+// מקבילה ל-RLS, אז בדיקת הבעלות וחתימת ה-URL עוברות route ייעודי כאן.
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient();
   const {

@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { sendExpiryReminderEmail, sendOriginalsDeletionWarningEmail } from '@/lib/email';
 import { israelDateString, daysBetweenDateStrings } from '@/lib/israelTime';
 import { toHebrewDateString } from '@/lib/hebrewDate';
+import { deleteObjects } from '@/lib/r2';
 
 // Endpoint אחד שמופעל ע"י תזמון חיצוני (Vercel Cron / Supabase pg_cron / כל
 // שירות cron אחר) - ראו README.md ("תזכורות וסטטוס אוטומטי") להוראות הפעלה.
@@ -155,9 +156,8 @@ export async function GET(req: NextRequest) {
   }
 
   // 4. גלריות שנמסרו לפני 30+ יום - מוחקות את קבצי המקור (לא הערוכים!) כדי
-  // לפנות מקום באחסון (חשבון Supabase חינמי, מוגבל ל-1GB - ראו README). בשלב
-  // הזה הלקוחה כבר בחרה והצלמת כבר הורידה/ערכה את המקור אצלה, אז אין עוד
-  // סיבה שהעותק הזה יתפוס מקום ב-Storage.
+  // לפנות מקום באחסון (R2, ראו lib/r2.ts). בשלב הזה הלקוחה כבר בחרה והצלמת
+  // כבר הורידה/ערכה את המקור אצלה, אז אין עוד סיבה שהעותק הזה יתפוס מקום.
   const cleanupThreshold = new Date(now.getTime() - ORIGINALS_GRACE_DAYS * 24 * 60 * 60 * 1000);
 
   const { data: deliveredGalleries, error: deliveredError } = await supabaseAdmin
@@ -189,8 +189,12 @@ export async function GET(req: NextRequest) {
       .map((p) => p.file_path);
 
     if (paths.length > 0) {
-      const { error: removeError } = await supabaseAdmin.storage.from('gallery-photos').remove(paths);
-      if (!removeError) originalFilesDeleted += paths.length;
+      try {
+        await deleteObjects(paths);
+        originalFilesDeleted += paths.length;
+      } catch (err) {
+        console.error('[cron/tick] מחיקת קבצי מקור נכשלה עבור גלריה', gallery.id, err);
+      }
     }
 
     // מסמנים "נוקה" גם אם לא היה מה למחוק (כל התמונות בגלריה נכשלו בעיבוד) -

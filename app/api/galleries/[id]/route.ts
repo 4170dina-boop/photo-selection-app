@@ -1,25 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-
-// list() בStorage מחזיר עמוד יחיד בלבד (ברירת מחדל 100 שורות אם לא מציינים
-// limit) - בלי לדפדף על offset, גלריות עם הרבה תמונות (אין הגבלת כמות
-// לצלמות is_unlimited, ראו enforce_photo_limit ב-supabase/schema.sql)
-// היו משאירות קבצים "יתומים" ב-Storage אחרי מחיקת הגלריה.
-type StorageEntry = { id: string | null; name: string };
-
-async function listAllFiles(supabase: ReturnType<typeof createClient>, bucket: string, path: string): Promise<StorageEntry[]> {
-  const pageSize = 1000;
-  const all: StorageEntry[] = [];
-  let offset = 0;
-  while (true) {
-    const { data, error } = await supabase.storage.from(bucket).list(path, { limit: pageSize, offset });
-    if (error || !data) break;
-    all.push(...data);
-    if (data.length < pageSize) break;
-    offset += pageSize;
-  }
-  return all;
-}
+import { listAllKeys, deleteObjects } from '@/lib/r2';
 
 // עריכה/מחיקה של גלריה קיימת, בדיוק כמו app/api/galleries/route.ts (יצירה) -
 // רץ עם session הצלם (לא service key), כך שה-RLS הקיים כבר דואג שאי אפשר
@@ -153,23 +134,17 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
-  // מוחקים קודם את הקבצים מה-Storage - מחיקת שורת הגלריה (למטה) לא עושה את זה
+  // מוחקים קודם את הקבצים מ-R2 - מחיקת שורת הגלריה (למטה) לא עושה את זה
   // אוטומטית, ה-CASCADE ב-DB מוחק רק את רשומות ה-photos/delivered_photos, לא
-  // את הקבצים בפועל. thumbs/ ו-final/ הן תתי-תיקיות נפרדות (ראו .../process/route.ts
-  // וה-סעיף "מסירת תמונות סופיות" בדף העריכה) - list() לא רקורסיבי, אז בלי
-  // לשאול אותן בנפרד נשארים קבצים יתומים בStorage שממשיכים לתפוס מקום.
-  const [rootFiles, thumbFiles, finalFiles] = await Promise.all([
-    listAllFiles(supabase, 'gallery-photos', gallery.id),
-    listAllFiles(supabase, 'gallery-photos', `${gallery.id}/thumbs`),
-    listAllFiles(supabase, 'gallery-photos', `${gallery.id}/final`),
-  ]);
-  const paths = [
-    ...rootFiles.filter((f) => f.id).map((f) => `${gallery.id}/${f.name}`),
-    ...thumbFiles.filter((f) => f.id).map((f) => `${gallery.id}/thumbs/${f.name}`),
-    ...finalFiles.filter((f) => f.id).map((f) => `${gallery.id}/final/${f.name}`),
-  ];
-  if (paths.length > 0) {
-    await supabase.storage.from('gallery-photos').remove(paths);
+  // את הקבצים בפועל. בניגוד ל-list() הלא-רקורסיבי של Supabase Storage (דרש
+  // שאילתה נפרדת לכל אחת מ-thumbs/ ו-final/), ל-S3/R2 אין "תיקיות" אמיתיות -
+  // listAllKeys עם prefix של תחילית ה-gallery id כולל אוטומטית את כל תתי-התיקיות.
+  // אין כאן מקבילה ל-RLS של Supabase (ה-session client לא יכול לגשת ישירות
+  // ל-R2), אז זו פעולה בהרשאות מלאות בצד שרת - הבעלות כבר אומתה למעלה מול ה-DB
+  // (loadOwnedGallery), בלתי תלוי לגמרי בשכבת ה-Storage.
+  const objects = await listAllKeys(`${gallery.id}/`);
+  if (objects.length > 0) {
+    await deleteObjects(objects.map((o) => o.key));
   }
 
   const { error: deleteError } = await supabase.from('galleries').delete().eq('id', gallery.id);

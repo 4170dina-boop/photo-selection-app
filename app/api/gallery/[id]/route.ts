@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireGallerySession } from '@/lib/gallerySession';
 import { BLUR_THRESHOLD } from '@/lib/sharpness';
+import { getPresignedDownloadUrl } from '@/lib/r2';
 
 // service_role - נשאר בצד שרת בלבד. כל הגישה של הלקוחה לנתוני הגלריה
 // עוברת דרך ה-API הזה (ולא דרך anon key ישירות מהדפדפן), כי אין policy
@@ -66,13 +67,11 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     .eq('gallery_id', galleryId);
 
   const deliveredPhotos = await Promise.all(
-    (deliveredPhotosData ?? []).map(async (photo) => {
-      const { data: signed } = await supabaseAdmin.storage
-        .from('gallery-photos')
-        .createSignedUrl(photo.file_path, SIGNED_URL_TTL_SECONDS);
-
-      return { id: photo.id, url: signed?.signedUrl ?? null, filename: photo.original_filename };
-    })
+    (deliveredPhotosData ?? []).map(async (photo) => ({
+      id: photo.id,
+      url: await getPresignedDownloadUrl(photo.file_path, SIGNED_URL_TTL_SECONDS),
+      filename: photo.original_filename,
+    }))
   );
 
   // שיתוף גלריה משפחתי: קוד הגישה כבר אומת, אבל עדיין לא ידוע מי בפועל
@@ -112,18 +111,15 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const photos = await Promise.all(
     (photosData ?? []).map(async (photo) => {
       const thumbPath = photo.thumbnail_path ?? photo.file_path;
-
-      const { data: thumbSigned } = await supabaseAdmin.storage
-        .from('gallery-photos')
-        .createSignedUrl(thumbPath, SIGNED_URL_TTL_SECONDS);
+      const thumbUrl = await getPresignedDownloadUrl(thumbPath, SIGNED_URL_TTL_SECONDS);
 
       // thumbnailUrl ו-fullUrl מצביעים לאותה גרסה (המוקטנת/עם סימן המים) -
       // file_path (המקור הנקי) לא נחשף ללקוחה בשום מקום, כולל מצב השוואה
       // מוגדל; הוא משמש רק בצד שרת לצורך המסירה הסופית (app/api/galleries/[id]/selected-photos).
       return {
         id: photo.id,
-        thumbnailUrl: thumbSigned?.signedUrl ?? null,
-        fullUrl: thumbSigned?.signedUrl ?? null,
+        thumbnailUrl: thumbUrl,
+        fullUrl: thumbUrl,
         original_filename: photo.original_filename,
         possiblyBlurry: possiblyBlurryIds.has(photo.id),
       };

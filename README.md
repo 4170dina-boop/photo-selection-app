@@ -5,7 +5,8 @@
 ## מבנה הפרויקט
 
 ```
-supabase/schema.sql                          → סכמת ה-DB המלאה (טבלאות + RLS + storage bucket פרטי + auth trigger)
+supabase/schema.sql                          → סכמת ה-DB המלאה (טבלאות + RLS + storage bucket ללוגו + auth trigger). ה-bucket הפרטי gallery-photos ההיסטורי נשאר בסכמה אבל כבר לא בשימוש - תמונות הגלריה עברו ל-Cloudflare R2, ראו lib/r2.ts
+lib/r2.ts                                     → שכבת גישה ל-Cloudflare R2 (S3-compatible) - כל אחסון תמונות הגלריה (מקור/thumbnail/סופיות)
 lib/types.ts                                 → טיפוסים (Gallery/Photo/Selection/Photographer)
 lib/supabase/client.ts                       → לקוח Supabase לרכיבי 'use client' (session בעוגיות, מודע ל-auth)
 lib/supabase/server.ts                       → לקוח Supabase ל-Server Components/Route Handlers
@@ -116,12 +117,32 @@ Supabase דוחה כתובות בדומיינים שמורים כמו `example.c
 
 1. `verify-access` מייצר session token **חתום** (HMAC-SHA256, ראו `lib/session.ts`) במקום base64 גולמי, ושומר אותו בעוגיית `httpOnly`.
 2. כל פעולה של הלקוחה (טעינת גלריה, שינוי סטטוס, הערה) עוברת דרך `app/api/gallery/[id]/*` — API בצד שרת שמאמת את החתימה מול `SESSION_SECRET` ורק אז פונה ל-Supabase עם ה-`service_role` key.
-3. ה-bucket `gallery-photos` פרטי (לא ציבורי). התמונות מוצגות דרך signed URL זמני (שעה) שנוצר בצד שרת, כך שאין URL קבוע שדולף/נשאר נגיש אחרי שהגלריה פגה.
+3. אחסון התמונות הוא ב-`gallery-photos` הפרטי (לא ציבורי) ב-Cloudflare R2 (ראו `lib/r2.ts` וסעיף "אחסון תמונות: Cloudflare R2" למטה). התמונות מוצגות דרך signed URL זמני (שעה) שנוצר בצד שרת, כך שאין URL קבוע שדולף/נשאר נגיש אחרי שהגלריה פגה.
 4. השוואת קוד הגישה נעשית בזמן קבוע (`safeCompare` ב-`lib/session.ts`), כדי לא לחשוף מידע על הקוד הנכון דרך תזמון התשובה.
 
 בגלל שינוי ה-bucket לפרטי, טבלת `photos` שומרת עכשיו **נתיב** בתוך ה-bucket (`file_path`/`thumbnail_path`) ולא URL ציבורי — אם הרצתם גרסה קודמת של הסכמה, יש הערת מיגרציה בתחתית `supabase/schema.sql`.
 
 צריך להוסיף ל-`.env.local` גם `SESSION_SECRET` (ערך אקראי חזק, למשל `openssl rand -base64 32`) — בלעדיו אי אפשר ליצור/לאמת session.
+
+## אחסון תמונות: Cloudflare R2
+
+תמונות הגלריה (מקור, thumbnails עם סימן מים, ותמונות סופיות שנמסרות ללקוחה) מאוחסנות
+ב-Cloudflare R2, לא ב-Supabase Storage - חשבון Supabase החינמי (1GB) התמלא, ו-R2 נותן
+10GB חינם (פי 10) ובלי עלות תעבורה כלל, קריטי כאן כי לקוחות מורידות תמונות (צפייה, ZIP)
+הרבה. `lib/r2.ts` היא שכבת הגישה (S3-compatible, עם `@aws-sdk/client-s3`) - חתימת URLs
+להעלאה/הורדה, הורדה/העלאה ישירה בצד שרת (לצורך סימן המים), ומחיקה/רשימה עם pagination
+אמיתי. משתני הסביבה `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/`R2_BUCKET_NAME`
+נדרשים ב-`.env.local`/Vercel.
+
+ל-R2 (כמו S3) אין מקבילה ל-RLS של Supabase, אז שני מקומות שהעלו קבצים ישירות מהדפדפן
+(`app/dashboard/UploadProvider.tsx` להעלאת מקור, ו-`app/dashboard/galleries/[id]/edit/page.tsx`
+למסירת תמונות סופיות) מבקשים קודם URL חתום מ-route בצד שרת שמוודא בעלות על הגלריה
+(`POST /api/galleries/[id]/photos/presign-upload` ומקבילו ל-final-photos) ורק אז מעלים
+אליו ישירות - הבייטים עצמם עדיין לא עוברים דרך שרת האפליקציה.
+
+ה-bucket `gallery-photos` הישן ב-Supabase Storage נשאר בסכמה (`supabase/schema.sql`) אבל
+כבר לא בשימוש - כל מה שהיה בו היה נתוני בדיקה חד-פעמיים, אז לא בוצעה מיגרציה בפועל של
+תמונות ישנות ל-R2 (ההחלטה הייתה במפורש לא להשקיע בזה).
 
 ## פיצ'רים נוספים שמומשו
 - **הערות על תמונה**: אייקון ✎ מופיע רק על תמונות עם סטטוס (אולי/נבחר); שומר לשדה `note` בטבלת `selections`

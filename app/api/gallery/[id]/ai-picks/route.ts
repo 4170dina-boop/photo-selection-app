@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import sharp from 'sharp';
 import { requireGallerySession } from '@/lib/gallerySession';
 import { checkGalleryWritable } from '@/lib/galleryAccess';
+import { downloadToBuffer } from '@/lib/r2';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -126,9 +127,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     candidates.map(async (photo) => {
       try {
         const path = photo.thumbnail_path ?? photo.file_path;
-        const { data: file } = await supabaseAdmin.storage.from('gallery-photos').download(path);
-        if (!file) return null;
-        const buffer = Buffer.from(await file.arrayBuffer());
+        const buffer = await downloadToBuffer(path);
+        if (!buffer) return null;
         const small = await sharp(buffer)
           .rotate()
           .resize({ width: ANALYSIS_MAX_DIMENSION, height: ANALYSIS_MAX_DIMENSION, fit: 'inside', withoutEnlargement: true })
