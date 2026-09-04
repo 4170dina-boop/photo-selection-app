@@ -357,7 +357,7 @@ export default function SettingsPage() {
               <input
                 type="number"
                 min={0}
-                step="1"
+                step="10"
                 value={defaultBasePrice}
                 onChange={(e) => setDefaultBasePrice(e.target.value)}
                 style={inputStyle}
@@ -369,7 +369,7 @@ export default function SettingsPage() {
               <input
                 type="number"
                 min={0}
-                step="1"
+                step="10"
                 value={defaultExtraPhotoPrice}
                 onChange={(e) => setDefaultExtraPhotoPrice(e.target.value)}
                 style={inputStyle}

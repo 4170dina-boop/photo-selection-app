@@ -510,7 +510,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           <input
             type="number"
             min={0}
-            step="1"
+            step="10"
             value={basePrice}
             onChange={(e) => setBasePrice(e.target.value)}
             style={inputStyle}
@@ -522,7 +522,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           <input
             type="number"
             min={0}
-            step="1"
+            step="10"
             value={extraPhotoPrice}
             onChange={(e) => setExtraPhotoPrice(e.target.value)}
             style={inputStyle}
