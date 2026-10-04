@@ -51,6 +51,10 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [lastViewedAt, setLastViewedAt] = useState<string | null>(null);
   const [deliveredAt, setDeliveredAt] = useState<string | null>(null);
   const [originalsCleanedUpAt, setOriginalsCleanedUpAt] = useState<string | null>(null);
+  const [status, setStatus] = useState<string>('');
+  const [reopenedForSelectionAt, setReopenedForSelectionAt] = useState<string | null>(null);
+  const [togglingReopen, setTogglingReopen] = useState(false);
+  const [reopenMessage, setReopenMessage] = useState('');
 
   const [supabase] = useState(() => createClient());
   const [deliveredPhotos, setDeliveredPhotos] = useState<DeliveredPhoto[]>([]);
@@ -192,6 +196,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setLastViewedAt(data.last_viewed_at ?? null);
     setDeliveredAt(data.delivered_at ?? null);
     setOriginalsCleanedUpAt(data.originals_cleaned_up_at ?? null);
+    setStatus(data.status ?? '');
+    setReopenedForSelectionAt(data.reopened_for_selection_at ?? null);
     setLoading(false);
   }
 
@@ -397,6 +403,29 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setReminderMessage(data.emailSent ? 'התזכורת נשלחה בהצלחה' : 'שליחת המייל נכשלה - ודאו ששירות המייל מוגדר');
   }
 
+  // toggle - פותח ללקוחה עריכה חוזרת של הבחירה בלי לשנות status (עדיין
+  // 'completed') כדי לא להפעיל בטעות את מגבלת הגלריה הפעילה האחת בחשבון
+  // חינמי (trg_enforce_active_gallery_limit) - ראו ההערה המלאה ב-
+  // supabase/schema.sql על reopened_for_selection_at. אותה קריאה גם נועלת
+  // בחזרה אם כבר פתוחה.
+  async function handleToggleReopenSelection() {
+    setReopenMessage('');
+    setError('');
+    setTogglingReopen(true);
+
+    const res = await fetch(`/api/galleries/${galleryId}/reopen-selection`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    setTogglingReopen(false);
+
+    if (!res.ok) {
+      setError(data.error ?? 'עדכון מצב הבחירה נכשל');
+      return;
+    }
+
+    setReopenedForSelectionAt(data.reopenedForSelectionAt ?? null);
+    setReopenMessage(data.reopenedForSelectionAt ? 'הלקוחה יכולה כעת לבחור שוב' : 'הבחירה ננעלה בחזרה');
+  }
+
   async function handleDelete() {
     if (!window.confirm('למחוק את הגלריה הזו? כל התמונות והבחירות יימחקו לצמיתות - אי אפשר לבטל את זה.')) return;
 
@@ -585,6 +614,24 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
               {sendingReminder ? 'שולחת...' : '🔔 שליחת תזכורת עכשיו'}
             </button>
           )}
+          {status === 'completed' && (
+            <button
+              type="button"
+              onClick={handleToggleReopenSelection}
+              disabled={togglingReopen}
+              title={
+                reopenedForSelectionAt
+                  ? 'נועלת את הבחירה בחזרה - הלקוחה לא תוכל לשנות אותה יותר'
+                  : 'מאפשרת ללקוחה לערוך את הבחירה שלה שוב, בלי לפתוח גלריה חדשה'
+              }
+              style={{
+                ...outlineButtonStyle, opacity: togglingReopen ? 0.6 : 1,
+                borderColor: theme.gold, color: theme.gold,
+              }}
+            >
+              {togglingReopen ? 'מעדכנת...' : reopenedForSelectionAt ? '🔒 נעילת הבחירה בחזרה' : '🔓 לאפשר ללקוחה לבחור שוב'}
+            </button>
+          )}
           <Link
             href={`/dashboard/galleries/new?fromGallery=${galleryId}`}
             title="פתיחת גלריה חדשה עם אותה חבילה (תמונות כלולות ומחירים) - ללקוחה חדשה"
@@ -607,6 +654,18 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
       {reminderMessage && (
         <p style={{ background: theme.successBg, color: theme.successText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
           {reminderMessage}
+        </p>
+      )}
+
+      {reopenMessage && (
+        <p style={{ background: theme.successBg, color: theme.successText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
+          {reopenMessage}
+        </p>
+      )}
+
+      {status === 'completed' && reopenedForSelectionAt && !reopenMessage && (
+        <p style={{ background: theme.successBg, color: theme.successText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
+          הבחירה פתוחה כרגע לעריכה חוזרת ע"י הלקוחה.
         </p>
       )}
 

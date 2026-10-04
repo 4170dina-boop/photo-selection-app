@@ -160,6 +160,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [ownerSelectedCount, setOwnerSelectedCount] = useState(0);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [galleryStatus, setGalleryStatus] = useState<string>('sent');
+  // null = נעולה כרגיל אחרי "סיימתי לבחור". לא-null = הצלמת פתחה מחדש
+  // (app/api/galleries/[id]/reopen-selection) בלי לשנות את galleryStatus
+  // עצמו - ראו isLocked למטה, שהוא מה שבפועל קובע אם הבחירה פתוחה לעריכה.
+  const [reopenedForSelectionAt, setReopenedForSelectionAt] = useState<string | null>(null);
+  // המצב שבאמת קובע אם הבחירה פתוחה לעריכה - לא galleryStatus === 'completed'
+  // לבדו, כי הצלמת יכולה לפתוח מחדש (reopenedForSelectionAt) בלי שהסטטוס
+  // עצמו משתנה. כל המקומות למטה שבעבר בדקו galleryStatus === 'completed' כדי
+  // לנעול עריכה עברו ל-isLocked/!isLocked.
+  const isLocked = galleryStatus === 'completed' && !reopenedForSelectionAt;
   const [finishing, setFinishing] = useState(false);
   const [finishCountdown, setFinishCountdown] = useState<number | null>(null);
   // ה-timestamp המוחלט שממנו finishCountdown מחושב בכל טיק (ראו finishDeadlineKey
@@ -464,6 +473,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setOwnerSelectedCount(data.ownerSelectedCount ?? 0);
     setExpiresAt(data.expiresAt ?? null);
     setGalleryStatus(data.status ?? 'sent');
+    setReopenedForSelectionAt(data.reopenedForSelectionAt ?? null);
     setBrandColor(data.brandColor ?? null);
     setPhotographerName(data.photographerName ?? null);
     setPhotographerLogo(data.photographerLogo ?? null);
@@ -749,7 +759,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   }
 
   function cycleStatus(photoId: string) {
-    if (galleryStatus === 'completed' || !myParticipant) return; // הבחירה כבר נשלחה - נעול לעריכה
+    if (isLocked || !myParticipant) return; // הבחירה כבר נשלחה - נעול לעריכה
     const current = myMarks[photoId]?.status; // undefined | 'maybe' | 'selected'
     const next = current === undefined ? 'maybe' : current === 'maybe' ? 'selected' : null;
     return setPhotoStatus(photoId, next);
@@ -792,7 +802,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // לדפדף ולבחור גם באינטרנט חלש/מנותק. אם זו שגיאת רשת (לא שרת), הפעולה
   // נכנסת לתור ותסונכרן אוטומטית כשהחיבור יחזור (ראו flushPendingQueue).
   async function setPhotoStatus(photoId: string, next: 'maybe' | 'selected' | null) {
-    if (galleryStatus === 'completed' || !myParticipant) return;
+    if (isLocked || !myParticipant) return;
     const current = myMarks[photoId]?.status;
 
     applyStatusChange(photoId, next, current);
@@ -814,7 +824,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   function openNoteEditor(photoId: string, e: React.MouseEvent) {
     e.stopPropagation(); // לא לגעת בבחירה עצמה
-    if (galleryStatus === 'completed') return;
+    if (isLocked) return;
     setNoteEditingId(photoId);
     setNoteDraft(myMarks[photoId]?.note ?? '');
   }
@@ -913,7 +923,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   }
 
   async function clearAllSelections() {
-    if (!myParticipant || galleryStatus === 'completed') return;
+    if (!myParticipant || isLocked) return;
     if (!window.confirm('לבטל את כל הבחירות שלך בגלריה הזו? אי אפשר לשחזר את זה.')) return;
 
     setClearingAll(true);
@@ -951,7 +961,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // מעדכנים את המסך המקומי לפי מה שחזר, בלי לקרוא שוב ל-setPhotoStatus (זה
   // היה שולח בקשת רשת נוספת לכל תמונה, מיותר כשהשרת כבר עשה את זה בבת אחת).
   async function handleAiPicks() {
-    if (!myParticipant || galleryStatus === 'completed' || aiPicksRunning) return;
+    if (!myParticipant || isLocked || aiPicksRunning) return;
 
     setAiPicksRunning(true);
     setAiPicksMessage('');
@@ -1242,11 +1252,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </button>
           <button
             onClick={() => (swipeMode ? exitSwipeMode() : startSwipeMode(1))}
-            disabled={galleryStatus === 'completed' || photos.length === 0}
+            disabled={isLocked || photos.length === 0}
             style={{
               ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12,
               borderColor: swipeMode ? accent : theme.border, color: swipeMode ? accent : theme.textMuted,
-              opacity: galleryStatus === 'completed' || photos.length === 0 ? 0.5 : 1,
+              opacity: isLocked || photos.length === 0 ? 0.5 : 1,
             }}
           >
             {swipeMode ? '✕ צאי מבחירה מהירה' : '⚡ בחירה מהירה'}
@@ -1347,7 +1357,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       {/* מסך תודה - מוצג ברגע שהקונפטי דועך (showCelebration חוזר ל-false), כדי
           שלא יתחרה איתו על תשומת הלב. לא חוסם את הגלריה שמתחתיו - "אפשר עדיין
           לצפות בתמונות" נשאר תקף כרגיל, זה רק פאנל בזרימת העמוד. */}
-      {galleryStatus === 'completed' && !showCelebration && (
+      {isLocked && !showCelebration && (
         <div
           style={{
             margin: '1rem 1.5rem 0', padding: '1.75rem 1.5rem', borderRadius: 14,
@@ -1471,7 +1481,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </button>
         )}
 
-        {galleryStatus !== 'completed' && (mySelectedCount > 0 || maybeCount > 0) && (
+        {!isLocked && (mySelectedCount > 0 || maybeCount > 0) && (
           <button
             onClick={clearAllSelections}
             disabled={clearingAll}
@@ -1481,7 +1491,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </button>
         )}
 
-        {galleryStatus !== 'completed' && photos.length > 0 && (
+        {!isLocked && photos.length > 0 && (
           <button
             onClick={handleAiPicks}
             disabled={aiPicksRunning}
@@ -1492,7 +1502,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </button>
         )}
 
-        {galleryStatus !== 'completed' && isOwner && finishCountdown !== null && (
+        {!isLocked && isOwner && finishCountdown !== null && (
           <div
             role="status"
             aria-live="polite"
@@ -1509,7 +1519,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </div>
         )}
 
-        {galleryStatus !== 'completed' && isOwner && finishCountdown === null && (
+        {!isLocked && isOwner && finishCountdown === null && (
           <button
             onClick={handleFinish}
             disabled={finishing || ownerSelectedCount === 0}
@@ -1524,7 +1534,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </button>
         )}
 
-        {galleryStatus !== 'completed' && !isOwner && (
+        {!isLocked && !isOwner && (
           <p style={{ fontSize: 13, color: theme.textFaint, marginTop: '0.75rem' }}>
             רק {owner?.displayName ?? 'הלקוחה הראשית'} יכולה לסיים את הבחירה הסופית - הבחירות שלך כאן הן קלט לדיון.
           </p>
@@ -1583,7 +1593,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
                   }}
                 />
-                {galleryStatus !== 'completed' && myParticipant && (
+                {!isLocked && myParticipant && (
                   <button
                     onClick={async () => {
                       await setPhotoStatus(id, 'selected');
@@ -1918,7 +1928,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               </p>
             )}
 
-            {galleryStatus !== 'completed' && myParticipant ? (
+            {!isLocked && myParticipant ? (
               <div
                 onClick={(e) => e.stopPropagation()}
                 style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem', flexWrap: 'wrap', justifyContent: 'center' }}
@@ -2107,7 +2117,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               onContextMenu={(e) => e.preventDefault()} // חסימת קליק ימני - הרתעה בלבד, לא הגנה אמיתית
               style={{
                 position: 'relative',
-                cursor: compareMode || galleryStatus !== 'completed' ? 'pointer' : 'default',
+                cursor: compareMode || !isLocked ? 'pointer' : 'default',
                 border: `2px solid ${borderColor}`,
                 borderRadius: 6,
                 overflow: 'hidden',
