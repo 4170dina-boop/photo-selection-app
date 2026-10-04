@@ -40,3 +40,24 @@ export function daysBetweenDateStrings(a: string, b: string): number {
   const msPerDay = 24 * 60 * 60 * 1000;
   return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / msPerDay);
 }
+
+// רגע מדויק (ISO ב-UTC) של תאריך+שעה מקומיים בישראל - "YYYY-MM-DD" + "HH:MM"
+// (או "HH:MM:SS", כפי ש-Postgres מחזיר עמודת time). אותה גישה בדיוק כמו
+// israelEndOfDayIso למעלה: ההיסט נלקח לפי התאריך עצמו, כך ששעון קיץ/חורף
+// מטופל אוטומטית. משמש את lib/shoots.ts כדי לדעת אם צילום כבר התחיל.
+export function israelLocalToUtcIso(dateStr: string, timeStr: string): string {
+  const offset = israelUtcOffsetHours(dateStr);
+  const sign = offset < 0 ? '-' : '+';
+  const offsetHours = String(Math.abs(offset)).padStart(2, '0');
+  const [hh = '00', mm = '00', ss = '00'] = timeStr.split(':');
+  const time = `${hh.padStart(2, '0')}:${mm.padStart(2, '0')}:${ss.slice(0, 2).padStart(2, '0')}`;
+  return new Date(`${dateStr}T${time}${sign}${offsetHours}:00`).toISOString();
+}
+
+// הוספת ימים לתאריך "YYYY-MM-DD" - חישוב לוחני טהור (חצות UTC כעזר בלבד,
+// כמו daysBetweenDateStrings), בלי תלות באזור הזמן של השרת.
+export function addDaysToDateString(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}

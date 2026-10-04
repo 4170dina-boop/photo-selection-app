@@ -34,7 +34,10 @@ app/api/galleries/[id]/route.ts              → GET/PATCH/DELETE לגלריה �
 app/api/galleries/[id]/resend-invite/route.ts → שולחת שוב את מייל ההזמנה (קישור + קוד גישה) ללקוחה קיימת
 app/api/galleries/[id]/send-reminder/route.ts → שליחה ידנית של תזכורת תפוגה, בלי לחכות לריצת ה-cron
 app/api/gallery/[id]/finish/route.ts         → "סיימתי לבחור" - נועל את הגלריה (status=completed)
-app/api/cron/tick/route.ts                   → מסמן גלריות שפג תוקפן + שולח תזכורות מייל (מופעל ע"י scheduler חיצוני)
+app/api/cron/tick/route.ts                   → מסמן גלריות שפג תוקפן + שולח תזכורות מייל + תזכורות צילום וסיכום יומי לצלמת (מופעל ע"י scheduler חיצוני)
+app/dashboard/calendar/page.tsx              → יומן צילומים: תצוגת חודש + צילומים קרובים, יצירה/עריכה/מחיקה (אישור במייל ללקוחה ביצירה)
+app/api/shoots/route.ts, [id]/route.ts       → רשימה/יצירה/עריכה/מחיקה של צילומים (session הצלם + RLS); options/ → לקוחות וגלריות לטופס
+lib/shoots.ts                                → לוגיקה טהורה ליומן: איזה צילום צריך תזכורת עכשיו, סיכום יומי, זמן ישראל, רשת חודשית (עם טסטים)
 lib/email.ts                                 → שליחת מייל דרך Resend, עם עיצוב HTML ממותג + שם שולח/reply-to דינמיים (no-op אם אין RESEND_API_KEY)
 lib/sharpness.ts                             → ציון חדות היוריסטי (Laplacian variance) - לתג "ייתכן שמטושטשת" בגלריית הלקוחה
 lib/galleryAccess.ts                         → בדיקה משותפת: אסור לערוך גלריה שהושלמה/פג תוקפה
@@ -455,6 +458,13 @@ npm test
 (נשמר בזמן היצירה, לא דינמי - שינוי אחר כך לא משפיע רטרואקטיבית על גלריות קיימות,
 אותו דפוס כמו `default_base_price` וכו'), ו-`app/dashboard/galleries/[id]/edit/page.tsx`
 מאפשר לדרוס לגלריה ספציפית (שדה ריק = משתמשים בערך שכבר נשמר על הגלריה מזמן היצירה).
+
+**יומן צילומים** - אותה ריצת cron שולחת גם (א) תזכורת ללקוחה `shoot_reminder_days` ימים
+לפני צילום (ברירת מחדל 1, 0 = כבוי; חד-פעמית לפי `shoots.reminder_sent_at`, שמתאפס אם
+הצילום מוזז), ו-(ב) סיכום לצלמת עם הצילומים של מחר (`shoot_daily_summary_enabled`; פעם
+אחת ליום לפי `photographers.shoot_summary_sent_on`). שתיהן "תופסות" את השורה ב-update
+מותנה לפני השליחה, כך שגם ריצות מקבילות לא שולחות כפול. ההחלטה מתי לשלוח נמצאת
+ב-`lib/shoots.ts` (תאריכים לוחיים בזמן ישראל, לא תלוי בשעת הריצה).
 
 **הפעלת ה-cron בפועל** - `app/api/cron/tick` מוגן ב-`CRON_SECRET`, ומצפה לו כ-
 `Authorization: Bearer <secret>` או כ-`?secret=<secret>` ב-query. יש כמה אופציות:

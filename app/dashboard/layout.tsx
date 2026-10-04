@@ -38,6 +38,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             <Link href="/dashboard/galleries" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
               הגלריות שלי
             </Link>
+            <Link href="/dashboard/calendar" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+              יומן צילומים
+            </Link>
             <Link href="/dashboard/reports" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
               דוח הכנסות
             </Link>

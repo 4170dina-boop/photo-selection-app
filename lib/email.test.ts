@@ -100,4 +100,57 @@ describe('lib/email', () => {
     expect(body.html).toContain('12');
     expect(body.html).toContain('http://localhost/dashboard/galleries/1/edit');
   });
+
+  it('sends a shoot confirmation branded with the business name, with escaped location and without private notes', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    const { sendShootConfirmationEmail } = await import('./email');
+    const result = await sendShootConfirmationEmail({
+      to: 'client@example.com',
+      clientName: 'לקוחה',
+      businessName: 'סטודיו דינה',
+      shootDate: '2026-10-11',
+      startTime: '17:30:00',
+      location: 'פארק <הירקון>',
+      replyTo: 'photographer@example.com',
+    });
+
+    expect(result.sent).toBe(true);
+    const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string);
+    expect(body.from).toContain('"סטודיו דינה"');
+    expect(body.reply_to).toBe('photographer@example.com');
+    expect(body.html).toContain('יום ראשון, 11.10.2026');
+    expect(body.html).toContain('17:30');
+    expect(body.html).toContain('פארק &lt;הירקון&gt;');
+  });
+
+  it('sends the photographer a daily summary listing tomorrow\'s shoots', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    const { sendShootsDailySummaryEmail } = await import('./email');
+    const result = await sendShootsDailySummaryEmail({
+      to: 'photographer@example.com',
+      shootDate: '2026-10-11',
+      shoots: [
+        { clientName: 'רחל', startTime: '09:00:00', location: 'סטודיו', notes: 'להביא רקע לבן' },
+        { clientName: 'לאה', startTime: '17:30:00', location: 'חוף הים' },
+      ],
+      dashboardUrl: 'http://localhost/dashboard/calendar',
+    });
+
+    expect(result.sent).toBe(true);
+    const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string);
+    expect(body.subject).toContain('2 צילומים');
+    expect(body.html).toContain('רחל');
+    expect(body.html).toContain('להביא רקע לבן');
+    expect(body.html).toContain('http://localhost/dashboard/calendar');
+  });
 });

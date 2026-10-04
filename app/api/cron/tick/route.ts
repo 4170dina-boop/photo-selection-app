@@ -1,7 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { sendExpiryReminderEmail, sendOriginalsDeletionWarningEmail } from '@/lib/email';
-import { israelDateString, daysBetweenDateStrings } from '@/lib/israelTime';
+import {
+  sendExpiryReminderEmail,
+  sendOriginalsDeletionWarningEmail,
+  sendShootReminderEmail,
+  sendShootsDailySummaryEmail,
+} from '@/lib/email';
+import { israelDateString, daysBetweenDateStrings, addDaysToDateString } from '@/lib/israelTime';
+import {
+  selectShootsNeedingReminder,
+  shouldSendDailySummary,
+  israelTomorrowDateString,
+  daysUntilLabel,
+  MAX_SHOOT_REMINDER_DAYS,
+} from '@/lib/shoots';
 import { toHebrewDateString } from '@/lib/hebrewDate';
 import { deleteObjects } from '@/lib/r2';
 
@@ -203,6 +215,11 @@ export async function GET(req: NextRequest) {
     originalsCleanedGalleries++;
   }
 
+  // 5+6: יומן צילומים (טבלת shoots). בכוונה לא מחזירים 500 על שגיאת שליפה כאן
+  // (בניגוד לשלבים 1-4): השלבים הקודמים כבר רצו ונכתבו, ושגיאה כאן (למשל אם
+  // המיגרציה של shoots עוד לא הורצה) לא אמורה להיראות כמו כישלון של כל הריצה.
+  const shootResults = await runShootJobs(now, siteUrl);
+
   return NextResponse.json({
     expiredCount: expiredGalleries?.length ?? 0,
     candidatesChecked: candidates?.length ?? 0,
@@ -210,5 +227,164 @@ export async function GET(req: NextRequest) {
     originalsWarningsSent,
     originalsCleanedGalleries,
     originalFilesDeleted,
+    ...shootResults,
   });
+}
+
+// מייל הצלמת (מ-auth.users) עם cache לריצה הנוכחית - צלמת עם כמה צילומים לא
+// צריכה כמה קריאות auth admin. best-effort כמו בשלב 2: כישלון = undefined.
+function createPhotographerEmailLookup() {
+  const cache = new Map<string, string | undefined>();
+  return async (authUserId: string | null | undefined): Promise<string | undefined> => {
+    if (!authUserId) return undefined;
+    if (cache.has(authUserId)) return cache.get(authUserId);
+    let email: string | undefined;
+    try {
+      const { data } = await supabaseAdmin.auth.admin.getUserById(authUserId);
+      email = data?.user?.email;
+    } catch {
+      // בכוונה שקט - ראו הערה דומה בשלב 2
+    }
+    cache.set(authUserId, email);
+    return email;
+  };
+}
+
+async function runShootJobs(now: Date, siteUrl: string) {
+  const getPhotographerEmail = createPhotographerEmailLookup();
+  const todayIsrael = israelDateString(now);
+
+  // 5. תזכורת ללקוחה N ימים לפני הצילום (photographers.shoot_reminder_days,
+  // ברירת מחדל 1). ההחלטה "האם עכשיו" היא לוגיקה טהורה ב-lib/shoots.ts
+  // (selectShootsNeedingReminder, עם טסטים), כאן רק שליפה ושליחה.
+  let shootRemindersSent = 0;
+  let shootRemindersError: string | undefined;
+
+  const { data: shootCandidates, error: shootCandidatesError } = await supabaseAdmin
+    .from('shoots')
+    .select(
+      'id, shoot_date, start_time, location, reminder_sent_at, clients(full_name, email), photographers(business_name, shoot_reminder_days, auth_user_id)'
+    )
+    .is('reminder_sent_at', null)
+    .gte('shoot_date', todayIsrael)
+    .lte('shoot_date', addDaysToDateString(todayIsrael, MAX_SHOOT_REMINDER_DAYS));
+
+  if (shootCandidatesError) {
+    console.error('[cron/tick] שליפת צילומים לתזכורת נכשלה', shootCandidatesError);
+    shootRemindersError = 'שליפת צילומים לתזכורת נכשלה';
+  }
+
+  const dueShoots = selectShootsNeedingReminder(
+    shootCandidates ?? [],
+    (shoot) => (shoot as any).photographers?.shoot_reminder_days,
+    now
+  );
+
+  for (const shoot of dueShoots) {
+    const client = (shoot as any).clients;
+    const photographer = (shoot as any).photographers;
+    if (!client?.email || !photographer) continue;
+
+    // "תופסים" את הצילום לפני השליחה (update מותנה ב-reminder_sent_at is null) -
+    // כך שתי ריצות cron מקבילות לא ישלחו את אותה תזכורת פעמיים. אם השליחה
+    // נכשלת, משחררים חזרה כדי שהריצה הבאה תנסה שוב.
+    const { data: claimed } = await supabaseAdmin
+      .from('shoots')
+      .update({ reminder_sent_at: now.toISOString() })
+      .eq('id', shoot.id)
+      .is('reminder_sent_at', null)
+      .select('id');
+    if (!claimed?.length) continue;
+
+    const result = await sendShootReminderEmail({
+      to: client.email,
+      clientName: client.full_name,
+      businessName: photographer.business_name,
+      shootDate: shoot.shoot_date,
+      startTime: shoot.start_time,
+      location: shoot.location,
+      whenLabel: daysUntilLabel(daysBetweenDateStrings(todayIsrael, shoot.shoot_date)),
+      replyTo: await getPhotographerEmail(photographer.auth_user_id),
+    });
+
+    if (result.sent) {
+      shootRemindersSent++;
+    } else {
+      await supabaseAdmin.from('shoots').update({ reminder_sent_at: null }).eq('id', shoot.id);
+    }
+  }
+
+  // 6. סיכום יומי לצלמת עם הצילומים של מחר - רק לצלמות שלא כיבו את זה
+  // (shoot_daily_summary_enabled) ורק פעם אחת ליום (shoot_summary_sent_on).
+  let shootSummariesSent = 0;
+  let shootSummariesError: string | undefined;
+  const tomorrowIsrael = israelTomorrowDateString(now);
+
+  const { data: tomorrowShoots, error: tomorrowError } = await supabaseAdmin
+    .from('shoots')
+    .select(
+      'photographer_id, start_time, location, notes, clients(full_name), photographers(auth_user_id, shoot_daily_summary_enabled, shoot_summary_sent_on)'
+    )
+    .eq('shoot_date', tomorrowIsrael)
+    .order('start_time', { ascending: true });
+
+  if (tomorrowError) {
+    console.error('[cron/tick] שליפת צילומי מחר נכשלה', tomorrowError);
+    shootSummariesError = 'שליפת צילומי מחר נכשלה';
+  }
+
+  const byPhotographer = new Map<string, NonNullable<typeof tomorrowShoots>>();
+  for (const shoot of tomorrowShoots ?? []) {
+    const list = byPhotographer.get(shoot.photographer_id) ?? [];
+    list.push(shoot);
+    byPhotographer.set(shoot.photographer_id, list);
+  }
+
+  for (const [photographerId, shoots] of Array.from(byPhotographer.entries())) {
+    const photographer = (shoots[0] as any).photographers;
+    if (!photographer || !shouldSendDailySummary(photographer.shoot_daily_summary_enabled, photographer.shoot_summary_sent_on, now)) {
+      continue;
+    }
+
+    const photographerEmail = await getPhotographerEmail(photographer.auth_user_id);
+    if (!photographerEmail) continue;
+
+    // אותו "תפיסה" מותנית כמו בשלב 5, כאן ליום: רק אם עוד לא סומן היום.
+    const { data: claimed } = await supabaseAdmin
+      .from('photographers')
+      .update({ shoot_summary_sent_on: todayIsrael })
+      .eq('id', photographerId)
+      .or(`shoot_summary_sent_on.is.null,shoot_summary_sent_on.neq.${todayIsrael}`)
+      .select('id');
+    if (!claimed?.length) continue;
+
+    const result = await sendShootsDailySummaryEmail({
+      to: photographerEmail,
+      shootDate: tomorrowIsrael,
+      shoots: shoots.map((s) => ({
+        clientName: (s as any).clients?.full_name ?? '',
+        startTime: s.start_time,
+        location: s.location,
+        notes: s.notes,
+      })),
+      dashboardUrl: `${siteUrl}/dashboard/calendar`,
+    });
+
+    if (result.sent) {
+      shootSummariesSent++;
+    } else {
+      await supabaseAdmin
+        .from('photographers')
+        .update({ shoot_summary_sent_on: photographer.shoot_summary_sent_on ?? null })
+        .eq('id', photographerId);
+    }
+  }
+
+  return {
+    shootReminderCandidates: shootCandidates?.length ?? 0,
+    shootRemindersSent,
+    shootSummariesSent,
+    ...(shootRemindersError ? { shootRemindersError } : {}),
+    ...(shootSummariesError ? { shootSummariesError } : {}),
+  };
 }

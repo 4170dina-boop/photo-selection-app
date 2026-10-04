@@ -38,6 +38,14 @@ create table photographers (
   -- פעם אחת בהגדרות, משמש בכפתור "בקשת ביקורת" בעריכת גלריה (זמין רק אחרי
   -- שהגלריה סומנה כ"נמסרה", ראו delivered_at). null = הפיצ'ר לא זמין עדיין.
   review_link text,
+  -- יומן צילומים (טבלת shoots למטה): כמה ימים לפני צילום נשלחת ללקוחה תזכורת
+  -- אוטומטית (app/api/cron/tick/route.ts). 0 = בלי תזכורת אוטומטית.
+  shoot_reminder_days int default 1 not null,
+  -- סיכום יומי לצלמת עם הצילומים של מחר (אותו cron). shoot_summary_sent_on =
+  -- התאריך (בזמן ישראל) שבו הסיכום האחרון נשלח - כך הוא idempotent ליום גם אם
+  -- ה-cron רץ כמה פעמים באותו יום. null = טרם נשלח אף פעם.
+  shoot_daily_summary_enabled boolean default true not null,
+  shoot_summary_sent_on date,
   created_at timestamptz default now()
 );
 
@@ -237,6 +245,50 @@ create policy "photographers see own gallery payments" on gallery_payments
       select id from photographers where auth_user_id = auth.uid()
     )
   ));
+
+-- יומן צילומים: צילום מתוכנן (לפני שיש גלריה) - ראו app/dashboard/calendar/page.tsx
+-- ו-lib/shoots.ts. shoot_date + start_time הם שעון אזרחי בישראל (Asia/Jerusalem),
+-- בכוונה בלי אזור זמן - כך הצלמת מזינה אותם, וההמרה לרגע מדויק נעשית רק
+-- בקוד (israelLocalToUtcIso) כשצריך לדעת אם הצילום כבר התחיל.
+create table shoots (
+  id uuid primary key default uuid_generate_v4(),
+  photographer_id uuid references photographers(id) on delete cascade not null,
+  -- אותה טבלת clients של הגלריות - לקוחה קיימת או חדשה שנוצרת מטופס הצילום.
+  client_id uuid references clients(id) on delete cascade not null,
+  -- קישור אופציונלי לגלריה שנוצרה אחרי הצילום. מחיקת הגלריה לא מוחקת את הצילום.
+  gallery_id uuid references galleries(id) on delete set null,
+  shoot_date date not null,
+  start_time time not null,
+  location text not null,
+  -- הערות פרטיות של הצלמת - לא נשלחות ללקוחה, רק בסיכום היומי לצלמת.
+  notes text,
+  confirmation_sent_at timestamptz,
+  -- מתי נשלחה התזכורת האוטומטית ללקוחה (app/api/cron/tick/route.ts) - null =
+  -- טרם נשלחה. חד-פעמית, כמו galleries.last_reminder_sent_at; מתאפסת כשמזיזים
+  -- את הצילום לתאריך/שעה אחרים, כדי שתישלח תזכורת על המועד החדש.
+  reminder_sent_at timestamptz,
+  created_at timestamptz default now()
+);
+create index idx_shoots_photographer_date on shoots(photographer_id, shoot_date);
+create index idx_shoots_date on shoots(shoot_date);
+alter table shoots enable row level security;
+-- with check בודק גם שהלקוחה/הגלריה המקושרות שייכות לאותה צלמת - בלי זה
+-- (FK לא עובר דרך RLS) אפשר היה לקשר צילום ל-client_id של צלמת אחרת.
+create policy "photographers see own shoots" on shoots
+  for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
+  with check (
+    photographer_id in (select id from photographers where auth_user_id = auth.uid())
+    and client_id in (
+      select id from clients where photographer_id in (
+        select id from photographers where auth_user_id = auth.uid()
+      )
+    )
+    and (gallery_id is null or gallery_id in (
+      select id from galleries where photographer_id in (
+        select id from photographers where auth_user_id = auth.uid()
+      )
+    ))
+  );
 
 create table packages (
   id uuid primary key default uuid_generate_v4(),
@@ -1199,3 +1251,41 @@ create policy "public read logos" on storage.objects
 --       select id from photographers where auth_user_id = auth.uid()
 --     )
 --   ));
+
+-- אם כבר הרצת גרסה קודמת בלי יומן צילומים (shoots, תזכורות לפני צילום וסיכום
+-- יומי לצלמת - app/dashboard/calendar, app/api/shoots, app/api/cron/tick), מריצים גם את זה:
+-- alter table photographers add column if not exists shoot_reminder_days int default 1 not null;
+-- alter table photographers add column if not exists shoot_daily_summary_enabled boolean default true not null;
+-- alter table photographers add column if not exists shoot_summary_sent_on date;
+-- create table if not exists shoots (
+--   id uuid primary key default uuid_generate_v4(),
+--   photographer_id uuid references photographers(id) on delete cascade not null,
+--   client_id uuid references clients(id) on delete cascade not null,
+--   gallery_id uuid references galleries(id) on delete set null,
+--   shoot_date date not null,
+--   start_time time not null,
+--   location text not null,
+--   notes text,
+--   confirmation_sent_at timestamptz,
+--   reminder_sent_at timestamptz,
+--   created_at timestamptz default now()
+-- );
+-- create index if not exists idx_shoots_photographer_date on shoots(photographer_id, shoot_date);
+-- create index if not exists idx_shoots_date on shoots(shoot_date);
+-- alter table shoots enable row level security;
+-- drop policy if exists "photographers see own shoots" on shoots;
+-- create policy "photographers see own shoots" on shoots
+--   for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
+--   with check (
+--     photographer_id in (select id from photographers where auth_user_id = auth.uid())
+--     and client_id in (
+--       select id from clients where photographer_id in (
+--         select id from photographers where auth_user_id = auth.uid()
+--       )
+--     )
+--     and (gallery_id is null or gallery_id in (
+--       select id from galleries where photographer_id in (
+--         select id from photographers where auth_user_id = auth.uid()
+--       )
+--     ))
+--   );
