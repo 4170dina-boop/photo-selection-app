@@ -27,7 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id, clients(full_name, email, access_code)')
+    .select('id, additional_invite_emails, clients(full_name, email, access_code)')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
@@ -50,6 +50,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     accessCode: client.access_code,
     replyTo: user.email,
   });
+
+  // אותו מייל נשלח שוב גם לכתובות הנוספות (additional_invite_emails) - לא רק
+  // ללקוחה הראשית, בדיוק כמו ביצירה (app/api/galleries/route.ts).
+  const additionalInviteEmails: string[] = (gallery as any).additional_invite_emails ?? [];
+  await Promise.all(
+    additionalInviteEmails.map((to) =>
+      sendGalleryInviteEmail({
+        to,
+        clientName: client.full_name,
+        businessName: photographer.business_name,
+        galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
+        accessCode: client.access_code,
+        replyTo: user.email,
+      })
+    )
+  );
 
   return NextResponse.json({ emailSent });
 }

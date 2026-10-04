@@ -35,6 +35,13 @@ interface SendResult {
   error?: string;
 }
 
+// בדיקת תקינות פשוטה (לא RFC מלא בכוונה) - משמשת את app/api/galleries/route.ts
+// ו-app/api/galleries/[id]/route.ts כדי לסנן כתובות מייל נוספות (additional_invite_emails)
+// לפני שמירה/שליחה, בלי לדרוש ספריית אימות חיצונית בשביל בדיקה כה בסיסית.
+export function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
 interface SendOptions {
   // שם התצוגה שמופיע אצל הנמען לצד הכתובת (למשל '"סטודיו דינה" <onboarding@resend.dev>') -
   // הכתובת עצמה נשארת קבועה (עד שיהיה דומיין מאומת ב-Resend), אבל שם התצוגה

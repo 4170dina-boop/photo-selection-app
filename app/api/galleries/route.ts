@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
-import { sendGalleryInviteEmail } from '@/lib/email';
+import { sendGalleryInviteEmail, isValidEmail } from '@/lib/email';
 
 // יוצר גלריה חדשה (client + gallery + package) עבור הצלם המחובר.
 // רץ דרך לקוח השרת עם ה-session של הצלם (לא service key) - כך RLS הקיים
@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
     extraPhotoPrice?: number;
     expiresAt?: string;
     reminderDays?: number;
+    additionalInviteEmails?: string[];
   };
   try {
     body = await req.json();
@@ -41,6 +42,17 @@ export async function POST(req: NextRequest) {
 
   if (!clientName?.trim() || !clientEmail?.trim() || includedPhotos == null || includedPhotos < 0) {
     return NextResponse.json({ error: 'חסרים פרטים (שם לקוחה, אימייל ומספר תמונות בחבילה)' }, { status: 400 });
+  }
+
+  // כתובות מייל נוספות (למשל בני משפחה) - אופציונלי, אבל אם ניתנו כולן חייבות
+  // להיות כתובות תקינות. ראו lib/email.ts: isValidEmail ו-additional_invite_emails
+  // ב-supabase/schema.sql.
+  const additionalInviteEmails = (body.additionalInviteEmails ?? [])
+    .map((email) => email.trim())
+    .filter((email) => email.length > 0);
+
+  if (additionalInviteEmails.some((email) => !isValidEmail(email))) {
+    return NextResponse.json({ error: 'אחת מכתובות המייל הנוספות לא תקינה' }, { status: 400 });
   }
 
   const { data: photographer, error: photographerError } = await supabase
@@ -89,6 +101,7 @@ export async function POST(req: NextRequest) {
       reminder_days: reminderDays ?? photographer.reminder_days_default,
       sent_at: new Date().toISOString(),
       expires_at: expiresAt || null,
+      additional_invite_emails: additionalInviteEmails.length > 0 ? additionalInviteEmails : null,
     })
     .select('id')
     .single();
@@ -149,6 +162,21 @@ export async function POST(req: NextRequest) {
     accessCode,
     replyTo: user.email,
   });
+
+  // אותו מייל בדיוק (קישור + קוד גישה) נשלח גם לכתובות הנוספות - best-effort
+  // כמו למעלה, לא חוסם את תגובת היצירה אם אחת מהשליחות נכשלת.
+  await Promise.all(
+    additionalInviteEmails.map((to) =>
+      sendGalleryInviteEmail({
+        to,
+        clientName: clientName.trim(),
+        businessName: photographer.business_name,
+        galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
+        accessCode,
+        replyTo: user.email,
+      })
+    )
+  );
 
   return NextResponse.json({ galleryId: gallery.id, accessCode, emailSent });
 }

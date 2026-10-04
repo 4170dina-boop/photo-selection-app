@@ -33,6 +33,9 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [expiresAt, setExpiresAt] = useState('');
   const [photographerNotes, setPhotographerNotes] = useState('');
   const [reminderDays, setReminderDays] = useState('');
+  // כתובות מייל נוספות (למשל בני משפחה) שמקבלות את אותו מייל הזמנה/תזכורת -
+  // ראו additional_invite_emails ב-supabase/schema.sql, בדיוק כמו ב"גלריה חדשה".
+  const [additionalEmails, setAdditionalEmails] = useState<string[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -188,6 +191,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setExpiresAt(data.expires_at ? data.expires_at.slice(0, 10) : '');
     setPhotographerNotes(data.photographer_notes ?? '');
     setReminderDays(data.reminder_days != null ? String(data.reminder_days) : '');
+    setAdditionalEmails(data.additional_invite_emails ?? []);
     setViewCount(data.view_count ?? 0);
     setLastViewedAt(data.last_viewed_at ?? null);
     setDeliveredAt(data.delivered_at ?? null);
@@ -212,6 +216,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         expiresAt: expiresAt ? israelEndOfDayIso(expiresAt) : null,
         photographerNotes,
         reminderDays: reminderDays ? Number(reminderDays) : null,
+        additionalInviteEmails: additionalEmails.map((email) => email.trim()).filter((email) => email.length > 0),
       }),
     });
 
@@ -492,6 +497,37 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
             required
           />
         </label>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {additionalEmails.map((email, i) => (
+            <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <input
+                type="email"
+                value={email}
+                placeholder="כתובת מייל נוספת (למשל בן/בת משפחה)"
+                onChange={(e) =>
+                  setAdditionalEmails((prev) => prev.map((v, idx) => (idx === i ? e.target.value : v)))
+                }
+                style={{ ...inputStyle, flex: 1 }}
+              />
+              <button
+                type="button"
+                onClick={() => setAdditionalEmails((prev) => prev.filter((_, idx) => idx !== i))}
+                title="הסרת כתובת זו"
+                style={{ background: 'transparent', border: 'none', color: theme.textMuted, cursor: 'pointer', fontSize: 16 }}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => setAdditionalEmails((prev) => [...prev, ''])}
+            style={{ ...outlineButtonStyle, alignSelf: 'flex-start', padding: '0.4rem 0.8rem', fontSize: 13 }}
+          >
+            + הוספת כתובת מייל נוספת
+          </button>
+        </div>
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
           תמונות כלולות בחבילה
