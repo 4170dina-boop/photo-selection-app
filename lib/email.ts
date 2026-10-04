@@ -334,3 +334,35 @@ export async function sendClientSelectionSummaryEmail(params: ClientSelectionSum
     replyTo: params.replyTo,
   });
 }
+
+interface ReviewRequestParams {
+  to: string;
+  clientName: string;
+  businessName: string;
+  reviewLink: string;
+  replyTo?: string;
+}
+
+// נשלחת ידנית מדף עריכת הגלריה, רק אחרי שהצלמת סימנה את הגלריה כ"נמסרה"
+// (delivered_at) - לא אוטומטית, כי התזמון הנכון תלוי במתי התמונות המוגמרות
+// באמת יצאו, לא במתי הלקוחה סיימה לבחור. reviewLink מוגדר פעם אחת בהגדרות
+// (photographers.review_link) - ראו app/api/galleries/[id]/send-review-request.
+export async function sendReviewRequestEmail(params: ReviewRequestParams): Promise<SendResult> {
+  const html = wrapEmailHtml({
+    headerText: params.businessName,
+    bodyHtml: `
+      <p style="margin: 0 0 8px;">היי ${params.clientName},</p>
+      <p style="margin: 0 0 8px;">מקווה שאת נהנית מהתמונות! 💛</p>
+      <p style="margin: 0; font-size: 13px; color: #6b6156;">
+        אם יש לך רגע, ביקורת קצרה ממך תעזור לי המון להמשיך לצלם עוד אירועים כמו שלך.
+      </p>
+    `,
+    ctaText: 'כתיבת ביקורת',
+    ctaUrl: params.reviewLink,
+  });
+
+  return sendEmail(params.to, `אפשר לבקש ממך טובה קטנה, ${params.clientName}?`, html, {
+    fromName: params.businessName,
+    replyTo: params.replyTo,
+  });
+}

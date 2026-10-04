@@ -51,6 +51,9 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [lastViewedAt, setLastViewedAt] = useState<string | null>(null);
   const [deliveredAt, setDeliveredAt] = useState<string | null>(null);
   const [originalsCleanedUpAt, setOriginalsCleanedUpAt] = useState<string | null>(null);
+  const [reviewLink, setReviewLink] = useState('');
+  const [sendingReview, setSendingReview] = useState(false);
+  const [reviewMessage, setReviewMessage] = useState('');
 
   const [supabase] = useState(() => createClient());
   const [deliveredPhotos, setDeliveredPhotos] = useState<DeliveredPhoto[]>([]);
@@ -73,6 +76,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
       const data = await res.json();
       setBusinessName(data.business_name ?? '');
       setLogoUrl(data.logo_url ?? '');
+      setReviewLink(data.review_link ?? '');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [galleryId]);
@@ -397,6 +401,23 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setReminderMessage(data.emailSent ? 'התזכורת נשלחה בהצלחה' : 'שליחת המייל נכשלה - ודאו ששירות המייל מוגדר');
   }
 
+  async function handleSendReviewRequest() {
+    setReviewMessage('');
+    setError('');
+    setSendingReview(true);
+
+    const res = await fetch(`/api/galleries/${galleryId}/send-review-request`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    setSendingReview(false);
+
+    if (!res.ok) {
+      setError(data.error ?? 'שליחת בקשת הביקורת נכשלה');
+      return;
+    }
+
+    setReviewMessage(data.emailSent ? 'בקשת הביקורת נשלחה בהצלחה' : 'שליחת המייל נכשלה - ודאו ששירות המייל מוגדר');
+  }
+
   async function handleDelete() {
     if (!window.confirm('למחוק את הגלריה הזו? כל התמונות והבחירות יימחקו לצמיתות - אי אפשר לבטל את זה.')) return;
 
@@ -585,6 +606,17 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
               {sendingReminder ? 'שולחת...' : '🔔 שליחת תזכורת עכשיו'}
             </button>
           )}
+          {deliveredAt && reviewLink && (
+            <button
+              type="button"
+              onClick={handleSendReviewRequest}
+              disabled={sendingReview}
+              title="שולחת ללקוחה מייל עם בקשה חמה לביקורת, כולל הקישור שהגדרת בהגדרות"
+              style={{ ...outlineButtonStyle, borderColor: theme.gold, color: theme.gold, opacity: sendingReview ? 0.6 : 1 }}
+            >
+              {sendingReview ? 'שולחת...' : '📝 בקשת ביקורת'}
+            </button>
+          )}
           <Link
             href={`/dashboard/galleries/new?fromGallery=${galleryId}`}
             title="פתיחת גלריה חדשה עם אותה חבילה (תמונות כלולות ומחירים) - ללקוחה חדשה"
@@ -596,6 +628,12 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
             ביטול
           </Link>
         </div>
+
+        {deliveredAt && !reviewLink && (
+          <p style={{ color: theme.textFaint, fontSize: 12, marginTop: '0.5rem' }}>
+            רוצה לבקש ביקורת מהלקוחה? הגדירי קישור לביקורת <Link href="/dashboard/settings" style={{ color: theme.gold }}>בהגדרות</Link>.
+          </p>
+        )}
       </form>
 
       {resendMessage && (
@@ -607,6 +645,12 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
       {reminderMessage && (
         <p style={{ background: theme.successBg, color: theme.successText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
           {reminderMessage}
+        </p>
+      )}
+
+      {reviewMessage && (
+        <p style={{ background: theme.successBg, color: theme.successText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
+          {reviewMessage}
         </p>
       )}
 

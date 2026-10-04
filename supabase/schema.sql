@@ -34,6 +34,10 @@ create table photographers (
   -- יותר (הרבה תמונות בבת אחת, לא רק טקסט קצר), אז יש לה תקרה יומית נמוכה יותר.
   ai_picks_count int default 0 not null,
   ai_picks_date date,
+  -- קישור לביקורת (עמוד "כתיבת ביקורת" בגוגל עסקי, פייסבוק וכו') - מוגדר
+  -- פעם אחת בהגדרות, משמש בכפתור "בקשת ביקורת" בעריכת גלריה (זמין רק אחרי
+  -- שהגלריה סומנה כ"נמסרה", ראו delivered_at). null = הפיצ'ר לא זמין עדיין.
+  review_link text,
   created_at timestamptz default now()
 );
 
@@ -339,6 +343,9 @@ create policy "photographers see own sync jobs" on sync_jobs
 -- אם כבר הרצת גרסה קודמת בלי מונה שימוש יומי ל"עזרי לי לבחור", מריצים גם את זה:
 -- alter table photographers add column if not exists ai_picks_count int default 0 not null;
 -- alter table photographers add column if not exists ai_picks_date date;
+
+-- אם כבר הרצת גרסה קודמת בלי קישור ביקורת, מריצים גם את זה:
+-- alter table photographers add column if not exists review_link text;
 
 -- אם כבר הרצת גרסה קודמת בלי הערות פרטיות של הצלמת על הגלריה, מריצים גם את זה:
 -- alter table galleries add column if not exists photographer_notes text;

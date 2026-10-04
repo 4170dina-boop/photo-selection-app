@@ -25,6 +25,7 @@ export default function SettingsPage() {
   const [defaultBasePrice, setDefaultBasePrice] = useState('0');
   const [defaultExtraPhotoPrice, setDefaultExtraPhotoPrice] = useState('0');
   const [reminderDaysDefault, setReminderDaysDefault] = useState('5');
+  const [reviewLink, setReviewLink] = useState('');
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoError, setLogoError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -59,6 +60,7 @@ export default function SettingsPage() {
         setDefaultBasePrice(String(data.default_base_price ?? 0));
         setDefaultExtraPhotoPrice(String(data.default_extra_photo_price ?? 0));
         setReminderDaysDefault(String(data.reminder_days_default ?? 5));
+        setReviewLink(data.review_link ?? '');
         // '#000000' הוא ברירת המחדל של העמודה (=טרם הוגדר) - מציגים את גוון
         // הפלטה המקורי בבורר הצבע במקום שחור, כך שמה שרואים תואם למה שהלקוחה רואה כרגע
         setBrandColor(data.brand_color && data.brand_color !== '#000000' ? data.brand_color : DEFAULT_BRAND_COLOR);
@@ -218,6 +220,7 @@ export default function SettingsPage() {
         defaultBasePrice: Number(defaultBasePrice),
         defaultExtraPhotoPrice: Number(defaultExtraPhotoPrice),
         reminderDaysDefault: Number(reminderDaysDefault),
+        reviewLink: reviewLink.trim() || null,
       }),
     });
 
@@ -395,6 +398,23 @@ export default function SettingsPage() {
           <span style={{ color: theme.textFaint, fontSize: 12, display: 'block', marginTop: '0.5rem' }}>
             כמה ימים לפני שהגלריה פגה נשלחת ללקוחה תזכורת אוטומטית (חד-פעמית) - בנוסף
             אפשר תמיד לשלוח תזכורת נוספת ידנית מדף עריכת הגלריה.
+          </span>
+        </div>
+
+        <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '1rem', marginTop: '0.25rem' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            קישור לביקורת (גוגל עסקי / פייסבוק וכו')
+            <input
+              type="url"
+              dir="ltr"
+              value={reviewLink}
+              onChange={(e) => setReviewLink(e.target.value)}
+              placeholder="https://g.page/r/..."
+              style={inputStyle}
+            />
+          </label>
+          <span style={{ color: theme.textFaint, fontSize: 12, display: 'block', marginTop: '0.5rem' }}>
+            אם מוגדר, יופיע כפתור "בקשת ביקורת" בעריכת גלריה אחרי שסימנת אותה כנמסרה.
           </span>
         </div>
 

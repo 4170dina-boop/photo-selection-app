@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
 
   const { data: photographer, error } = await supabase
     .from('photographers')
-    .select('id, business_name, watermark_text, brand_color, logo_url, custom_theme, default_included_photos, default_base_price, default_extra_photo_price, reminder_days_default')
+    .select('id, business_name, watermark_text, brand_color, logo_url, custom_theme, default_included_photos, default_base_price, default_extra_photo_price, reminder_days_default, review_link')
     .eq('auth_user_id', user.id)
     .single();
 
@@ -50,6 +50,7 @@ export async function PATCH(req: NextRequest) {
     defaultBasePrice?: number;
     defaultExtraPhotoPrice?: number;
     reminderDaysDefault?: number;
+    reviewLink?: string | null;
   };
   try {
     body = await req.json();
@@ -129,6 +130,13 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'מספר ימי התזכורת חייב להיות לפחות 1' }, { status: 400 });
     }
     update.reminder_days_default = body.reminderDaysDefault;
+  }
+  if ('reviewLink' in body) {
+    const reviewLink = body.reviewLink?.trim() || null;
+    if (reviewLink && !/^https?:\/\/.+/.test(reviewLink)) {
+      return NextResponse.json({ error: 'קישור הביקורת צריך להתחיל ב-http:// או https://' }, { status: 400 });
+    }
+    update.review_link = reviewLink;
   }
 
   const { error } = await supabase
