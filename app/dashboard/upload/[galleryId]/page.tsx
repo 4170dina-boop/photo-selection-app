@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { theme, goldButtonStyle, inputStyle, outlineButtonStyle } from '@/lib/theme';
 import { useUploadQueue, type UploadItem } from '../../UploadProvider';
+import { GIFT_MESSAGE_MAX_LENGTH } from '@/lib/gifts';
 
 interface UploadPageProps {
   params: { galleryId: string };
@@ -16,6 +17,9 @@ interface ExistingPhoto {
   status: 'maybe' | 'selected' | null;
   note: string | null;
   photographerReply: string | null;
+  // תמונת מתנה (lib/gifts.ts) - בונוס ללקוחה, לא נספר במכסה/בחיוב
+  isGift: boolean;
+  giftMessage: string | null;
 }
 
 // תואם ל-enforce_photo_limit ב-supabase/schema.sql - אין מקור אמת משותף אחד,
@@ -43,6 +47,12 @@ export default function UploadPage({ params }: UploadPageProps) {
   const [replyDraft, setReplyDraft] = useState('');
   const [savingReply, setSavingReply] = useState(false);
   const [replyError, setReplyError] = useState('');
+
+  // סימון "תמונת מתנה" + הודעה אישית אופציונלית - אותו דפוס כמו עורך התגובה למעלה.
+  const [giftEditingId, setGiftEditingId] = useState<string | null>(null);
+  const [giftDraft, setGiftDraft] = useState('');
+  const [savingGift, setSavingGift] = useState(false);
+  const [giftError, setGiftError] = useState('');
 
   // מוודאים שהגלריה שייכת לצלמת המחוברת (אותו דפוס כמו דף העריכה) לפני שמציגים
   // את ממשק ההעלאה - בלי זה, כל צלמת יכולה לנווט לפי galleryId של גלריה של
@@ -108,6 +118,42 @@ export default function UploadPage({ params }: UploadPageProps) {
       (prev ?? []).map((p) => (p.id === photoId ? { ...p, photographerReply: trimmed || null } : p))
     );
     setReplyEditingId(null);
+  }
+
+  function openGiftEditor(photo: ExistingPhoto) {
+    setGiftError('');
+    setGiftEditingId(photo.id);
+    setGiftDraft(photo.giftMessage ?? '');
+  }
+
+  // isGift=false מבטל את המתנה (וגם מוחק את ההודעה בצד השרת).
+  async function saveGift(isGift: boolean) {
+    if (!giftEditingId) return;
+    const photoId = giftEditingId;
+
+    setSavingGift(true);
+    setGiftError('');
+
+    const res = await fetch(`/api/galleries/${galleryId}/photos/${photoId}/gift`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isGift, message: isGift ? giftDraft : null }),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    setSavingGift(false);
+
+    if (!res.ok) {
+      setGiftError(data.error ?? 'שמירת המתנה נכשלה, נסי שוב');
+      return;
+    }
+
+    setExistingPhotos((prev) =>
+      (prev ?? []).map((p) =>
+        p.id === photoId ? { ...p, isGift: !!data.isGift, giftMessage: data.giftMessage ?? null } : p
+      )
+    );
+    setGiftEditingId(null);
   }
 
   // כשההעלאה שרצה ברקע (ב-context) מסתיימת בזמן שהדף הזה עדיין פתוח, מרעננים
@@ -188,9 +234,14 @@ export default function UploadPage({ params }: UploadPageProps) {
 
       {existingPhotos !== null && existingPhotos.length > 0 && (
         <div style={{ marginBottom: '2rem' }}>
-          <h2 style={{ fontFamily: theme.fontSerif, fontSize: 16, marginBottom: '0.75rem' }}>
+          <h2 style={{ fontFamily: theme.fontSerif, fontSize: 16, marginBottom: '0.25rem' }}>
             סקירת תמונות ({existingPhotos.length})
           </h2>
+          <p style={{ color: theme.textFaint, fontSize: 12, marginBottom: '0.75rem' }}>
+            🎁 לחיצה על המתנה בפינת התמונה מסמנת אותה כ"תמונת מתנה" - הלקוחה מקבלת אותה בחינם,
+            והיא לא נספרת במכסת החבילה ולא בחיוב על תמונות נוספות.
+            {existingPhotos.some((p) => p.isGift) && ` (${existingPhotos.filter((p) => p.isGift).length} מסומנות כמתנה)`}
+          </p>
           <div
             style={{
               display: 'grid',
@@ -199,9 +250,12 @@ export default function UploadPage({ params }: UploadPageProps) {
             }}
           >
             {existingPhotos.map((photo) => {
-              const borderColor =
-                photo.status === 'selected' ? theme.gold : photo.status === 'maybe' ? theme.green : theme.border;
-              const statusLabel = photo.status === 'selected' ? 'נבחר' : photo.status === 'maybe' ? 'אולי' : null;
+              const borderColor = photo.isGift
+                ? theme.goldBright
+                : photo.status === 'selected' ? theme.gold : photo.status === 'maybe' ? theme.green : theme.border;
+              const statusLabel = photo.isGift
+                ? '🎁 מתנה'
+                : photo.status === 'selected' ? 'נבחר' : photo.status === 'maybe' ? 'אולי' : null;
 
               return (
                 <div
@@ -221,7 +275,7 @@ export default function UploadPage({ params }: UploadPageProps) {
                     <span
                       style={{
                         position: 'absolute', top: 6, left: 6,
-                        background: photo.status === 'selected' ? theme.gold : theme.green,
+                        background: photo.isGift ? theme.goldBright : photo.status === 'selected' ? theme.gold : theme.green,
                         color: theme.goldText, fontSize: 10, fontWeight: 'bold',
                         padding: '2px 7px', borderRadius: 10,
                       }}
@@ -229,6 +283,22 @@ export default function UploadPage({ params }: UploadPageProps) {
                       {statusLabel}
                     </span>
                   )}
+                  <button
+                    onClick={() => openGiftEditor(photo)}
+                    title={photo.isGift ? `תמונת מתנה${photo.giftMessage ? ` - "${photo.giftMessage}"` : ''} · לחצי לעריכה` : 'סימון כתמונת מתנה'}
+                    aria-label={photo.isGift ? 'עריכת תמונת מתנה' : 'סימון כתמונת מתנה'}
+                    aria-pressed={photo.isGift}
+                    style={{
+                      position: 'absolute', top: 6, right: 6, cursor: 'pointer',
+                      width: 26, height: 26, borderRadius: '50%', fontSize: 13,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      border: `1px solid ${photo.isGift ? theme.goldBright : 'rgba(255,255,255,0.4)'}`,
+                      background: photo.isGift ? theme.goldBright : 'rgba(0,0,0,0.55)',
+                      opacity: photo.isGift ? 1 : 0.85,
+                    }}
+                  >
+                    🎁
+                  </button>
                   {photo.note && (
                     <button
                       onClick={() => openReplyEditor(photo)}
@@ -422,6 +492,62 @@ export default function UploadPage({ params }: UploadPageProps) {
                   {savingReply ? 'שומרת...' : 'שמירה'}
                 </button>
                 <button onClick={() => setReplyEditingId(null)} style={{ ...outlineButtonStyle, padding: '0.5rem 1rem' }}>ביטול</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {giftEditingId && (() => {
+        const photo = (existingPhotos ?? []).find((p) => p.id === giftEditingId);
+        if (!photo) return null;
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onClick={() => setGiftEditingId(null)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="gift-dialog-title"
+              onClick={(e) => e.stopPropagation()}
+              style={{ background: theme.panel, color: theme.text, padding: '1.25rem', borderRadius: 10, width: 340, maxWidth: 'calc(100vw - 2rem)', border: `1px solid ${theme.border}` }}
+            >
+              <div id="gift-dialog-title" style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.35rem' }}>
+                🎁 תמונת מתנה
+              </div>
+              <p style={{ color: theme.textMuted, fontSize: 12, marginBottom: '0.75rem', lineHeight: 1.5 }}>
+                {photo.original_filename} תופיע ללקוחה מודגשת ככלולה אוטומטית, בלי לגרוע ממכסת החבילה ובלי תוספת תשלום.
+                היא תיכלל גם בייצוא ובהורדה לעריכה.
+              </p>
+
+              <label htmlFor="gift-message" style={{ display: 'block', fontSize: 13, marginBottom: '0.35rem' }}>
+                הודעה אישית ללקוחה (לא חובה)
+              </label>
+              <textarea
+                id="gift-message"
+                value={giftDraft}
+                onChange={(e) => setGiftDraft(e.target.value)}
+                rows={3}
+                maxLength={GIFT_MESSAGE_MAX_LENGTH}
+                style={{ ...inputStyle, width: '100%' }}
+                placeholder="למשל: את זו פשוט לא יכולתי שלא לתת לך 💛"
+                autoFocus
+              />
+              <div style={{ color: theme.textFaint, fontSize: 11, marginTop: '0.25rem' }}>
+                {giftDraft.trim().length}/{GIFT_MESSAGE_MAX_LENGTH}
+              </div>
+              {giftError && <p style={{ color: theme.errorText, fontSize: 12, marginTop: '0.5rem' }}>{giftError}</p>}
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+                <button onClick={() => saveGift(true)} disabled={savingGift} style={{ ...goldButtonStyle, padding: '0.5rem 1rem', opacity: savingGift ? 0.6 : 1 }}>
+                  {savingGift ? 'שומרת...' : photo.isGift ? 'שמירה' : 'סימון כמתנה'}
+                </button>
+                {photo.isGift && (
+                  <button onClick={() => saveGift(false)} disabled={savingGift} style={{ ...outlineButtonStyle, padding: '0.5rem 1rem', opacity: savingGift ? 0.6 : 1 }}>
+                    ביטול המתנה
+                  </button>
+                )}
+                <button onClick={() => setGiftEditingId(null)} style={{ ...outlineButtonStyle, padding: '0.5rem 1rem' }}>סגירה</button>
               </div>
             </div>
           </div>

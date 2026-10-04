@@ -135,6 +135,14 @@ create table photos (
   -- הם שני אובייקטים עצמאיים ב-Storage, שיכולים להימחק/להתקיים בנפרד.
   file_migrated_at timestamptz,
   thumbnail_migrated_at timestamptz,
+  -- "תמונת מתנה": בונוס שהצלמת מעניקה ללקוחה (ראו lib/gifts.ts) - כלולה
+  -- אוטומטית במסירה ובייצוא, ולא נספרת לא במכסת החבילה (packages.included_photos)
+  -- ולא בחיוב על תמונות נוספות. gift_message = הודעה אישית קצרה ללקוחה
+  -- (אופציונלית, עד 200 תווים - נאכף גם ב-API). נקבע רק ע"י הצלמת
+  -- (app/api/galleries/[id]/photos/[photoId]/gift) - ה-RLS הקיים
+  -- "photographers see own photos" כבר מכסה את זה, ללקוחה אין גישה ישירה.
+  is_gift boolean default false not null,
+  gift_message text check (gift_message is null or char_length(gift_message) <= 200),
   created_at timestamptz default now()
 );
 
@@ -221,6 +229,8 @@ alter table app_settings enable row level security;
 create index idx_clients_photographer on clients(photographer_id);
 create index idx_galleries_photographer on galleries(photographer_id);
 create index idx_photos_gallery on photos(gallery_id);
+-- partial - רוב התמונות אינן מתנה, וכל שאילתות המתנה מסננות is_gift = true
+create index idx_photos_gallery_gift on photos(gallery_id) where is_gift;
 create index idx_selections_gallery on selections(gallery_id);
 create index idx_gallery_participants_gallery on gallery_participants(gallery_id);
 
@@ -1107,3 +1117,8 @@ create policy "public read logos" on storage.objects
 -- alter table photos add column if not exists file_migrated_at timestamptz;
 -- alter table photos add column if not exists thumbnail_migrated_at timestamptz;
 -- alter table delivered_photos add column if not exists file_migrated_at timestamptz;
+
+-- אם כבר הרצת גרסה קודמת בלי "תמונת מתנה" (lib/gifts.ts), מריצים גם את זה:
+-- alter table photos add column if not exists is_gift boolean default false not null;
+-- alter table photos add column if not exists gift_message text check (gift_message is null or char_length(gift_message) <= 200);
+-- create index if not exists idx_photos_gallery_gift on photos(gallery_id) where is_gift;

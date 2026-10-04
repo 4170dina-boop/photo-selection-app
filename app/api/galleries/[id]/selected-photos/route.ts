@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { getPresignedDownloadUrl } from '@/lib/r2';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { mergeGiftPhotosIntoExport } from '@/lib/gifts';
 
 // מחזיר לצלמת המחוברת שם קובץ + signed URL זמני לכל תמונה שסומנה "נבחר" בגלריה שלה.
 // משמש את כפתור הקסם (התאמת שמות קבצים מקומיים) ואת ה-ZIP fallback (הורדה בפועל).
@@ -59,13 +61,22 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         .eq('status', 'selected')
     : Promise.resolve({ data: [] }));
 
-  const photos = await Promise.all(
+  // תמונות מתנה (lib/gifts.ts) כלולות אוטומטית במסירה - גם אם הלקוחה לא
+  // סימנה אותן - כדי שהצלמת תערוך גם אותן. מסומנות isGift.
+  const gifts = await fetchGiftPhotos(supabaseAdmin, [params.id]);
+  const merged = mergeGiftPhotosIntoExport(
     (selections ?? [])
       .filter((s: any) => s.photos)
-      .map(async (s: any) => ({
-        filename: s.photos.original_filename as string,
-        url: await getPresignedDownloadUrl(s.photos.file_path, SIGNED_URL_TTL_SECONDS),
-      }))
+      .map((s: any) => ({ photoId: s.photo_id as string, filename: s.photos.original_filename as string, filePath: s.photos.file_path as string })),
+    gifts.map((g) => ({ photoId: g.id, filename: g.original_filename, filePath: g.file_path }))
+  );
+
+  const photos = await Promise.all(
+    merged.map(async (p) => ({
+      filename: p.filename,
+      url: await getPresignedDownloadUrl(p.filePath, SIGNED_URL_TTL_SECONDS),
+      isGift: p.isGift,
+    }))
   );
 
   return NextResponse.json({ photos: photos.filter((p) => p.url) });

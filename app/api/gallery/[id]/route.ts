@@ -3,6 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 import { requireGallerySession } from '@/lib/gallerySession';
 import { BLUR_THRESHOLD } from '@/lib/sharpness';
 import { getPresignedDownloadUrl } from '@/lib/r2';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { countBillableSelected } from '@/lib/gifts';
 
 // service_role - נשאר בצד שרת בלבד. כל הגישה של הלקוחה לנתוני הגלריה
 // עוברת דרך ה-API הזה (ולא דרך anon key ישירות מהדפדפן), כי אין policy
@@ -108,6 +110,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     // בכוונה שקט - ראו הערה למעלה
   }
 
+  // תמונות מתנה (lib/gifts.ts) - אותו דפוס best-effort כמו sharpness_score למעלה.
+  const giftById = new Map((await fetchGiftPhotos(supabaseAdmin, [galleryId])).map((g) => [g.id, g]));
+
   const photos = await Promise.all(
     (photosData ?? []).map(async (photo) => {
       const thumbPath = photo.thumbnail_path ?? photo.file_path;
@@ -122,6 +127,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         fullUrl: thumbUrl,
         original_filename: photo.original_filename,
         possiblyBlurry: possiblyBlurryIds.has(photo.id),
+        isGift: giftById.has(photo.id),
+        giftMessage: giftById.get(photo.id)?.gift_message ?? null,
       };
     })
   );
@@ -158,9 +165,11 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   // הספירה ה"רשמית" (לחיוב, לפס ההתקדמות) היא רק של הבעלים - קלט של בני
   // משפחה אחרים הוא לדיון בלבד, לא נספר. ראו lib/session.ts ו-README.
-  const ownerSelectedCount = (selectionsData ?? []).filter(
-    (s: any) => s.participant_id === gallery.owner_participant_id && s.status === 'selected'
-  ).length;
+  // תמונות מתנה לא נספרות למכסה/לחיוב (lib/gifts.ts).
+  const ownerSelectedCount = countBillableSelected(
+    (selectionsData ?? []).filter((s: any) => s.participant_id === gallery.owner_participant_id),
+    Array.from(giftById.keys())
+  );
 
   return NextResponse.json({
     status: gallery.status,
@@ -171,6 +180,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     myMarks,
     allMarks,
     ownerSelectedCount,
+    giftCount: giftById.size,
     package: packageData
       ? { included: packageData.included_photos, extraPrice: packageData.extra_photo_price, basePrice: packageData.base_price }
       : null,

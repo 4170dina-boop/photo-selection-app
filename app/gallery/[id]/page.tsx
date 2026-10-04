@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import JSZip from 'jszip';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import { toHebrewDateString } from '@/lib/hebrewDate';
+import { computePackageUsage } from '@/lib/gifts';
 
 interface GalleryPageProps {
   params: { id: string };
@@ -15,6 +16,9 @@ interface GalleryPhoto {
   fullUrl: string | null;
   original_filename: string;
   possiblyBlurry: boolean;
+  // תמונת מתנה מהצלמת (lib/gifts.ts) - כלולה אוטומטית, לא נבחרת ולא נספרת במכסה
+  isGift?: boolean;
+  giftMessage?: string | null;
 }
 
 interface DeliveredPhoto {
@@ -748,8 +752,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
   }
 
+  // תמונת מתנה כבר כלולה אוטומטית - לא מסמנים אותה (השרת גם דוחה, ראו
+  // app/api/gallery/[id]/selection/route.ts), כדי שלא תיספר למכסת החבילה.
+  function isGiftPhoto(photoId: string) {
+    return photos.some((p) => p.id === photoId && p.isGift);
+  }
+
   function cycleStatus(photoId: string) {
     if (galleryStatus === 'completed' || !myParticipant) return; // הבחירה כבר נשלחה - נעול לעריכה
+    if (isGiftPhoto(photoId)) return;
     const current = myMarks[photoId]?.status; // undefined | 'maybe' | 'selected'
     const next = current === undefined ? 'maybe' : current === 'maybe' ? 'selected' : null;
     return setPhotoStatus(photoId, next);
@@ -793,6 +804,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // נכנסת לתור ותסונכרן אוטומטית כשהחיבור יחזור (ראו flushPendingQueue).
   async function setPhotoStatus(photoId: string, next: 'maybe' | 'selected' | null) {
     if (galleryStatus === 'completed' || !myParticipant) return;
+    // ביטול (null) עדיין מותר - למקרה שסומנה לפני שהפכה למתנה
+    if (next !== null && isGiftPhoto(photoId)) return;
     const current = myMarks[photoId]?.status;
 
     applyStatusChange(photoId, next, current);
@@ -1042,9 +1055,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // האמת היחיד לאורך שאר הסבב - לא מחשבים findNextUnmarkedIndex מחדש
   // בהמשך, ראו handleSwipeAction/handleSwipeKeyDown/מסך התצוגה למטה.
   function startSwipeMode(pass: 1 | 2) {
+    // תמונות מתנה לא נכנסות לבחירה המהירה - הן כבר כלולות, אין מה להכריע עליהן
     const queue = pass === 1
-      ? photos.map((p) => p.id)
-      : photos.filter((p) => myMarks[p.id]?.status === 'maybe').map((p) => p.id);
+      ? photos.filter((p) => !p.isGift).map((p) => p.id)
+      : photos.filter((p) => !p.isGift && myMarks[p.id]?.status === 'maybe').map((p) => p.id);
     const startIndex = pass === 1 ? findNextUnmarkedIndex(queue, 0, (id) => !!myMarks[id]?.status) : 0;
     setSwipeQueue(queue);
     setSwipeCursor(startIndex);
@@ -1115,13 +1129,22 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const myStatuses = Object.fromEntries(Object.entries(myMarks).map(([id, m]) => [id, m.status]));
   const mySelectedCount = Object.values(myStatuses).filter((s) => s === 'selected').length;
   const maybeCount = Object.values(myStatuses).filter((s) => s === 'maybe').length;
-  const overIncluded = packageInfo ? Math.max(0, ownerSelectedCount - packageInfo.included) : 0;
-  const remaining = packageInfo ? Math.max(0, packageInfo.included - ownerSelectedCount) : 0;
-  const extraCost = packageInfo ? overIncluded * packageInfo.extraPrice : 0;
-  const totalEstimate = packageInfo ? packageInfo.basePrice + extraCost : 0;
-  const progressPct = packageInfo && packageInfo.included > 0
-    ? Math.min(100, Math.round((ownerSelectedCount / packageInfo.included) * 100))
-    : 0;
+  // ownerSelectedCount כבר בלי תמונות מתנה (השרת סופר עם countBillableSelected,
+  // והבחירה של מתנה חסומה) - מתנות אף פעם לא מגדילות את המחיר. lib/gifts.ts.
+  const usage = packageInfo
+    ? computePackageUsage({
+        billableSelectedCount: ownerSelectedCount,
+        included: packageInfo.included,
+        extraPrice: packageInfo.extraPrice,
+        basePrice: packageInfo.basePrice,
+      })
+    : null;
+  const overIncluded = usage?.extraCount ?? 0;
+  const remaining = usage?.remaining ?? 0;
+  const extraCost = usage?.extraCost ?? 0;
+  const totalEstimate = usage?.totalEstimate ?? 0;
+  const progressPct = usage?.progressPct ?? 0;
+  const giftPhotos = photos.filter((p) => p.isGift);
   // סינון תצוגה בלבד ("הצג רק בחירות שלי") - לא נוגע בנתונים עצמם, רק
   // באיזה תת-קבוצה מוצגת בגריד. עוזר לסקור לפני "סיימתי לבחור" בגלריות גדולות.
   const visiblePhotos = viewFilter === 'all' ? photos : photos.filter((p) => myStatuses[p.id] === viewFilter);
@@ -1192,6 +1215,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           >
             <span>⇄ אפשר להשוות בין כמה תמונות זו לצד זו</span>
             <span>✎ אפשר להוסיף הערה אישית לכל תמונה</span>
+            {giftPhotos.length > 0 && (
+              <span style={{ color: accent }}>🎁 מחכה לך בגלריה גם {giftPhotos.length === 1 ? 'תמונת מתנה ממני' : `${giftPhotos.length} תמונות מתנה ממני`} - בלי לגרוע מהחבילה</span>
+            )}
             {!isOwner && (
               <span>👀 הבחירות שלך כאן הן קלט לדיון - רק {owner?.displayName ?? 'הלקוחה הראשית'} יכולה לסיים בפועל</span>
             )}
@@ -1328,8 +1354,23 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </div>
       )}
 
+      {giftPhotos.length > 0 && (
+        <div
+          role="note"
+          style={{
+            margin: '0.6rem 1.5rem 0', padding: '0.6rem 1rem', borderRadius: 8,
+            background: `linear-gradient(90deg, ${accent}2b, ${accent}0d)`, border: `1px dashed ${accent}88`,
+            color: theme.text, fontSize: 14,
+          }}
+        >
+          🎁 {giftPhotos.length === 1 ? 'הכנתי לך תמונת מתנה' : `הכנתי לך ${giftPhotos.length} תמונות מתנה`}
+          {' '}- {giftPhotos.length === 1 ? 'היא כבר כלולה' : 'הן כבר כלולות'} אצלך,
+          בלי לגרוע מהחבילה ובלי תוספת תשלום. אין צורך לבחור {giftPhotos.length === 1 ? 'אותה' : 'אותן'}.
+        </div>
+      )}
+
       <p style={{ textAlign: 'center', fontSize: 12, color: theme.textFaint, padding: '0.5rem 1.5rem 0' }}>
-        לחיצה ראשונה על תמונה = <span style={{ color: theme.green }}>אולי</span> · לחיצה שנייה = <span style={{ color: accent }}>נבחר</span> · לחיצה שלישית מבטלת
+        לחיצה ראשונה על תמונה =<span style={{ color: theme.green }}>אולי</span> · לחיצה שנייה = <span style={{ color: accent }}>נבחר</span> · לחיצה שלישית מבטלת
       </p>
 
       {actionError && (
@@ -1583,7 +1624,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
                   }}
                 />
-                {galleryStatus !== 'completed' && myParticipant && (
+                {galleryStatus !== 'completed' && myParticipant && !isGiftPhoto(id) && (
                   <button
                     onClick={async () => {
                       await setPhotoStatus(id, 'selected');
@@ -1792,6 +1833,18 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 }}
               >
                 {Math.round(zoomScale * 100)}%
+              </div>
+            )}
+            {photo.isGift && zoomScale === 1 && (
+              <div
+                style={{
+                  position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 51,
+                  background: accentSolid, color: accentText, fontSize: 13, textAlign: 'center',
+                  padding: '6px 14px', borderRadius: 14, maxWidth: 'min(90vw, 420px)', boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+                }}
+              >
+                <b>🎁 מתנה ממני</b> - כלולה אצלך אוטומטית
+                {photo.giftMessage && <div style={{ fontStyle: 'italic', marginTop: 2, overflowWrap: 'anywhere' }}>"{photo.giftMessage}"</div>}
               </div>
             )}
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2068,9 +2121,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           const isComparing = compareIds.includes(photo.id);
           const hasNote = !!myMarks[photo.id]?.note;
           const othersMarks = (allMarks[photo.id] ?? []).filter((m) => m.participantId !== myParticipant?.id);
+          const isGift = !!photo.isGift;
 
           const borderColor = isComparing
             ? theme.compare
+            : isGift
+            ? accent
             : status === 'selected'
             ? accent
             : status === 'maybe'
@@ -2083,16 +2139,29 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
           // תיאור נגיש למקלדת/קורא מסך - אותה פעולה שקורה בקליק עכבר, כדי
           // שבחירת תמונות תהיה אפשרית גם בלי עכבר (לא רק אלמנטים עם onClick).
-          const statusLabel = status === 'selected' ? 'נבחרה' : status === 'maybe' ? 'מסומנת כאולי' : 'לא מסומנת';
+          const statusLabel = isGift
+            ? 'תמונת מתנה - כלולה אוטומטית'
+            : status === 'selected' ? 'נבחרה' : status === 'maybe' ? 'מסומנת כאולי' : 'לא מסומנת';
           const cardActionLabel = compareMode
             ? `${photo.original_filename}, ${isComparing ? 'נבחרה להשוואה' : 'לא נבחרה להשוואה'}`
             : `${photo.original_filename}, ${statusLabel}`;
 
+          // קליק על תמונת מתנה פותח אותה בהגדלה במקום לסמן - אין מה לבחור בה
+          function handleCardActivate(e: React.MouseEvent | React.KeyboardEvent) {
+            if (compareMode) return toggleCompareSelect(photo.id, e);
+            if (isGift) {
+              if (!photo.thumbnailUrl) return;
+              setZoomScale(1);
+              setEnlargedId(photo.id);
+              return;
+            }
+            cycleStatus(photo.id);
+          }
+
           function handleCardKeyDown(e: React.KeyboardEvent) {
             if (e.key !== 'Enter' && e.key !== ' ') return;
             e.preventDefault();
-            if (compareMode) toggleCompareSelect(photo.id, e);
-            else cycleStatus(photo.id);
+            handleCardActivate(e);
           }
 
           return (
@@ -2100,18 +2169,19 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               key={photo.id}
               role="button"
               tabIndex={0}
-              aria-pressed={compareMode ? isComparing : status === 'selected'}
+              aria-pressed={compareMode ? isComparing : isGift ? undefined : status === 'selected'}
               aria-label={cardActionLabel}
-              onClick={(e) => (compareMode ? toggleCompareSelect(photo.id, e) : cycleStatus(photo.id))}
+              onClick={handleCardActivate}
               onKeyDown={handleCardKeyDown}
               onContextMenu={(e) => e.preventDefault()} // חסימת קליק ימני - הרתעה בלבד, לא הגנה אמיתית
               style={{
                 position: 'relative',
-                cursor: compareMode || galleryStatus !== 'completed' ? 'pointer' : 'default',
+                cursor: compareMode || isGift || galleryStatus !== 'completed' ? 'pointer' : 'default',
                 border: `2px solid ${borderColor}`,
                 borderRadius: 6,
                 overflow: 'hidden',
                 background: theme.panel,
+                boxShadow: isGift && !isComparing ? `0 0 0 3px ${accent}33, 0 8px 24px ${accent}40` : undefined,
               }}
             >
               <div
@@ -2176,7 +2246,37 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 </div>
               )}
 
-              {!compareMode && (
+              {isGift && (
+                <div
+                  title="תמונת מתנה - כלולה אצלך אוטומטית, לא נספרת בחבילה ובלי תוספת תשלום"
+                  style={{
+                    position: 'absolute', top: othersMarks.length > 0 ? 32 : 8, left: 8, zIndex: 1,
+                    background: accentSolid, color: accentText, fontSize: 12, fontWeight: 'bold',
+                    padding: '4px 10px', borderRadius: 14, border: '1px solid rgba(255,255,255,0.45)',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.35)', whiteSpace: 'nowrap',
+                  }}
+                >
+                  🎁 מתנה ממני
+                </div>
+              )}
+
+              {isGift && (
+                <div
+                  style={{
+                    // zIndex 0 - מעל התמונה, אבל מתחת לכפתור ההגדלה (🔍, zIndex 1) שבפינה הימנית
+                    position: 'absolute', bottom: 0, insetInline: 0, zIndex: 0, pointerEvents: 'none',
+                    background: 'linear-gradient(to top, rgba(0,0,0,0.8), rgba(0,0,0,0.35) 70%, transparent)',
+                    color: '#fff', fontSize: 12, lineHeight: 1.45, padding: '1.5rem 2.75rem 0.6rem 0.75rem',
+                  }}
+                >
+                  {photo.giftMessage && (
+                    <div style={{ fontStyle: 'italic', marginBottom: '0.2rem', overflowWrap: 'anywhere' }}>"{photo.giftMessage}"</div>
+                  )}
+                  <div style={{ fontSize: 10.5, opacity: 0.85 }}>כלולה אוטומטית · לא נספרת בחבילה</div>
+                </div>
+              )}
+
+              {!compareMode && !isGift && (
                 <div
                   role="button"
                   tabIndex={0}
@@ -2214,7 +2314,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 }}
               />
 
-              {status && (
+              {status && !isGift && (
                 <button
                   onClick={(e) => openNoteEditor(photo.id, e)}
                   title="הוסיפי הערה"

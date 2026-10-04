@@ -619,8 +619,15 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
       <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
         <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.5rem' }}>תמונות שנבחרו</h2>
         <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '1rem' }}>
-          מיון אוטומטי מול תיקייה מקומית (Chrome/Edge) - מעתיק לשלוש תת-תיקיות ביעד: Selected (נבחרו),
-          Maybe (אולי) ו-Extras (לא סומנו בכלל), או הורדת כל התמונות שנבחרו כקובץ ZIP אחד.
+          מיון אוטומטי מול תיקייה מקומית (Chrome/Edge) - מעתיק לתת-תיקיות ביעד: Selected (נבחרו),
+          Maybe (אולי), Gift (תמונות מתנה) ו-Extras (לא סומנו בכלל), או הורדת כל התמונות שנבחרו כקובץ ZIP אחד.
+          תמונות מתנה נכללות תמיד גם בייצוא וגם ב-ZIP.
+        </p>
+        <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '1rem' }}>
+          🎁 רוצה להעניק ללקוחה תמונת מתנה (לא נספרת בחבילה ולא בחיוב)?{' '}
+          <Link href={`/dashboard/upload/${galleryId}`} style={{ color: theme.gold, textDecoration: 'underline' }}>
+            סמני אותה בסקירת התמונות
+          </Link>
         </p>
         <MagicButton galleryId={galleryId} />
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.4rem', marginTop: '0.75rem' }}>

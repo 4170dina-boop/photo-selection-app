@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireGallerySession } from '@/lib/gallerySession';
 import { sendSelectionCompleteEmail, sendClientSelectionSummaryEmail } from '@/lib/email';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -46,12 +47,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const { data: selectedRows } = await supabaseAdmin
       .from('selections')
-      .select('photos(original_filename)')
+      .select('photo_id, photos(original_filename)')
       .eq('gallery_id', galleryId)
       .eq('participant_id', gallery.owner_participant_id)
       .eq('status', 'selected');
 
+    // תמונות מתנה (lib/gifts.ts) לא נספרות כבחירה - הן כלולות ממילא.
+    const giftIds = new Set((await fetchGiftPhotos(supabaseAdmin, [galleryId])).map((g) => g.id));
+
     const filenames = (selectedRows ?? [])
+      .filter((s: any) => !giftIds.has(s.photo_id))
       .map((s: any) => s.photos?.original_filename as string | undefined)
       .filter((name): name is string => !!name);
 

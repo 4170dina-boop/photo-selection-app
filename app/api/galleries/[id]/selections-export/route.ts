@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { mergeGiftPhotosIntoExport } from '@/lib/gifts';
 
 // מייצא CSV של התמונות שנבחרו בגלריה - נוח למסירה למעבדת הדפסה או לתיעוד,
 // בנפרד מהורדת הקבצים עצמם (MagicButton/ZIP). רק שם קובץ + הערה, בלי URLs -
@@ -57,17 +59,26 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const { data: selections } = await (gallery.owner_participant_id
     ? supabaseAdmin
         .from('selections')
-        .select('note, photos(original_filename)')
+        .select('photo_id, note, photos(original_filename)')
         .eq('gallery_id', params.id)
         .eq('participant_id', gallery.owner_participant_id)
         .eq('status', 'selected')
     : Promise.resolve({ data: [] }));
 
-  const rows = (selections ?? [])
-    .filter((s: any) => s.photos)
-    .map((s: any) => [s.photos.original_filename as string, (s.note as string) ?? '']);
+  // תמונות מתנה (lib/gifts.ts) כלולות אוטומטית - גם אם הלקוחה לא סימנה אותן,
+  // הצלמת צריכה לערוך גם אותן. מסומנות בעמודה "מתנה".
+  const gifts = await fetchGiftPhotos(supabaseAdmin, [params.id]);
+  const rows = mergeGiftPhotosIntoExport(
+    (selections ?? [])
+      .filter((s: any) => s.photos)
+      .map((s: any) => ({ photoId: s.photo_id as string, filename: s.photos.original_filename as string, note: (s.note as string) ?? '' })),
+    gifts.map((g) => ({ photoId: g.id, filename: g.original_filename, note: '' }))
+  );
 
-  const csvLines = ['שם קובץ,הערה', ...rows.map(([filename, note]) => `${escapeCsvField(filename)},${escapeCsvField(note)}`)];
+  const csvLines = [
+    'שם קובץ,הערה,מתנה',
+    ...rows.map((r) => `${escapeCsvField(r.filename)},${escapeCsvField(r.note)},${r.isGift ? 'כן' : ''}`),
+  ];
   // BOM כדי ש-Excel יזהה UTF-8 נכון (בלי זה עברית מוצגת כג'יבריש בפתיחה ישירה)
   const csv = '﻿' + csvLines.join('\r\n');
 
