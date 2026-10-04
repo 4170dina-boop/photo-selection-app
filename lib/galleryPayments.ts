@@ -1,4 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { giftExclusionFilter } from '@/lib/gifts';
 import { computePaymentSummary, nextPaidAt, type PaymentChange, type PaymentSummary } from '@/lib/payments';
 
 // עזרי DB למעקב תשלומים (app/api/galleries/[id]/payments/*) - רץ תמיד עם
@@ -60,6 +62,8 @@ export async function loadPaymentsState(
   supabase: SupabaseClient,
   gallery: OwnedGallery
 ): Promise<PaymentsState | null> {
+  // תמונות מתנה לא נספרות כתמונות נוספות לחיוב (ראו lib/gifts.ts)
+  const giftFilter = giftExclusionFilter((await fetchGiftPhotos(supabase, [gallery.id])).map((g) => g.id));
   const [{ data: payments, error: paymentsError }, { data: pkg }, { count }] = await Promise.all([
     supabase
       .from('gallery_payments')
@@ -73,12 +77,16 @@ export async function loadPaymentsState(
       .eq('gallery_id', gallery.id)
       .maybeSingle(),
     gallery.owner_participant_id
-      ? supabase
-          .from('selections')
-          .select('*', { count: 'exact', head: true })
-          .eq('gallery_id', gallery.id)
-          .eq('participant_id', gallery.owner_participant_id)
-          .eq('status', 'selected')
+      ? (() => {
+          let q = supabase
+            .from('selections')
+            .select('*', { count: 'exact', head: true })
+            .eq('gallery_id', gallery.id)
+            .eq('participant_id', gallery.owner_participant_id)
+            .eq('status', 'selected');
+          if (giftFilter) q = q.not('photo_id', 'in', giftFilter);
+          return q;
+        })()
       : Promise.resolve({ count: 0 }),
   ]);
 

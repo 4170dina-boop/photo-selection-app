@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { theme } from '@/lib/theme';
 import { createClient } from '@/lib/supabase/client';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { giftExclusionFilter, groupGiftIdsByGallery } from '@/lib/gifts';
 
 interface GalleryRow {
   id: string;
@@ -53,15 +55,20 @@ export default function AnalyticsPage() {
     // (של הבעלים), לא של אורחים בשיתוף גלריה משפחתי. photoCount נספר בנפרד
     // כדי לדעת כמה תמונות "מוכנות לעיבוד" יש בגלריות שהושלמו אבל העריכה בהן
     // עוד לא התחילה (editing_started_at) - למד "היום" למטה.
+    // תמונות מתנה (lib/gifts.ts) לא נספרות כבחירה - שאילתה אחת לכל הגלריות, best-effort.
+    const giftIdsByGallery = groupGiftIdsByGallery(await fetchGiftPhotos(supabase, galleries.map((g: any) => g.id)));
     const rowsWithCounts: GalleryRow[] = await Promise.all(
       galleries.map(async (g: any) => {
+        let selectedQuery = supabase
+          .from('selections')
+          .select('*', { count: 'exact', head: true })
+          .eq('gallery_id', g.id)
+          .eq('participant_id', g.owner_participant_id)
+          .eq('status', 'selected');
+        const giftFilter = giftExclusionFilter(giftIdsByGallery.get(g.id) ?? []);
+        if (giftFilter) selectedQuery = selectedQuery.not('photo_id', 'in', giftFilter);
         const [{ count: selectedCount }, { count: photoCount }] = await Promise.all([
-          supabase
-            .from('selections')
-            .select('*', { count: 'exact', head: true })
-            .eq('gallery_id', g.id)
-            .eq('participant_id', g.owner_participant_id)
-            .eq('status', 'selected'),
+          selectedQuery,
           supabase.from('photos').select('*', { count: 'exact', head: true }).eq('gallery_id', g.id),
         ]);
 

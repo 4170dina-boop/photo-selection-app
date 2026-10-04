@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { getPresignedDownloadUrl } from '@/lib/r2';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
 
 // מחזירה לצלמת המחוברת תצוגה לקריאה בלבד של התמונות בגלריה: thumbnail + הסטטוס
 // הרשמי (של הבעלים בלבד - שיתוף גלריה משפחתי, בדיוק כמו app/dashboard/galleries/page.tsx
@@ -61,6 +62,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   ]);
 
   const selectionByPhotoId = new Map((selectionsData ?? []).map((s) => [s.photo_id, s]));
+  // תמונות מתנה (lib/gifts.ts) - שאילתה נפרדת ו-best-effort, כדי שהסקירה לא
+  // תיפול אם המיגרציה של is_gift עוד לא רצה.
+  const giftById = new Map((await fetchGiftPhotos(supabaseAdmin, [params.id])).map((g) => [g.id, g]));
 
   const photos = await Promise.all(
     (photosData ?? []).map(async (photo) => {
@@ -75,6 +79,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         status: (selection?.status as 'maybe' | 'selected' | undefined) ?? null,
         note: selection?.note ?? null,
         photographerReply: selection?.photographer_reply ?? null,
+        isGift: giftById.has(photo.id),
+        giftMessage: giftById.get(photo.id)?.gift_message ?? null,
       };
     })
   );

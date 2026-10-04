@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { mergeGiftPhotosIntoExport } from '@/lib/gifts';
 
 // מייצא CSV עם שם קובץ + סטטוס + דירוג כוכבים מספרי (5=נבחר, 3=אולי) - Lightroom
 // ו-Capture One לא קוראים את טבלת ה-selections שלנו, אבל יש להם פלאגינים/סקריפטים
@@ -12,6 +14,8 @@ const supabaseAdmin = createAdminClient(
 
 const RATING_BY_STATUS: Record<string, number> = { selected: 5, maybe: 3 };
 const STATUS_LABEL: Record<string, string> = { selected: 'Selected', maybe: 'Maybe' };
+const GIFT_LABEL = 'Gift';
+const GIFT_RATING = 5;
 
 function escapeCsvField(value: string): string {
   if (/[",\n]/.test(value)) {
@@ -60,19 +64,25 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const { data: selections } = await (gallery.owner_participant_id
     ? supabaseAdmin
         .from('selections')
-        .select('status, photos(original_filename)')
+        .select('photo_id, status, photos(original_filename)')
         .eq('gallery_id', params.id)
         .eq('participant_id', gallery.owner_participant_id)
         .in('status', ['selected', 'maybe'])
     : Promise.resolve({ data: [] }));
 
-  const rows = (selections ?? [])
-    .filter((s: any) => s.photos)
-    .map((s: any): [string, string, number] => [
-      s.photos.original_filename as string,
-      STATUS_LABEL[s.status],
-      RATING_BY_STATUS[s.status],
-    ]);
+  // תמונות מתנה (lib/gifts.ts) כלולות אוטומטית ונערכות כמו "נבחר" - סטטוס
+  // "Gift" ודירוג 5, גם אם הלקוחה לא סימנה אותן (או סימנה רק "אולי").
+  const gifts = await fetchGiftPhotos(supabaseAdmin, [params.id]);
+  const rows = mergeGiftPhotosIntoExport(
+    (selections ?? [])
+      .filter((s: any) => s.photos)
+      .map((s: any) => ({ photoId: s.photo_id as string, filename: s.photos.original_filename as string, status: s.status as string })),
+    gifts.map((g) => ({ photoId: g.id, filename: g.original_filename, status: 'gift' }))
+  ).map((r): [string, string, number] => [
+    r.filename,
+    r.isGift ? GIFT_LABEL : STATUS_LABEL[r.status],
+    r.isGift ? GIFT_RATING : RATING_BY_STATUS[r.status],
+  ]);
 
   const csvLines = [
     'שם קובץ,סטטוס,דירוג',

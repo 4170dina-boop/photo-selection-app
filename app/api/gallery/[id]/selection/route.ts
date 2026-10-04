@@ -3,6 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 import { requireGallerySession } from '@/lib/gallerySession';
 import { checkGalleryWritable } from '@/lib/galleryAccess';
 import { sendQuotaReachedEmail } from '@/lib/email';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { countBillableSelected } from '@/lib/gifts';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -52,6 +54,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'תמונה לא נמצאה' }, { status: 404 });
   }
 
+  // תמונת מתנה (lib/gifts.ts) כבר כלולה אוטומטית - לא מסמנים אותה כבחירה,
+  // כדי שלא תיספר למכסה. ביטול (status=null) עדיין מותר, למקרה שהלקוחה
+  // סימנה אותה לפני שהצלמת הפכה אותה למתנה. best-effort כמו fetchGiftPhotos.
+  const giftIds = (await fetchGiftPhotos(supabaseAdmin, [galleryId])).map((g) => g.id);
+  if (status !== null && giftIds.includes(photoId)) {
+    return NextResponse.json({ error: 'זו תמונת מתנה - היא כבר כלולה אצלך, אין צורך לבחור אותה' }, { status: 400 });
+  }
+
   if (status === null) {
     await supabaseAdmin
       .from('selections')
@@ -84,12 +94,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         .single();
 
       if (pkg && pkg.included_photos > 0) {
-        const { count } = await supabaseAdmin
+        const { data: ownerSelected } = await supabaseAdmin
           .from('selections')
-          .select('id', { count: 'exact', head: true })
+          .select('photo_id, status')
           .eq('gallery_id', galleryId)
           .eq('participant_id', session.participantId)
           .eq('status', 'selected');
+        // בלי תמונות מתנה - הן לא חלק מהמכסה (lib/gifts.ts)
+        const count = countBillableSelected(ownerSelected ?? [], giftIds);
 
         if (count === pkg.included_photos) {
           const { data: photographer } = await supabaseAdmin

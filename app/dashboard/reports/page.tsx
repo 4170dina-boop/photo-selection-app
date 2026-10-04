@@ -5,6 +5,8 @@ import { theme } from '@/lib/theme';
 import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
 import { computePaymentSummary, formatShekels } from '@/lib/payments';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { giftExclusionFilter, groupGiftIdsByGallery } from '@/lib/gifts';
 
 interface GalleryRow {
   id: string;
@@ -87,14 +89,19 @@ export default function ReportsPage() {
 
     // כמו ב-app/dashboard/galleries/page.tsx - סופרים רק את הבחירות הרשמיות
     // (של הבעלים), לא של אורחים בשיתוף גלריה משפחתי.
+    // תמונות מתנה (lib/gifts.ts) לא נספרות לחריגה - שאילתה אחת לכל הגלריות, best-effort.
+    const giftIdsByGallery = groupGiftIdsByGallery(await fetchGiftPhotos(supabase, galleries.map((g: any) => g.id)));
     const rows: GalleryRow[] = await Promise.all(
       galleries.map(async (g: any) => {
-        const { count } = await supabase
+        let query = supabase
           .from('selections')
           .select('*', { count: 'exact', head: true })
           .eq('gallery_id', g.id)
           .eq('participant_id', g.owner_participant_id)
           .eq('status', 'selected');
+        const giftFilter = giftExclusionFilter(giftIdsByGallery.get(g.id) ?? []);
+        if (giftFilter) query = query.not('photo_id', 'in', giftFilter);
+        const { count } = await query;
 
         return { ...g, selectedCount: count ?? 0 };
       })

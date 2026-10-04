@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
 
-// מחזיר לצלמת המחוברת שם קובץ + סטטוס (selected/maybe/null) לכל תמונה בגלריה -
+// מחזיר לצלמת המחוברת שם קובץ + סטטוס (selected/maybe/gift/null) לכל תמונה בגלריה -
 // בלי URLs, כי כפתור הקסם רק מתאים שמות קבצים מקומיים ולא מוריד תוכן מהשרת.
 // משמש למיון לשלוש תיקיות (Selected/Maybe/Extras); בניגוד ל-selected-photos
 // שמחזיר רק status='selected' (בשביל ה-ZIP fallback), כאן צריך את כל התמונות.
@@ -54,10 +55,15 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   ]);
 
   const statusByPhotoId = new Map((selectionsData ?? []).map((s) => [s.photo_id, s.status]));
+  // תמונות מתנה (lib/gifts.ts) נערכות תמיד, בלי קשר לסימון הלקוחה - סטטוס
+  // 'gift' נפרד (תיקיית Gift בכפתור הקסם) במקום להיעלם ב-Extras.
+  const giftIds = new Set((await fetchGiftPhotos(supabaseAdmin, [params.id])).map((g) => g.id));
 
   const photos = (photosData ?? []).map((photo) => ({
     filename: photo.original_filename as string,
-    status: (statusByPhotoId.get(photo.id) as 'maybe' | 'selected' | undefined) ?? null,
+    status: giftIds.has(photo.id)
+      ? ('gift' as const)
+      : (statusByPhotoId.get(photo.id) as 'maybe' | 'selected' | undefined) ?? null,
   }));
 
   return NextResponse.json({ photos });

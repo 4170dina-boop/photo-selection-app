@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { giftExclusionFilter, groupGiftIdsByGallery } from '@/lib/gifts';
 import { theme, goldButtonStyle, inputStyle, outlineButtonStyle } from '@/lib/theme';
 import { computePaymentSummary, formatShekels } from '@/lib/payments';
 
@@ -180,14 +182,19 @@ export default function GalleriesDashboard() {
 
     // סופרים כמה תמונות בסטטוס 'selected' יש בכל גלריה (שאילתה נפרדת, כי אין COUNT ישיר ב-join הזה) -
     // רק של הבעלים (שיתוף גלריה משפחתי): קלט של בני משפחה אחרים לא נספר לחיוב/התקדמות רשמית.
+    // תמונות מתנה (lib/gifts.ts) לא נספרות - שאילתה אחת לכל הגלריות, best-effort.
+    const giftIdsByGallery = groupGiftIdsByGallery(await fetchGiftPhotos(supabase, galleries.map((g: any) => g.id)));
     const rowsWithCounts = await Promise.all(
       galleries.map(async (g: any) => {
-        const { count } = await supabase
+        let query = supabase
           .from('selections')
           .select('*', { count: 'exact', head: true })
           .eq('gallery_id', g.id)
           .eq('participant_id', g.owner_participant_id)
           .eq('status', 'selected');
+        const giftFilter = giftExclusionFilter(giftIdsByGallery.get(g.id) ?? []);
+        if (giftFilter) query = query.not('photo_id', 'in', giftFilter);
+        const { count } = await query;
 
         return { ...g, selectedCount: count ?? 0 };
       })

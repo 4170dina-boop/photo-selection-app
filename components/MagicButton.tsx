@@ -18,17 +18,21 @@ interface MagicButtonProps {
 interface SelectedPhoto {
   filename: string;
   url: string;
+  // תמונת מתנה (lib/gifts.ts) - כלולה אוטומטית, נכנסת לתיקיית Gift ב-ZIP
+  isGift?: boolean;
 }
 
 interface PhotoWithStatus {
   filename: string;
-  status: 'selected' | 'maybe' | null;
+  status: 'selected' | 'maybe' | 'gift' | null;
 }
 
-// סטטוס -> שם תיקיית היעד. null (לא סומן בכלל) הולך ל-Extras.
-const FOLDER_BY_STATUS: Record<'selected' | 'maybe' | 'extras', string> = {
+// סטטוס -> שם תיקיית היעד. null (לא סומן בכלל) הולך ל-Extras. gift = תמונת
+// מתנה שהצלמת סימנה - נערכת תמיד, אז מקבלת תיקייה משלה ולא נבלעת ב-Extras.
+const FOLDER_BY_STATUS: Record<'selected' | 'maybe' | 'gift' | 'extras', string> = {
   selected: 'Selected',
   maybe: 'Maybe',
+  gift: 'Gift',
   extras: 'Extras',
 };
 
@@ -89,7 +93,7 @@ export default function MagicButton({ galleryId }: MagicButtonProps) {
         const matchedStatus = statusByFilename.get(entry.name);
         if (!matchedStatus) continue;
 
-        const folderName = FOLDER_BY_STATUS[matchedStatus as 'selected' | 'maybe' | 'extras'];
+        const folderName = FOLDER_BY_STATUS[matchedStatus as 'selected' | 'maybe' | 'gift' | 'extras'];
         const subDirHandle = await getSubDirHandle(folderName);
 
         const file = await entry.getFile();
@@ -130,7 +134,7 @@ export default function MagicButton({ galleryId }: MagicButtonProps) {
       for (const photo of selectedPhotos) {
         const res = await fetch(photo.url);
         if (!res.ok) continue;
-        zip.file(photo.filename, await res.blob());
+        zip.file(photo.isGift ? `${FOLDER_BY_STATUS.gift}/${photo.filename}` : photo.filename, await res.blob());
       }
 
       const blob = await zip.generateAsync({ type: 'blob' });
@@ -179,7 +183,7 @@ export default function MagicButton({ galleryId }: MagicButtonProps) {
       </div>
       {status === 'done' && (
         <p style={{ color: theme.successText }}>
-          הועברו {copiedCount} תמונות בהצלחה, ממוינות לתיקיות Selected / Maybe / Extras!
+          הועברו {copiedCount} תמונות בהצלחה, ממוינות לתיקיות Selected / Maybe / Gift / Extras!
         </p>
       )}
       {status === 'error' && <p style={{ color: theme.errorText }}>{errorMsg}</p>}
