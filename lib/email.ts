@@ -1,5 +1,6 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { toHebrewDateString } from '@/lib/hebrewDate';
+import { formatShootDateLabel, formatShootTime } from '@/lib/shoots';
 
 // שליחת מייל דרך Resend (REST API ישיר, בלי SDK נוסף). אם RESEND_API_KEY לא
 // מוגדר - לא זורקים שגיאה, רק מדלגים ומדפיסים אזהרה. כך גם app/api/cron/tick/route.ts
@@ -372,4 +373,126 @@ export async function sendReviewRequestEmail(params: ReviewRequestParams): Promi
     fromName: params.businessName,
     replyTo: params.replyTo,
   });
+}
+
+// ---------- יומן צילומים (טבלת shoots, ראו lib/shoots.ts) ----------
+
+// מיקום והערות הם טקסט חופשי שהצלמת מקלידה - מוצגים בתוך HTML, אז מנטרלים
+// תווים מיוחדים כדי שתו "<" במיקום לא ישבור את תבנית המייל.
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// "יום ראשון, 11.10.2026 · י״ט בתשרי תשפ״ז" - תאריך לועזי (מה שהצלמת הזינה)
+// לצד התאריך העברי, כמו שאר המיילים ללקוחה (toHebrewDateString). צהריים UTC
+// כדי שאזור הזמן של השרת לא יזיז את היום.
+function shootDateText(shootDate: string): string {
+  return `${formatShootDateLabel(shootDate)} · ${toHebrewDateString(new Date(`${shootDate}T12:00:00Z`))}`;
+}
+
+// כרטיס פרטי הצילום - באותו סגנון "קופון" כמו accessCodeBadge.
+function shootDetailsCard(params: { shootDate: string; startTime: string; location: string }): string {
+  return `
+    <div style="margin: 18px 0; padding: 14px 20px; background: #f4f1ec; border: 1px dashed #c98f89; border-radius: 8px; display: inline-block; text-align: right;">
+      <div style="margin: 2px 0;">📅 <b>${shootDateText(params.shootDate)}</b></div>
+      <div style="margin: 2px 0;">🕐 בשעה <b dir="ltr">${formatShootTime(params.startTime)}</b></div>
+      <div style="margin: 2px 0;">📍 ${escapeHtml(params.location)}</div>
+    </div>
+  `;
+}
+
+interface ShootClientEmailParams {
+  to: string;
+  clientName: string;
+  businessName: string;
+  shootDate: string; // "YYYY-MM-DD" בזמן ישראל
+  startTime: string; // "HH:MM" / "HH:MM:SS"
+  location: string;
+  replyTo?: string;
+}
+
+// אישור קביעת צילום ללקוחה - נשלח מ-app/api/shoots/route.ts ביצירת צילום
+// (אם הצלמת השאירה את "שליחת אישור ללקוחה" מסומן, ברירת המחדל). ההערות
+// (shoots.notes) לא נכללות בכוונה - הן פרטיות של הצלמת, כמו photographer_notes בגלריה.
+export async function sendShootConfirmationEmail(params: ShootClientEmailParams): Promise<SendResult> {
+  const html = wrapEmailHtml({
+    headerText: params.businessName,
+    bodyHtml: `
+      <p style="margin: 0 0 8px;">היי ${params.clientName},</p>
+      <p style="margin: 0 0 8px;">הצילום שלך אצל <b>${params.businessName}</b> נקבע! ✨</p>
+      ${shootDetailsCard(params)}
+      <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">
+        נשלח לך תזכורת לפני הצילום. אם משהו משתנה, אפשר פשוט להשיב למייל הזה.
+      </p>
+    `,
+  });
+
+  return sendEmail(params.to, `הצילום שלך אצל ${params.businessName} נקבע`, html, {
+    fromName: params.businessName,
+    replyTo: params.replyTo,
+  });
+}
+
+// תזכורת אוטומטית ללקוחה N ימים לפני הצילום (photographers.shoot_reminder_days) -
+// נשלחת מ-app/api/cron/tick/route.ts, חד-פעמית (shoots.reminder_sent_at).
+export async function sendShootReminderEmail(params: ShootClientEmailParams & { whenLabel: string }): Promise<SendResult> {
+  const html = wrapEmailHtml({
+    headerText: params.businessName,
+    bodyHtml: `
+      <p style="margin: 0 0 8px;">היי ${params.clientName},</p>
+      <p style="margin: 0 0 8px;">רק מזכירה - הצילום שלך אצל <b>${params.businessName}</b> ${params.whenLabel} 💛</p>
+      ${shootDetailsCard(params)}
+      <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">
+        מחכה לראות אותך! אם משהו השתנה, אפשר פשוט להשיב למייל הזה.
+      </p>
+    `,
+  });
+
+  return sendEmail(params.to, `תזכורת: הצילום שלך אצל ${params.businessName} ${params.whenLabel}`, html, {
+    fromName: params.businessName,
+    replyTo: params.replyTo,
+  });
+}
+
+interface ShootsDailySummaryParams {
+  to: string;
+  shootDate: string; // "מחר" - YYYY-MM-DD
+  shoots: { clientName: string; startTime: string; location: string; notes?: string | null }[];
+  dashboardUrl: string;
+}
+
+// סיכום יומי לצלמת עם הצילומים של מחר - נשלח מ-app/api/cron/tick/route.ts,
+// פעם אחת ליום לכל היותר (photographers.shoot_summary_sent_on), רק אם יש
+// בכלל צילומים מחר ורק אם הצלמת לא כיבתה את זה בהגדרות. "אזור צלמים" ולא שם
+// העסק - זו התראה מהמערכת לצלמת, כמו sendSelectionCompleteEmail.
+export async function sendShootsDailySummaryEmail(params: ShootsDailySummaryParams): Promise<SendResult> {
+  const rows = params.shoots
+    .map(
+      (s) => `
+        <tr>
+          <td style="padding: 8px 10px; border-bottom: 1px solid #eee6d8; font-weight: 700; white-space: nowrap; vertical-align: top;" dir="ltr">${formatShootTime(s.startTime)}</td>
+          <td style="padding: 8px 10px; border-bottom: 1px solid #eee6d8; text-align: right;">
+            <b>${escapeHtml(s.clientName)}</b><br />
+            <span style="font-size: 13px; color: #6b6156;">📍 ${escapeHtml(s.location)}</span>
+            ${s.notes ? `<br /><span style="font-size: 12px; color: #9a8f7d;">${escapeHtml(s.notes)}</span>` : ''}
+          </td>
+        </tr>
+      `
+    )
+    .join('');
+
+  const countText = params.shoots.length === 1 ? 'צילום אחד' : `${params.shoots.length} צילומים`;
+
+  const html = wrapEmailHtml({
+    headerText: 'אזור צלמים',
+    bodyHtml: `
+      <p style="margin: 0 0 8px;">היי,</p>
+      <p style="margin: 0 0 8px;">מחר (${formatShootDateLabel(params.shootDate)}) יש לך ${countText}:</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 12px auto 0; border-collapse: collapse; font-size: 14px;">${rows}</table>
+    `,
+    ctaText: 'פתיחת היומן',
+    ctaUrl: params.dashboardUrl,
+  });
+
+  return sendEmail(params.to, `הצילומים שלך מחר: ${countText}`, html, { fromName: 'אזור צלמים ✨' });
 }

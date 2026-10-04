@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { MAX_SHOOT_REMINDER_DAYS } from '@/lib/shoots';
 
 // פרופיל הצלמת המחוברת - watermark_text (מוטבע על תצוגות התמונות, ראו
 // lib/watermark.ts), brand_color, logo_url, וברירות המחדל למילוי אוטומטי
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
 
   const { data: photographer, error } = await supabase
     .from('photographers')
-    .select('id, business_name, watermark_text, brand_color, logo_url, custom_theme, default_included_photos, default_base_price, default_extra_photo_price, reminder_days_default, review_link')
+    .select('id, business_name, watermark_text, brand_color, logo_url, custom_theme, default_included_photos, default_base_price, default_extra_photo_price, reminder_days_default, review_link, shoot_reminder_days, shoot_daily_summary_enabled')
     .eq('auth_user_id', user.id)
     .single();
 
@@ -51,6 +52,8 @@ export async function PATCH(req: NextRequest) {
     defaultExtraPhotoPrice?: number;
     reminderDaysDefault?: number;
     reviewLink?: string | null;
+    shootReminderDays?: number;
+    shootDailySummaryEnabled?: boolean;
   };
   try {
     body = await req.json();
@@ -137,6 +140,16 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'קישור הביקורת צריך להתחיל ב-http:// או https://' }, { status: 400 });
     }
     update.review_link = reviewLink;
+  }
+  // יומן צילומים (ראו lib/shoots.ts) - 0 = בלי תזכורת אוטומטית ללקוחה לפני צילום.
+  if (body.shootReminderDays != null) {
+    if (!Number.isInteger(body.shootReminderDays) || body.shootReminderDays < 0 || body.shootReminderDays > MAX_SHOOT_REMINDER_DAYS) {
+      return NextResponse.json({ error: `ימי תזכורת לפני צילום: מספר שלם בין 0 ל-${MAX_SHOOT_REMINDER_DAYS}` }, { status: 400 });
+    }
+    update.shoot_reminder_days = body.shootReminderDays;
+  }
+  if (typeof body.shootDailySummaryEnabled === 'boolean') {
+    update.shoot_daily_summary_enabled = body.shootDailySummaryEnabled;
   }
 
   const { error } = await supabase

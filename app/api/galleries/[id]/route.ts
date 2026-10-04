@@ -169,8 +169,16 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return NextResponse.json({ error: 'מחיקת הגלריה נכשלה' }, { status: 500 });
   }
 
-  // הלקוחה שייכת לגלריה אחת בלבד במודל הנוכחי - מוחקים גם אותה כדי לא להשאיר יתום
-  await supabase.from('clients').delete().eq('id', gallery.client_id);
+  // הלקוחה שייכת לגלריה אחת בלבד במודל הנוכחי - מוחקים גם אותה כדי לא להשאיר יתום.
+  // חריג: אם יש לה צילום ביומן (shoots.client_id, on delete cascade) - מחיקת
+  // הלקוחה הייתה מוחקת בשקט גם את הצילום, אז במקרה הזה משאירים אותה.
+  const { count: shootCount } = await supabase
+    .from('shoots')
+    .select('id', { count: 'exact', head: true })
+    .eq('client_id', gallery.client_id);
+  if (!shootCount) {
+    await supabase.from('clients').delete().eq('id', gallery.client_id);
+  }
 
   return NextResponse.json({ success: true });
 }

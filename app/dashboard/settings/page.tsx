@@ -26,6 +26,8 @@ export default function SettingsPage() {
   const [defaultExtraPhotoPrice, setDefaultExtraPhotoPrice] = useState('0');
   const [reminderDaysDefault, setReminderDaysDefault] = useState('5');
   const [reviewLink, setReviewLink] = useState('');
+  const [shootReminderDays, setShootReminderDays] = useState('1');
+  const [shootDailySummaryEnabled, setShootDailySummaryEnabled] = useState(true);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoError, setLogoError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -61,6 +63,8 @@ export default function SettingsPage() {
         setDefaultExtraPhotoPrice(String(data.default_extra_photo_price ?? 0));
         setReminderDaysDefault(String(data.reminder_days_default ?? 5));
         setReviewLink(data.review_link ?? '');
+        setShootReminderDays(String(data.shoot_reminder_days ?? 1));
+        setShootDailySummaryEnabled(data.shoot_daily_summary_enabled ?? true);
         // '#000000' הוא ברירת המחדל של העמודה (=טרם הוגדר) - מציגים את גוון
         // הפלטה המקורי בבורר הצבע במקום שחור, כך שמה שרואים תואם למה שהלקוחה רואה כרגע
         setBrandColor(data.brand_color && data.brand_color !== '#000000' ? data.brand_color : DEFAULT_BRAND_COLOR);
@@ -221,6 +225,8 @@ export default function SettingsPage() {
         defaultExtraPhotoPrice: Number(defaultExtraPhotoPrice),
         reminderDaysDefault: Number(reminderDaysDefault),
         reviewLink: reviewLink.trim() || null,
+        shootReminderDays: Number(shootReminderDays),
+        shootDailySummaryEnabled,
       }),
     });
 
@@ -415,6 +421,35 @@ export default function SettingsPage() {
           </label>
           <span style={{ color: theme.textFaint, fontSize: 12, display: 'block', marginTop: '0.5rem' }}>
             אם מוגדר, יופיע כפתור "בקשת ביקורת" בעריכת גלריה אחרי שסימנת אותה כנמסרה.
+          </span>
+        </div>
+
+        <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '1rem', marginTop: '0.25rem' }}>
+          <span style={{ fontWeight: 700, display: 'block', marginBottom: '0.75rem' }}>יומן צילומים</span>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            ימים לפני צילום לשליחת תזכורת ללקוחה
+            <input
+              type="number"
+              min={0}
+              max={30}
+              value={shootReminderDays}
+              onChange={(e) => setShootReminderDays(e.target.value)}
+              style={{ ...inputStyle, maxWidth: 120 }}
+            />
+          </label>
+          <span style={{ color: theme.textFaint, fontSize: 12, display: 'block', marginTop: '0.5rem' }}>
+            תזכורת אוטומטית (חד-פעמית) נשלחת ללקוחה כמה ימים לפני הצילום. 0 = בלי תזכורת אוטומטית.
+          </span>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.85rem', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={shootDailySummaryEnabled}
+              onChange={(e) => setShootDailySummaryEnabled(e.target.checked)}
+            />
+            לשלוח לי כל יום מייל עם הצילומים של מחר
+          </label>
+          <span style={{ color: theme.textFaint, fontSize: 12, display: 'block', marginTop: '0.5rem' }}>
+            המייל נשלח רק בימים שבהם יש לך צילומים למחרת.
           </span>
         </div>
 
