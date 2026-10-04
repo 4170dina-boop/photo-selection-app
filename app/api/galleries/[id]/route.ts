@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { listAllKeys, deleteObjects } from '@/lib/r2';
+import { isValidEmail } from '@/lib/email';
 
 // עריכה/מחיקה של גלריה קיימת, בדיוק כמו app/api/galleries/route.ts (יצירה) -
 // רץ עם session הצלם (לא service key), כך שה-RLS הקיים כבר דואג שאי אפשר
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error } = await supabase
     .from('galleries')
-    .select('id, expires_at, reminder_days, photographer_notes, view_count, last_viewed_at, delivered_at, originals_cleaned_up_at, clients(full_name, email, access_code), packages(included_photos, base_price, extra_photo_price)')
+    .select('id, expires_at, reminder_days, photographer_notes, additional_invite_emails, view_count, last_viewed_at, delivered_at, originals_cleaned_up_at, clients(full_name, email, access_code), packages(included_photos, base_price, extra_photo_price)')
     .eq('id', params.id)
     .single();
 
@@ -72,6 +73,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     expiresAt?: string | null;
     photographerNotes?: string | null;
     reminderDays?: number | null;
+    additionalInviteEmails?: string[];
   };
   try {
     body = await req.json();
@@ -89,6 +91,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'חסרים פרטים (שם לקוחה, אימייל ומספר תמונות בחבילה)' }, { status: 400 });
   }
 
+  // כמו ב-POST ליצירה (app/api/galleries/route.ts) - אופציונלי, אבל אם ניתנו
+  // כתובות הן חייבות להיות תקינות.
+  const additionalInviteEmails = (body.additionalInviteEmails ?? [])
+    .map((email) => email.trim())
+    .filter((email) => email.length > 0);
+
+  if (additionalInviteEmails.some((email) => !isValidEmail(email))) {
+    return NextResponse.json({ error: 'אחת מכתובות המייל הנוספות לא תקינה' }, { status: 400 });
+  }
+
   const { error: clientError } = await supabase
     .from('clients')
     .update({ full_name: clientName.trim(), email: clientEmail.trim() })
@@ -100,7 +112,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { error: galleryError } = await supabase
     .from('galleries')
-    .update({ expires_at: expiresAt || null, photographer_notes: photographerNotes?.trim() || null, reminder_days: reminderDays || null })
+    .update({
+      expires_at: expiresAt || null,
+      photographer_notes: photographerNotes?.trim() || null,
+      reminder_days: reminderDays || null,
+      additional_invite_emails: additionalInviteEmails.length > 0 ? additionalInviteEmails : null,
+    })
     .eq('id', gallery.id);
 
   if (galleryError) {

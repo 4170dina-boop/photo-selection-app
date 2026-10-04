@@ -71,6 +71,10 @@ create table galleries (
   -- לא נחשף בשום API שהלקוחה נגישה אליו (app/api/gallery/[id]/*), רק דרך
   -- app/api/galleries/[id]/route.ts שרץ עם session הצלם.
   photographer_notes text,
+  -- כתובות מייל נוספות (למשל בני משפחה) שמקבלות את אותו מייל הזמנה/תזכורת
+  -- כמו clients.email - לא זהות נפרדת (לזה יש כבר gallery_participants, כל
+  -- מי שנכנס עם הקוד מזהה את עצמו בשם תצוגה), רק רשימת תפוצה לאותו מייל.
+  additional_invite_emails text[],
   -- מתי הצלמת התחילה לערוך את התמונות שנבחרו - שלב ביניים נפרד גם מ-status
   -- ('completed' אומר רק שהלקוחה סיימה לבחור) וגם מ-delivered_at (מסירת
   -- הקבצים הסופיים בפועל). null = טרם התחילה עריכה.
@@ -1114,3 +1118,7 @@ create policy "public read logos" on storage.objects
 -- alter table photos add column if not exists file_migrated_at timestamptz;
 -- alter table photos add column if not exists thumbnail_migrated_at timestamptz;
 -- alter table delivered_photos add column if not exists file_migrated_at timestamptz;
+
+-- אם כבר הרצת גרסה קודמת בלי אפשרות לכתובות מייל נוספות להזמנה (למשל בני
+-- משפחה), מריצים גם את זה:
+-- alter table galleries add column if not exists additional_invite_emails text[];
