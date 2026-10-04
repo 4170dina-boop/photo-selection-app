@@ -4,7 +4,9 @@ import { checkGalleryWritable } from './galleryAccess';
 
 // בונה מוק מינימלי ל-Supabase שתומך רק בשרשרת המדויקת שגם checkGalleryWritable
 // משתמשת בה: from().select().eq().single(). לא צריך יותר מזה לבדיקה הזו.
-function mockSupabase(gallery: { status: string; expires_at: string | null } | null): SupabaseClient {
+function mockSupabase(
+  gallery: { status: string; expires_at: string | null; reopened_for_selection_at?: string | null } | null
+): SupabaseClient {
   return {
     from: () => ({
       select: () => ({
@@ -55,6 +57,28 @@ describe('checkGalleryWritable', () => {
     // מקרה קצה: גלריה שגם הושלמה וגם פג תוקפה - הקוד בודק תוקף קודם
     const past = new Date(Date.now() - 60 * 1000).toISOString();
     const supabase = mockSupabase({ status: 'completed', expires_at: past });
+    const result = await checkGalleryWritable(supabase, 'gallery-1');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(410);
+  });
+
+  it('allows writes to a completed gallery that the photographer reopened for selection', async () => {
+    const supabase = mockSupabase({
+      status: 'completed',
+      expires_at: null,
+      reopened_for_selection_at: new Date().toISOString(),
+    });
+    const result = await checkGalleryWritable(supabase, 'gallery-1');
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('still rejects an expired gallery even if it was reopened for selection', async () => {
+    const past = new Date(Date.now() - 60 * 1000).toISOString();
+    const supabase = mockSupabase({
+      status: 'completed',
+      expires_at: past,
+      reopened_for_selection_at: new Date().toISOString(),
+    });
     const result = await checkGalleryWritable(supabase, 'gallery-1');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.status).toBe(410);

@@ -100,6 +100,14 @@ create table galleries (
   -- אצל הלקוחה בלי שום דרך אחרת לדעת - ראו app/api/gallery/[id]/route.ts).
   view_count int default 0 not null,
   last_viewed_at timestamptz,
+  -- מאפשרת לצלמת לפתוח מחדש בחירה ללקוחה אחרי שסימנה "סיימתי לבחור", בלי
+  -- להחזיר את status מ-completed לאחור: הפיכת status לאחור הייתה מפעילה שוב
+  -- את trg_enforce_active_gallery_limit (למטה) ונתקעת ב-LIMIT_ACTIVE_GALLERY
+  -- כי בדרך כלל הצלמת כבר השלימה את הגלריה הזו בשביל לפנות מקום לגלריה
+  -- פעילה אחרת. אז זו עמודה עצמאית לגמרי: status נשאר completed, וכאן
+  -- נסמן שהעריכה מותרת למרות זאת (checkGalleryWritable ב-lib/galleryAccess.ts
+  -- בודקת גם אותה). null = נעולה כרגיל, לא-null = פתוחה לבחירה מחדש.
+  reopened_for_selection_at timestamptz,
   created_at timestamptz default now()
 );
 
@@ -1122,3 +1130,7 @@ create policy "public read logos" on storage.objects
 -- אם כבר הרצת גרסה קודמת בלי אפשרות לכתובות מייל נוספות להזמנה (למשל בני
 -- משפחה), מריצים גם את זה:
 -- alter table galleries add column if not exists additional_invite_emails text[];
+
+-- אם כבר הרצת גרסה קודמת בלי פתיחה מחדש של בחירה (אחרי שהלקוחה סיימה
+-- לבחור), מריצים גם את זה:
+-- alter table galleries add column if not exists reopened_for_selection_at timestamptz;

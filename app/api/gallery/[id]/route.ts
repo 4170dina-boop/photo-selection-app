@@ -24,7 +24,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error: galleryError } = await supabaseAdmin
     .from('galleries')
-    .select('id, status, expires_at, owner_participant_id, view_count, clients(full_name), photographers(brand_color, business_name, logo_url, custom_theme)')
+    .select('id, status, expires_at, owner_participant_id, view_count, reopened_for_selection_at, clients(full_name), photographers(brand_color, business_name, logo_url, custom_theme)')
     .eq('id', galleryId)
     .single();
 
@@ -164,6 +164,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   return NextResponse.json({
     status: gallery.status,
+    reopenedForSelectionAt: gallery.reopened_for_selection_at,
     photos,
     deliveredPhotos,
     myParticipant,
