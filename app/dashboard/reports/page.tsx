@@ -3,14 +3,28 @@
 import { useEffect, useState } from 'react';
 import { theme } from '@/lib/theme';
 import { createClient } from '@/lib/supabase/client';
+import Link from 'next/link';
+import { computePaymentSummary, formatShekels } from '@/lib/payments';
 
 interface GalleryRow {
   id: string;
   created_at: string;
   owner_participant_id: string | null;
+  paid_at: string | null;
+  amount_due_override: number | null;
   clients: { full_name: string } | null;
   packages: { included_photos: number; base_price: number; extra_photo_price: number } | null;
+  gallery_payments: { amount: number }[] | null;
   selectedCount: number;
+}
+
+// גלריה עם יתרה פתוחה - לרשימת "מי חייבת כמה" (ראו outstanding ב-lib/payments.ts)
+interface OwingRow {
+  id: string;
+  name: string;
+  total: number;
+  paid: number;
+  outstanding: number;
 }
 
 interface MonthGroup {
@@ -39,6 +53,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null);
   const [storageLoading, setStorageLoading] = useState(true);
+  const [owing, setOwing] = useState<OwingRow[]>([]);
 
   useEffect(() => {
     loadReport();
@@ -62,7 +77,7 @@ export default function ReportsPage() {
 
     const { data: galleries } = await supabase
       .from('galleries')
-      .select('id, created_at, owner_participant_id, clients(full_name), packages(included_photos, base_price, extra_photo_price)')
+      .select('id, created_at, owner_participant_id, paid_at, amount_due_override, clients(full_name), packages(included_photos, base_price, extra_photo_price), gallery_payments(amount)')
       .order('created_at', { ascending: false });
 
     if (!galleries) {
@@ -112,6 +127,22 @@ export default function ReportsPage() {
     }
 
     setMonths(Array.from(groups.values()).sort((a, b) => (a.key < b.key ? 1 : -1)));
+
+    setOwing(
+      rows
+        .map((row) => {
+          const s = computePaymentSummary({
+            pkg: row.packages,
+            selectedCount: row.selectedCount,
+            amountDueOverride: row.amount_due_override,
+            payments: row.gallery_payments,
+            paidAt: row.paid_at,
+          });
+          return { id: row.id, name: row.clients?.full_name ?? 'ללא שם', total: s.total, paid: s.paid, outstanding: s.outstanding };
+        })
+        .filter((r) => r.outstanding > 0)
+        .sort((a, b) => b.outstanding - a.outstanding)
+    );
     setLoading(false);
   }
 
@@ -164,6 +195,49 @@ export default function ReportsPage() {
             </a>
             .
           </p>
+        </div>
+      )}
+
+      <h2 style={{ fontSize: 18, marginBottom: '0.5rem' }}>יתרות פתוחות</h2>
+      <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '1rem' }}>
+        מי עוד חייבת וכמה - הסכום לתשלום של כל גלריה פחות התשלומים שרשמת בדף העריכה שלה. גלריה שסימנת כ&quot;שולם&quot; לא מופיעה כאן.
+      </p>
+      {owing.length === 0 ? (
+        <p style={{ color: theme.successText, fontSize: 13, marginBottom: '2rem' }}>אין יתרות פתוחות ✓</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '2rem' }}>
+          {owing.map((r) => (
+            <Link
+              key={r.id}
+              href={`/dashboard/galleries/${r.id}/edit`}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem 1.5rem',
+                padding: '0.75rem 1rem', background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10,
+                color: 'inherit', textDecoration: 'none',
+              }}
+            >
+              <span style={{ fontWeight: 'bold' }}>{r.name}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
+                <span style={{ color: theme.textFaint, fontSize: 12 }}>
+                  שולם {formatShekels(r.paid)} מתוך {formatShekels(r.total)}
+                </span>
+                <span style={{ fontWeight: 'bold', color: theme.warningText, fontFamily: theme.fontSerif }}>
+                  {formatShekels(r.outstanding)}
+                </span>
+              </div>
+            </Link>
+          ))}
+          <div
+            style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '1rem 1.25rem', marginTop: '0.5rem', borderTop: `1px solid ${theme.border}`,
+            }}
+          >
+            <span style={{ color: theme.textMuted }}>סה&quot;כ לגבייה ({owing.length} {owing.length === 1 ? 'לקוחה' : 'לקוחות'})</span>
+            <span style={{ fontSize: 18, fontWeight: 'bold', color: theme.warningText, fontFamily: theme.fontSerif }}>
+              {formatShekels(owing.reduce((sum, r) => sum + r.outstanding, 0))}
+            </span>
+          </div>
         </div>
       )}
 

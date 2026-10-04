@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { theme, goldButtonStyle, inputStyle, outlineButtonStyle } from '@/lib/theme';
+import { computePaymentSummary, formatShekels } from '@/lib/payments';
 
 interface GalleryRow {
   id: string;
@@ -22,7 +23,20 @@ interface GalleryRow {
   // packages.gallery_id הוא unique, אז PostgREST מחזיר יחס 1:1 - אובייקט בודד, לא מערך
   // (בניגוד ל-clients שגם הוא אובייקט בודד אבל מהצד "הרבים" של הקשר - גם לא מערך)
   packages: { included_photos: number; base_price: number; extra_photo_price: number } | null;
+  // מעקב תשלומים - ראו lib/payments.ts. null = הסכום לתשלום מחושב מהחבילה.
+  amount_due_override: number | null;
+  gallery_payments: { amount: number }[] | null;
   selectedCount: number;
+}
+
+function rowPaymentSummary(row: GalleryRow) {
+  return computePaymentSummary({
+    pkg: row.packages,
+    selectedCount: row.selectedCount,
+    amountDueOverride: row.amount_due_override,
+    payments: row.gallery_payments,
+    paidAt: row.paid_at,
+  });
 }
 
 export default function GalleriesDashboard() {
@@ -148,7 +162,7 @@ export default function GalleriesDashboard() {
 
     const { data: galleries, error } = await supabase
       .from('galleries')
-      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, editing_started_at, delivered_at, paid_at, owner_participant_id, clients(full_name), packages(included_photos, base_price, extra_photo_price)')
+      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, editing_started_at, delivered_at, paid_at, owner_participant_id, amount_due_override, clients(full_name), packages(included_photos, base_price, extra_photo_price), gallery_payments(amount)')
       .order('created_at', { ascending: false });
 
     // בלי הבדיקה הזו, שגיאת שאילתה (למשל RLS, או עמודה חסרה אם המיגרציה
@@ -286,6 +300,11 @@ export default function GalleriesDashboard() {
   const totalBasePrice = rows.reduce((sum, row) => sum + (row.packages?.base_price ?? 0), 0);
   const totalRevenue = totalBasePrice + totalOverage;
 
+  // כמה עוד נשאר לגבות מכל הגלריות יחד (יתרות פתוחות בלבד - גלריה שסומנה
+  // כשולמה, גם ידנית, לא נספרת) - ראו outstanding ב-lib/payments.ts.
+  const owingCount = rows.filter((row) => rowPaymentSummary(row).outstanding > 0).length;
+  const totalOutstanding = rows.reduce((sum, row) => sum + rowPaymentSummary(row).outstanding, 0);
+
   // גלריות שדורשות תשומת לב עכשיו: תוקף מתקרב (עד 3 ימים) והלקוחה עדיין לא
   // סיימה לבחור - לא כולל גלריות שכבר פגו (אלה כבר "באיחור", אין מה לדחוף שם)
   // או שהושלמו. ממוינות מהדחוף ביותר, כדי שהצלמת תדע את מי לדחוף קודם
@@ -342,6 +361,14 @@ export default function GalleriesDashboard() {
             <p style={{ color: theme.gold, fontSize: 13, margin: '0.25rem 0 0' }}>
               סה"כ הכנסה: ₪{totalRevenue}
               {totalOverage > 0 && ` (מתוכה חריגות: ₪${totalOverage})`}
+            </p>
+          )}
+          {totalOutstanding > 0 && (
+            <p style={{ color: theme.warningText, fontSize: 13, margin: '0.15rem 0 0' }}>
+              נותר לגבות: {formatShekels(totalOutstanding)} מ-{owingCount} {owingCount === 1 ? 'לקוחה' : 'לקוחות'}{' '}
+              <Link href="/dashboard/reports" style={{ color: theme.textMuted, fontSize: 12 }}>
+                (פירוט בדוחות)
+              </Link>
             </p>
           )}
         </div>
@@ -485,6 +512,7 @@ export default function GalleriesDashboard() {
         const overageCount = Math.max(0, row.selectedCount - included);
         const overagePrice = row.packages?.extra_photo_price ?? 0;
         const overageTotal = overageCount * overagePrice;
+        const payment = rowPaymentSummary(row);
 
         return (
           <div
@@ -608,6 +636,16 @@ export default function GalleriesDashboard() {
               {overageCount > 0 && (
                 <div style={{ fontSize: 12, color: theme.gold, marginTop: '0.15rem' }}>
                   חריגה: {overageCount} תמונות{overagePrice > 0 ? ` (₪${overageTotal})` : ''}
+                </div>
+              )}
+              {payment.paymentCount > 0 && (
+                <div style={{ fontSize: 12, color: theme.textMuted, marginTop: '0.15rem' }}>
+                  שולם {formatShekels(payment.paid)} מתוך {formatShekels(payment.total)}
+                </div>
+              )}
+              {payment.outstanding > 0 && (
+                <div style={{ fontSize: 12, color: theme.warningText, fontWeight: 'bold', marginTop: '0.15rem' }}>
+                  יתרה לתשלום: {formatShekels(payment.outstanding)}
                 </div>
               )}
             </div>

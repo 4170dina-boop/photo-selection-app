@@ -82,10 +82,19 @@ create table galleries (
   -- מתי הצלמת סימנה שהתמונות הסופיות נמסרו בפועל ללקוחה (לא אוטומטי - "הושלם"
   -- רק אומר שהלקוחה סיימה לבחור, לא שהתמונות המוגמרות כבר יצאו). null = טרם נמסר.
   delivered_at timestamptz,
-  -- מתי הצלמת סימנה שהתשלום התקבל - עצמאי לגמרי מהסטטוס/מסירה (בדרך כלל
+  -- מתי הגלריה סומנה כ"שולמה במלואה" - עצמאי לגמרי מהסטטוס/מסירה (בדרך כלל
   -- משולם בהזמנה, הרבה לפני שהלקוחה סיימה לבחור). אין אינטגרציית סליקה
-  -- (ראו README) אז זה סימון ידני בלבד, לא נגזר מכלום אוטומטית. null = טרם שולם.
+  -- (ראו README). שתי דרכים לעדכן: הכפתור הידני ברשימת הגלריות
+  -- (app/api/galleries/[id]/toggle-paid) כמו תמיד, או אוטומטית בכל הוספה/מחיקה
+  -- של תשלום ב-gallery_payments (למטה) - אז הוא נגזר מהיתרה: מסומן כשהתשלומים
+  -- מכסים את הסכום לתשלום, ומתבטל כשלא. ראו nextPaidAt ב-lib/payments.ts.
+  -- null = טרם שולם.
   paid_at timestamptz,
+  -- הסכום הכולל שהלקוחה צריכה לשלם על הגלריה, אם הצלמת דרסה אותו ידנית
+  -- (הנחה, תוספת, סכום שסוכם מראש). null = מחושב אוטומטית מהחבילה: base_price
+  -- + (תמונות שנבחרו מעבר ל-included_photos) × extra_photo_price - כך שהסכום
+  -- מתעדכן לבד כשהלקוחה בוחרת עוד תמונות. ראו computePaymentSummary ב-lib/payments.ts.
+  amount_due_override numeric(10,2) check (amount_due_override is null or amount_due_override >= 0),
   -- מתי עבודת הרקע היומית (app/api/cron/tick/route.ts) מחקה את קבצי המקור
   -- (הלא-ערוכים) של הגלריה הזו מ-Storage, כדי לפנות מקום 30 יום אחרי מסירה -
   -- null = עדיין לא נוקתה (או שעדיין לא עברו 30 יום מ-delivered_at). לא
@@ -195,6 +204,35 @@ create index idx_delivered_photos_gallery on delivered_photos(gallery_id);
 alter table delivered_photos enable row level security;
 create policy "photographers see own delivered photos" on delivered_photos
   for all using (gallery_id in (
+    select id from galleries where photographer_id in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  ));
+
+-- תשלומים שהתקבלו בפועל על גלריה (מקדמה, יתרה, כמה תשלומים חלקיים) - רישום
+-- ידני של הצלמת, אין אינטגרציית סליקה. היתרה = הסכום לתשלום (ראו
+-- galleries.amount_due_override) פחות סכום השורות כאן. רק הצלמת רואה/כותבת
+-- (RLS למטה), הלקוחה לא נחשפת לזה בשום API שלה.
+create table gallery_payments (
+  id uuid primary key default uuid_generate_v4(),
+  gallery_id uuid references galleries(id) on delete cascade not null,
+  amount numeric(10,2) not null check (amount > 0),
+  -- תאריך קבלת התשלום (לוח אזרחי בישראל, לא רגע מדויק) - ברירת מחדל היום
+  paid_on date not null default current_date,
+  -- אמצעי תשלום, טקסט חופשי קצר (מזומן/ביט/העברה/צ'ק...) - אופציונלי
+  method text,
+  note text,
+  created_at timestamptz default now()
+);
+create index idx_gallery_payments_gallery on gallery_payments(gallery_id);
+alter table gallery_payments enable row level security;
+create policy "photographers see own gallery payments" on gallery_payments
+  for all using (gallery_id in (
+    select id from galleries where photographer_id in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  ))
+  with check (gallery_id in (
     select id from galleries where photographer_id in (
       select id from photographers where auth_user_id = auth.uid()
     )
@@ -1134,3 +1172,30 @@ create policy "public read logos" on storage.objects
 -- אם כבר הרצת גרסה קודמת בלי פתיחה מחדש של בחירה (אחרי שהלקוחה סיימה
 -- לבחור), מריצים גם את זה:
 -- alter table galleries add column if not exists reopened_for_selection_at timestamptz;
+
+-- אם כבר הרצת גרסה קודמת בלי מעקב תשלומים עם סכומים (סכום לתשלום + רשימת
+-- תשלומים שהתקבלו, ראו lib/payments.ts), מריצים גם את זה:
+-- alter table galleries add column if not exists amount_due_override numeric(10,2) check (amount_due_override is null or amount_due_override >= 0);
+-- create table if not exists gallery_payments (
+--   id uuid primary key default uuid_generate_v4(),
+--   gallery_id uuid references galleries(id) on delete cascade not null,
+--   amount numeric(10,2) not null check (amount > 0),
+--   paid_on date not null default current_date,
+--   method text,
+--   note text,
+--   created_at timestamptz default now()
+-- );
+-- create index if not exists idx_gallery_payments_gallery on gallery_payments(gallery_id);
+-- alter table gallery_payments enable row level security;
+-- drop policy if exists "photographers see own gallery payments" on gallery_payments;
+-- create policy "photographers see own gallery payments" on gallery_payments
+--   for all using (gallery_id in (
+--     select id from galleries where photographer_id in (
+--       select id from photographers where auth_user_id = auth.uid()
+--     )
+--   ))
+--   with check (gallery_id in (
+--     select id from galleries where photographer_id in (
+--       select id from photographers where auth_user_id = auth.uid()
+--     )
+--   ));

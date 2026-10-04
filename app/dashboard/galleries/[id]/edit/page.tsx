@@ -8,6 +8,7 @@ import { toHebrewDateString } from '@/lib/hebrewDate';
 import { israelEndOfDayIso } from '@/lib/israelTime';
 import { createClient } from '@/lib/supabase/client';
 import MagicButton from '@/components/MagicButton';
+import GalleryPaymentsSection from '@/components/GalleryPaymentsSection';
 
 interface DeliveredPhoto {
   id: string;
@@ -755,6 +756,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           {error}
         </p>
       )}
+
+      <GalleryPaymentsSection galleryId={galleryId} />
 
       <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
         <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.5rem' }}>תמונות שנבחרו</h2>
