@@ -94,8 +94,15 @@ describe('nextPaidAt', () => {
     expect(nextPaidAt(earlier, { total: 1500, paid: 500, paymentCount: 1 }, 'payment_deleted', now)).toBeNull();
   });
 
-  it('clears paid when the last payment is deleted', () => {
-    expect(nextPaidAt(earlier, { total: 1500, paid: 0, paymentCount: 0 }, 'payment_deleted', now)).toBeNull();
+  it('keeps a manual paid mark when the last payment is deleted', () => {
+    expect(nextPaidAt(earlier, { total: 1500, paid: 0, paymentCount: 0 }, 'payment_deleted', now)).toBe(earlier);
+    expect(nextPaidAt(null, { total: 1500, paid: 0, paymentCount: 0 }, 'payment_deleted', now)).toBeNull();
+  });
+
+  it('treats an indirect total change like an amount change', () => {
+    expect(nextPaidAt(earlier, { total: 2000, paid: 0, paymentCount: 0 }, 'total_changed', now)).toBe(earlier);
+    expect(nextPaidAt(null, { total: 1000, paid: 1000, paymentCount: 1 }, 'total_changed', now)).toBe(now);
+    expect(nextPaidAt(earlier, { total: 2000, paid: 1000, paymentCount: 1 }, 'total_changed', now)).toBeNull();
   });
 
   it('does not touch a manual mark when the amount changes and no payments are recorded', () => {

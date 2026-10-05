@@ -5,7 +5,9 @@ create extension if not exists "uuid-ossp";
 
 create table photographers (
   id uuid primary key default uuid_generate_v4(),
-  auth_user_id uuid references auth.users(id) unique,
+  -- on delete cascade: מחיקת משתמש ב-Supabase Auth מוחקת גם את שורת הצלמת
+  -- (ומשם, ב-cascade, את כל הנתונים שלה) - בלי זה מחיקת המשתמש נכשלה על FK.
+  auth_user_id uuid references auth.users(id) on delete cascade unique,
   business_name text not null,
   logo_url text,
   brand_color text default '#000000',
@@ -118,10 +120,10 @@ create table galleries (
   view_count int default 0 not null,
   last_viewed_at timestamptz,
   -- מאפשרת לצלמת לפתוח מחדש בחירה ללקוחה אחרי שסימנה "סיימתי לבחור", בלי
-  -- להחזיר את status מ-completed לאחור: הפיכת status לאחור הייתה מפעילה שוב
-  -- את trg_enforce_active_gallery_limit (למטה) ונתקעת ב-LIMIT_ACTIVE_GALLERY
-  -- כי בדרך כלל הצלמת כבר השלימה את הגלריה הזו בשביל לפנות מקום לגלריה
-  -- פעילה אחרת. אז זו עמודה עצמאית לגמרי: status נשאר completed, וכאן
+  -- להחזיר את status מ-completed לאחור (status נשאר completed, והסיום החוזר
+  -- ב-app/api/gallery/[id]/finish מנקה את העמודה). גלריה שנפתחה מחדש נספרת
+  -- כפעילה במגבלת החשבון החינמי (trg_enforce_active_gallery_limit למטה) -
+  -- אחרת פתיחה מחדש הייתה עוקפת את מגבלת הגלריה הפעילה האחת. וכאן
   -- נסמן שהעריכה מותרת למרות זאת (checkGalleryWritable ב-lib/galleryAccess.ts
   -- בודקת גם אותה). null = נעולה כרגיל, לא-null = פתוחה לבחירה מחדש.
   reopened_for_selection_at timestamptz,
@@ -279,6 +281,9 @@ create table shoots (
 );
 create index idx_shoots_photographer_date on shoots(photographer_id, shoot_date);
 create index idx_shoots_date on shoots(shoot_date);
+-- אינדקסים על FK (לחיפוש לפי לקוחה/גלריה ול-cascade/set null במחיקה)
+create index if not exists idx_shoots_client on shoots(client_id);
+create index if not exists idx_shoots_gallery on shoots(gallery_id);
 alter table shoots enable row level security;
 -- with check בודק גם שהלקוחה/הגלריה המקושרות שייכות לאותה צלמת - בלי זה
 -- (FK לא עובר דרך RLS) אפשר היה לקשר צילום ל-client_id של צלמת אחרת.
@@ -339,6 +344,12 @@ create index idx_photos_gallery on photos(gallery_id);
 create index idx_photos_gallery_gift on photos(gallery_id) where is_gift;
 create index idx_selections_gallery on selections(gallery_id);
 create index idx_gallery_participants_gallery on gallery_participants(gallery_id);
+-- אינדקסים על עמודות FK שהיו חסרים - בלעדיהם כל delete על photos/
+-- gallery_participants/clients/galleries (cascade) סורק את כל הטבלה המפנה.
+create index if not exists idx_selections_photo on selections(photo_id);
+create index if not exists idx_selections_participant on selections(participant_id);
+create index if not exists idx_galleries_client on galleries(client_id);
+create index if not exists idx_sync_jobs_gallery on sync_jobs(gallery_id);
 
 -- Row Level Security: כל צלם רואה רק את הנתונים שלו
 alter table photographers enable row level security;
@@ -355,15 +366,47 @@ alter table gallery_participants enable row level security;
 -- לצלמת מחוברת לכתוב ערך שרירותי בכל עמודה אחרת בשורה שלה (is_unlimited,
 -- ai_picks_count/date, theme_gen_count/date) - הבדיקה האמיתית לעמודות האלה
 -- היא בטריגרים protect_is_unlimited/protect_ai_usage_counters למטה, לא כאן.
-create policy "photographers see own row" on photographers
-  for all using (auth.uid() = auth_user_id)
+-- select + update בלבד (לא for all): אין שום סיבה שצלמת תמחק/תיצור שורת
+-- photographers בעצמה עם ה-session - היצירה נעשית ע"י הטריגר security definer
+-- handle_new_photographer, ומחיקה רק דרך מחיקת המשתמש ב-Auth (on delete cascade).
+create policy "photographers select own row" on photographers
+  for select using (auth.uid() = auth_user_id);
+
+create policy "photographers update own row" on photographers
+  for update using (auth.uid() = auth_user_id)
   with check (auth.uid() = auth_user_id);
 
 create policy "photographers see own clients" on clients
   for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()));
 
+-- ===== with check חוצה-דיירים על galleries/selections =====
+-- FK לא עובר דרך RLS, אז בלי with check מפורש צלמת יכלה לקשר גלריה ל-client_id
+-- של צלמת אחרת, או selection ל-photo_id/participant_id מגלריה אחרת (אותו דפוס
+-- כמו "photographers see own shoots" למעלה).
+-- owner_participant_id נבדק דרך פונקציית security definer ולא בתת-שאילתה ישירה
+-- על gallery_participants: ה-policy של gallery_participants עצמה מפנה ל-galleries,
+-- ו-postgres זורק "infinite recursion detected in policy" על מעגל כזה. בטוח
+-- כי הפונקציה רק עונה "האם participant X שייך לגלריה Y", והבעלות על הגלריה
+-- עצמה כבר נבדקת בנפרד בתנאי photographer_id.
+create or replace function public.participant_belongs_to_gallery(p_participant_id uuid, p_gallery_id uuid)
+returns boolean as $$
+  select exists (
+    select 1 from public.gallery_participants
+    where id = p_participant_id and gallery_id = p_gallery_id
+  );
+$$ language sql stable security definer set search_path = public;
+
 create policy "photographers see own galleries" on galleries
-  for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()));
+  for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
+  with check (
+    photographer_id in (select id from photographers where auth_user_id = auth.uid())
+    and client_id in (
+      select id from clients where photographer_id in (
+        select id from photographers where auth_user_id = auth.uid()
+      )
+    )
+    and (owner_participant_id is null or public.participant_belongs_to_gallery(owner_participant_id, id))
+  );
 
 create policy "photographers see own photos" on photos
   for all using (gallery_id in (
@@ -377,7 +420,17 @@ create policy "photographers see own selections" on selections
     select id from galleries where photographer_id in (
       select id from photographers where auth_user_id = auth.uid()
     )
-  ));
+  ))
+  with check (
+    gallery_id in (
+      select id from galleries where photographer_id in (
+        select id from photographers where auth_user_id = auth.uid()
+      )
+    )
+    and photo_id in (select p.id from photos p where p.gallery_id = selections.gallery_id)
+    and participant_id in (select gp.id from gallery_participants gp where gp.gallery_id = selections.gallery_id)
+  );
+-- ===== סוף with check חוצה-דיירים =====
 
 create policy "photographers see own gallery participants" on gallery_participants
   for all using (gallery_id in (
@@ -510,6 +563,16 @@ create policy "photographers see own sync jobs" on sync_jobs
 create or replace function update_gallery_last_activity()
 returns trigger as $$
 begin
+  -- תגובת צלמת להערה (photographer_reply/photographer_reply_at, ראו
+  -- app/api/galleries/[id]/photos/[photoId]/reply) היא לא "פעילות של הלקוחה" -
+  -- בלי הדילוג הזה כל תגובה הייתה מזיזה את last_activity_at (ומשבשת תזכורות)
+  -- ואף מעבירה גלריה sent ל-in_progress בלי שהלקוחה נגעה בה.
+  if tg_op = 'UPDATE'
+     and (to_jsonb(new) - 'photographer_reply' - 'photographer_reply_at')
+         = (to_jsonb(old) - 'photographer_reply' - 'photographer_reply_at') then
+    return new;
+  end if;
+
   update galleries
   set last_activity_at = now(),
       status = case when status in ('draft', 'sent') then 'in_progress' else status end
@@ -521,6 +584,45 @@ $$ language plpgsql;
 create trigger trg_selections_activity
 after insert or update or delete on selections
 for each row execute function update_gallery_last_activity();
+
+-- ===== הגנה על מעברי סטטוס של galleries (רק service_role) =====
+-- מעבר ל-completed (app/api/gallery/[id]/finish) ול-expired (app/api/cron/tick)
+-- נעשים רק בצד שרת עם מפתח service_role. בלי ההגנה הזו צלמת מחוברת יכלה
+-- מקונסולת הדפדפן ליצור גלריה ישירות כ-completed/expired (ולעקוף את
+-- enforce_active_gallery_limit, שלא סופר גלריות כאלה), להכניס גלריה עם
+-- reopened_for_selection_at מוכן מראש, או לסמן בעצמה גלריה כ-completed.
+-- חוסמים רק תפקידי JWT של לקוח (authenticated/anon) - service_role וחיבור
+-- ישיר ל-DB (SQL editor, auth.role() = null) עוברים כרגיל. פתיחה/נעילה מחדש
+-- של reopened_for_selection_at ב-UPDATE (app/api/galleries/[id]/reopen-selection,
+-- session הצלמת) נשארת מותרת בכוונה, וגם המעבר האוטומטי draft/sent ->
+-- in_progress מטריגר trg_selections_activity.
+create or replace function guard_gallery_status_transitions()
+returns trigger as $$
+begin
+  if coalesce(auth.role(), '') not in ('authenticated', 'anon') then
+    return new;
+  end if;
+
+  if tg_op = 'INSERT' then
+    if new.status is null or new.status not in ('draft', 'sent') then
+      raise exception 'GALLERY_STATUS_FORBIDDEN: גלריה חדשה יכולה להיווצר רק בסטטוס draft או sent';
+    end if;
+    if new.reopened_for_selection_at is not null then
+      raise exception 'GALLERY_STATUS_FORBIDDEN: אי אפשר להגדיר reopened_for_selection_at ביצירת גלריה';
+    end if;
+  elsif new.status is distinct from old.status and new.status in ('completed', 'expired') then
+    raise exception 'GALLERY_STATUS_FORBIDDEN: מעבר לסטטוס completed/expired מותר רק מצד השרת';
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_guard_gallery_status_transitions on galleries;
+create trigger trg_guard_gallery_status_transitions
+before insert or update on galleries
+for each row execute function guard_gallery_status_transitions();
+-- ===== סוף הגנה על מעברי סטטוס =====
 
 -- מעדכן אוטומטית את delivered_at בהעלאה הראשונה של תמונה סופית (ראו
 -- delivered_photos למעלה) - כך שהצלמת לא צריכה לזכור ללחוץ גם על כפתור
@@ -567,8 +669,8 @@ for each row execute function public.handle_new_photographer();
 -- המגבלה לגמרי ע"י UPDATE ישיר על גלריה completed/expired קיימת שלה בחזרה
 -- לסטטוס פעיל (draft/sent/in_progress) - קריאת update אף פעם לא מפעילה
 -- טריגר שמוגדר רק על insert. בודקים את הספירה רק כשגלריה בפועל "נפתחת" -
--- insert של גלריה לא-completed/expired, או update שהופך גלריה completed/
--- expired ללא-כזו - כדי לא להריץ את הבדיקה בכל update רגיל של גלריה שכבר
+-- insert של גלריה פעילה, או update שהופך גלריה לא-פעילה לפעילה (status
+-- חוזר מ-completed/expired, או reopened_for_selection_at הופך ללא-null) - כדי לא להריץ את הבדיקה בכל update רגיל של גלריה שכבר
 -- פעילה (למשל מעבר sent -> in_progress בכל כניסה של לקוחה, ראו
 -- app/api/gallery/[id]/route.ts).
 create or replace function enforce_active_gallery_limit()
@@ -576,14 +678,21 @@ returns trigger as $$
 declare
   active_count int;
   unlimited boolean;
+  new_active boolean;
   should_check boolean;
 begin
-  if new.status in ('completed', 'expired') then
+  -- "פעילה" = עדיין בבחירה (status לא completed/expired) או שהצלמת פתחה
+  -- אותה מחדש לבחירה (reopened_for_selection_at) - מבחינת הלקוחה זו גלריה
+  -- פעילה לכל דבר, ובלי זה פתיחה מחדש (גם ישירות מהדפדפן דרך ה-RLS) עקפה
+  -- את המגבלה.
+  new_active := new.status not in ('completed', 'expired') or new.reopened_for_selection_at is not null;
+
+  if not new_active then
     should_check := false;
   elsif tg_op = 'INSERT' then
     should_check := true;
   else
-    should_check := old.status in ('completed', 'expired');
+    should_check := not (old.status not in ('completed', 'expired') or old.reopened_for_selection_at is not null);
   end if;
 
   if not should_check then
@@ -605,7 +714,8 @@ begin
   select count(*) into active_count
   from galleries
   where photographer_id = new.photographer_id
-    and status not in ('completed', 'expired');
+    and id <> new.id
+    and (status not in ('completed', 'expired') or reopened_for_selection_at is not null);
 
   if active_count >= 1 then
     raise exception 'LIMIT_ACTIVE_GALLERY: חשבון חינמי מוגבל לגלריה פעילה אחת - השלימי או מחקי גלריה קיימת כדי ליצור חדשה';
@@ -615,6 +725,7 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists trg_enforce_active_gallery_limit on galleries;
 create trigger trg_enforce_active_gallery_limit
 before insert or update on galleries
 for each row execute function enforce_active_gallery_limit();
@@ -744,6 +855,33 @@ $$ language plpgsql;
 create trigger trg_protect_ai_usage_counters
 before insert or update on photographers
 for each row execute function protect_ai_usage_counters();
+
+-- ===== הגנה על עמודות פנימיות של photographers =====
+-- shoot_summary_sent_on נכתב רק ע"י ה-cron (app/api/cron/tick, service_role) -
+-- בלי ההגנה הזו צלמת יכלה לשנות אותו בעצמה ולשבש את ה-idempotency של הסיכום
+-- היומי. אותו דפוס בדיוק כמו protect_ai_usage_counters למעלה.
+create or replace function protect_internal_photographer_columns()
+returns trigger as $$
+begin
+  if current_setting('role', true) = 'service_role' then
+    return new;
+  end if;
+
+  if tg_op = 'INSERT' then
+    new.shoot_summary_sent_on := null;
+  elsif new.shoot_summary_sent_on is distinct from old.shoot_summary_sent_on then
+    new.shoot_summary_sent_on := old.shoot_summary_sent_on;
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_protect_internal_photographer_columns on photographers;
+create trigger trg_protect_internal_photographer_columns
+before insert or update on photographers
+for each row execute function protect_internal_photographer_columns();
+-- ===== סוף הגנה על עמודות פנימיות =====
 
 -- הגנת brute-force על קוד הגישה (clients.failed_access_attempts/locked_until,
 -- ראו lib/accessLockout.ts) הייתה מיושמת ב-app/api/verify-access/route.ts כ-
@@ -888,12 +1026,33 @@ begin
 end;
 $$ language plpgsql;
 
+-- ===== הרשאות הרצה לפונקציות האטומיות - service_role בלבד =====
+-- שלושתן נקראות רק עם מפתח service_role (app/api/verify-access,
+-- app/api/photographer/design-theme, app/api/gallery/[id]/ai-picks). Supabase
+-- נותן כברירת מחדל execute ל-anon/authenticated על כל פונקציה ב-public, כך שבלי
+-- זה כל אחד יכול היה לקרוא להן ישירות דרך /rest/v1/rpc - למשל לנעול לקוחה
+-- אחרת (register_failed_access_attempt) או לשרוף מכסת AI של צלמת אחרת.
+revoke execute on function register_failed_access_attempt(uuid) from public, anon, authenticated;
+revoke execute on function reserve_theme_gen_quota(uuid, int) from public, anon, authenticated;
+revoke execute on function reserve_ai_picks_quota(uuid, int) from public, anon, authenticated;
+grant execute on function register_failed_access_attempt(uuid) to service_role;
+grant execute on function reserve_theme_gen_quota(uuid, int) to service_role;
+grant execute on function reserve_ai_picks_quota(uuid, int) to service_role;
+-- ===== סוף הרשאות הרצה =====
+
 -- אם כבר הרצת גרסה קודמת של הסכמה בלי שלוש הפונקציות האטומיות למעלה
 -- (register_failed_access_attempt / reserve_theme_gen_quota / reserve_ai_picks_quota) -
 -- שסוגרות מרוצי בדיקה-ואז-כתיבה (TOCTOU) בין בקשות מקבילות על אותה שורת
 -- client/photographer - פשוט מריצים מחדש את שלוש ה-create or replace function
 -- למעלה על פרויקט Supabase שכבר קיים (create or replace הוא idempotent,
 -- לא צריך drop קודם); אין טריגר/עמודה חדשה שדורשת migration נפרדת כאן.
+
+-- אם כבר הרצת גרסה קודמת בלי "עיצוב הגלריה עם AI" (עיצוב מותאם אישית ומונה
+-- שימוש יומי, app/api/photographer/design-theme), מריצים גם את זה - חייב לרוץ
+-- לפני הבלוק של protect_ai_usage_counters למטה, שמפנה לעמודות האלה:
+-- alter table photographers add column if not exists custom_theme jsonb;
+-- alter table photographers add column if not exists theme_gen_count int default 0 not null;
+-- alter table photographers add column if not exists theme_gen_date date;
 
 -- אם כבר הרצת גרסה קודמת של הסכמה בלי ה-with check על "photographers see own
 -- row" ובלי ההגנה על insert/מוני ה-AI (הפגיעות: צלמת מחוברת יכלה למחוק את
@@ -1148,8 +1307,22 @@ create policy "photographers update own logo" on storage.objects
     )
   );
 
-create policy "public read logos" on storage.objects
-  for select using (bucket_id = 'photographer-logos');
+-- ===== קריאת לוגו: בלי policy ציבורי של select =====
+-- היה כאן "public read logos" (for select לכולם) - מיותר לגמרי לתצוגה, כי
+-- ב-bucket ציבורי ה-URL הציבורי (getPublicUrl) לא עובר דרך RLS בכלל, אבל הוא
+-- אפשר לכל אחד לקרוא list() על ה-bucket ולמפות את כל תיקיות הצלמות. במקומו
+-- select רק על התיקייה של הצלמת עצמה - נדרש כי upload עם upsert: true
+-- (app/dashboard/settings/page.tsx) צריך גם הרשאת select על האובייקט הקיים.
+drop policy if exists "public read logos" on storage.objects;
+drop policy if exists "photographers read own logo" on storage.objects;
+create policy "photographers read own logo" on storage.objects
+  for select using (
+    bucket_id = 'photographer-logos'
+    and (storage.foldername(name))[1]::uuid in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  );
+-- ===== סוף קריאת לוגו =====
 
 -- אם כבר הרצת גרסה קודמת של הסכמה בלי מסירת תמונות ערוכות בתוך האפליקציה
 -- (delivered_photos, הטריגר mark_gallery_delivered, ו-policies select/delete
@@ -1304,3 +1477,222 @@ create policy "public read logos" on storage.objects
 -- alter table photos add column if not exists is_gift boolean default false not null;
 -- alter table photos add column if not exists gift_message text check (gift_message is null or char_length(gift_message) <= 200);
 -- create index if not exists idx_photos_gallery_gift on photos(gallery_id) where is_gift;
+
+
+-- אם כבר הרצת גרסה קודמת שבה גלריה שנפתחה מחדש לבחירה (reopened_for_selection_at)
+-- לא נספרה במגבלת הגלריה הפעילה של חשבון חינמי, מריצים גם את זה:
+-- create or replace function enforce_active_gallery_limit()
+-- returns trigger as $$
+-- declare
+--   active_count int;
+--   unlimited boolean;
+--   new_active boolean;
+--   should_check boolean;
+-- begin
+--   -- "פעילה" = עדיין בבחירה (status לא completed/expired) או שהצלמת פתחה
+--   -- אותה מחדש לבחירה (reopened_for_selection_at) - מבחינת הלקוחה זו גלריה
+--   -- פעילה לכל דבר, ובלי זה פתיחה מחדש (גם ישירות מהדפדפן דרך ה-RLS) עקפה
+--   -- את המגבלה.
+--   new_active := new.status not in ('completed', 'expired') or new.reopened_for_selection_at is not null;
+--
+--   if not new_active then
+--     should_check := false;
+--   elsif tg_op = 'INSERT' then
+--     should_check := true;
+--   else
+--     should_check := not (old.status not in ('completed', 'expired') or old.reopened_for_selection_at is not null);
+--   end if;
+--
+--   if not should_check then
+--     return new;
+--   end if;
+--
+--   select is_unlimited into unlimited from photographers where id = new.photographer_id;
+--   if unlimited then
+--     return new;
+--   end if;
+--
+--   -- מנעול advisory בתוך הטרנזקציה (לפי photographer_id), לפני הספירה: בלי זה
+--   -- שתי הכנסות/עדכונים מקבילים על אותה צלמת יכולים לקרוא את אותה ספירה
+--   -- "לפני" ולעבור את הבדיקה שניהם (race condition קלאסי - TOCTOU), ולחרוג
+--   -- בפועל ממגבלת גלריה פעילה אחת. המנעול משתחרר אוטומטית בסוף הטרנזקציה,
+--   -- אין row ממשי לנעול כי הספירה נגזרת (derived) ולא שורה בודדת.
+--   perform pg_advisory_xact_lock(hashtext(new.photographer_id::text));
+--
+--   select count(*) into active_count
+--   from galleries
+--   where photographer_id = new.photographer_id
+--     and id <> new.id
+--     and (status not in ('completed', 'expired') or reopened_for_selection_at is not null);
+--
+--   if active_count >= 1 then
+--     raise exception 'LIMIT_ACTIVE_GALLERY: חשבון חינמי מוגבל לגלריה פעילה אחת - השלימי או מחקי גלריה קיימת כדי ליצור חדשה';
+--   end if;
+--
+--   return new;
+-- end;
+-- $$ language plpgsql;
+--
+-- drop trigger if exists trg_enforce_active_gallery_limit on galleries;
+-- create trigger trg_enforce_active_gallery_limit
+-- before insert or update on galleries
+-- for each row execute function enforce_active_gallery_limit();
+
+-- ===== הקשחת אבטחה ושלמות נתונים (תיקוני ביקורת) =====
+-- אם כבר הרצת גרסה קודמת של הסכמה בלי: דילוג על תגובת צלמת בטריגר הפעילות,
+-- with check חוצה-דיירים על galleries/selections, on delete cascade על
+-- auth_user_id, אינדקסי FK, ביטול select ציבורי על לוגו, policy מפוצל על
+-- photographers, הגנה על מעברי סטטוס של galleries, הגנה על
+-- shoot_summary_sent_on והרשאות execute לפונקציות האטומיות - מריצים גם את זה
+-- על פרויקט Supabase שכבר קיים (הכול idempotent, אפשר להריץ שוב):
+--
+-- 2. trg_selections_activity מדלג על תגובת צלמת בלבד
+-- create or replace function update_gallery_last_activity()
+-- returns trigger as $$
+-- begin
+--   if tg_op = 'UPDATE'
+--      and (to_jsonb(new) - 'photographer_reply' - 'photographer_reply_at')
+--          = (to_jsonb(old) - 'photographer_reply' - 'photographer_reply_at') then
+--     return new;
+--   end if;
+--
+--   update galleries
+--   set last_activity_at = now(),
+--       status = case when status in ('draft', 'sent') then 'in_progress' else status end
+--   where id = coalesce(new.gallery_id, old.gallery_id);
+--   return coalesce(new, old);
+-- end;
+-- $$ language plpgsql;
+--
+-- 3. with check חוצה-דיירים על galleries/selections
+-- create or replace function public.participant_belongs_to_gallery(p_participant_id uuid, p_gallery_id uuid)
+-- returns boolean as $$
+--   select exists (
+--     select 1 from public.gallery_participants
+--     where id = p_participant_id and gallery_id = p_gallery_id
+--   );
+-- $$ language sql stable security definer set search_path = public;
+--
+-- drop policy if exists "photographers see own galleries" on galleries;
+-- create policy "photographers see own galleries" on galleries
+--   for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
+--   with check (
+--     photographer_id in (select id from photographers where auth_user_id = auth.uid())
+--     and client_id in (
+--       select id from clients where photographer_id in (
+--         select id from photographers where auth_user_id = auth.uid()
+--       )
+--     )
+--     and (owner_participant_id is null or public.participant_belongs_to_gallery(owner_participant_id, id))
+--   );
+--
+-- drop policy if exists "photographers see own selections" on selections;
+-- create policy "photographers see own selections" on selections
+--   for all using (gallery_id in (
+--     select id from galleries where photographer_id in (
+--       select id from photographers where auth_user_id = auth.uid()
+--     )
+--   ))
+--   with check (
+--     gallery_id in (
+--       select id from galleries where photographer_id in (
+--         select id from photographers where auth_user_id = auth.uid()
+--       )
+--     )
+--     and photo_id in (select p.id from photos p where p.gallery_id = selections.gallery_id)
+--     and participant_id in (select gp.id from gallery_participants gp where gp.gallery_id = selections.gallery_id)
+--   );
+--
+-- 4. photographers.auth_user_id -> on delete cascade
+-- alter table photographers drop constraint if exists photographers_auth_user_id_fkey;
+-- alter table photographers add constraint photographers_auth_user_id_fkey
+--   foreign key (auth_user_id) references auth.users(id) on delete cascade;
+--
+-- 5. אינדקסים חסרים על FK
+-- create index if not exists idx_selections_photo on selections(photo_id);
+-- create index if not exists idx_selections_participant on selections(participant_id);
+-- create index if not exists idx_galleries_client on galleries(client_id);
+-- create index if not exists idx_shoots_client on shoots(client_id);
+-- create index if not exists idx_shoots_gallery on shoots(gallery_id);
+-- create index if not exists idx_sync_jobs_gallery on sync_jobs(gallery_id);
+--
+-- 6. לוגו: בלי select ציבורי (רק התיקייה של הצלמת עצמה, בשביל upsert)
+-- drop policy if exists "public read logos" on storage.objects;
+-- drop policy if exists "photographers read own logo" on storage.objects;
+-- create policy "photographers read own logo" on storage.objects
+--   for select using (
+--     bucket_id = 'photographer-logos'
+--     and (storage.foldername(name))[1]::uuid in (
+--       select id from photographers where auth_user_id = auth.uid()
+--     )
+--   );
+--
+-- 7. photographers: select + update בלבד (בלי delete/insert מה-session)
+-- drop policy if exists "photographers see own row" on photographers;
+-- drop policy if exists "photographers select own row" on photographers;
+-- drop policy if exists "photographers update own row" on photographers;
+-- create policy "photographers select own row" on photographers
+--   for select using (auth.uid() = auth_user_id);
+-- create policy "photographers update own row" on photographers
+--   for update using (auth.uid() = auth_user_id)
+--   with check (auth.uid() = auth_user_id);
+--
+-- 8. מעברי סטטוס של galleries - completed/expired רק מ-service_role
+-- create or replace function guard_gallery_status_transitions()
+-- returns trigger as $$
+-- begin
+--   if coalesce(auth.role(), '') not in ('authenticated', 'anon') then
+--     return new;
+--   end if;
+--
+--   if tg_op = 'INSERT' then
+--     if new.status is null or new.status not in ('draft', 'sent') then
+--       raise exception 'GALLERY_STATUS_FORBIDDEN: גלריה חדשה יכולה להיווצר רק בסטטוס draft או sent';
+--     end if;
+--     if new.reopened_for_selection_at is not null then
+--       raise exception 'GALLERY_STATUS_FORBIDDEN: אי אפשר להגדיר reopened_for_selection_at ביצירת גלריה';
+--     end if;
+--   elsif new.status is distinct from old.status and new.status in ('completed', 'expired') then
+--     raise exception 'GALLERY_STATUS_FORBIDDEN: מעבר לסטטוס completed/expired מותר רק מצד השרת';
+--   end if;
+--
+--   return new;
+-- end;
+-- $$ language plpgsql;
+--
+-- drop trigger if exists trg_guard_gallery_status_transitions on galleries;
+-- create trigger trg_guard_gallery_status_transitions
+-- before insert or update on galleries
+-- for each row execute function guard_gallery_status_transitions();
+--
+-- 9. shoot_summary_sent_on - כתיבה רק מ-service_role
+-- create or replace function protect_internal_photographer_columns()
+-- returns trigger as $$
+-- begin
+--   if current_setting('role', true) = 'service_role' then
+--     return new;
+--   end if;
+--
+--   if tg_op = 'INSERT' then
+--     new.shoot_summary_sent_on := null;
+--   elsif new.shoot_summary_sent_on is distinct from old.shoot_summary_sent_on then
+--     new.shoot_summary_sent_on := old.shoot_summary_sent_on;
+--   end if;
+--
+--   return new;
+-- end;
+-- $$ language plpgsql;
+--
+-- drop trigger if exists trg_protect_internal_photographer_columns on photographers;
+-- create trigger trg_protect_internal_photographer_columns
+-- before insert or update on photographers
+-- for each row execute function protect_internal_photographer_columns();
+--
+-- 10. פונקציות אטומיות - execute רק ל-service_role
+-- revoke execute on function register_failed_access_attempt(uuid) from public, anon, authenticated;
+-- revoke execute on function reserve_theme_gen_quota(uuid, int) from public, anon, authenticated;
+-- revoke execute on function reserve_ai_picks_quota(uuid, int) from public, anon, authenticated;
+-- grant execute on function register_failed_access_attempt(uuid) to service_role;
+-- grant execute on function reserve_theme_gen_quota(uuid, int) to service_role;
+-- grant execute on function reserve_ai_picks_quota(uuid, int) to service_role;
+-- ===== סוף הקשחת אבטחה ושלמות נתונים =====

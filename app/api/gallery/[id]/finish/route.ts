@@ -21,7 +21,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: gallery } = await supabaseAdmin
     .from('galleries')
-    .select('status, expires_at, photographer_id, owner_participant_id, clients(full_name, email)')
+    .select('status, expires_at, reopened_for_selection_at, photographer_id, owner_participant_id, clients(full_name, email)')
     .eq('id', galleryId)
     .single();
 
@@ -39,11 +39,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'תוקף הגלריה פג' }, { status: 410 });
   }
 
-  if (gallery.status !== 'completed') {
-    await supabaseAdmin
+  // רץ גם כשהגלריה כבר completed אבל הצלמת פתחה אותה מחדש
+  // (reopened_for_selection_at) - סיום חוזר נועל שוב ושולח שוב את המיילים.
+  // קריאה כפולה על גלריה נעולה לא עושה כלום (בלי מייל כפול).
+  if (gallery.status !== 'completed' || gallery.reopened_for_selection_at) {
+    const { error: updateError } = await supabaseAdmin
       .from('galleries')
-      .update({ status: 'completed', last_activity_at: new Date().toISOString() })
+      .update({ status: 'completed', reopened_for_selection_at: null, last_activity_at: new Date().toISOString() })
       .eq('id', galleryId);
+
+    if (updateError) {
+      return NextResponse.json({ error: 'שליחת הבחירה נכשלה' }, { status: 500 });
+    }
 
     const { data: selectedRows } = await supabaseAdmin
       .from('selections')

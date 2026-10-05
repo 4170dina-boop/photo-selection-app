@@ -3,18 +3,34 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { checkGalleryWritable } from './galleryAccess';
 
 // בונה מוק מינימלי ל-Supabase שתומך רק בשרשרת המדויקת שגם checkGalleryWritable
-// משתמשת בה: from().select().eq().single(). לא צריך יותר מזה לבדיקה הזו.
+// משתמשת בה: from().select().eq().single(). המוק בודק גם את הטבלה, את מחרוזת
+// העמודות ואת ה-id - אחרת הסרת reopened_for_selection_at מה-select (או סינון
+// לפי עמודה/ערך שגוי) הייתה עוברת בשקט, כי המוק מחזיר את השדה בכל מקרה.
+const EXPECTED_COLUMNS = ['status', 'expires_at', 'reopened_for_selection_at'];
+
 function mockSupabase(
-  gallery: { status: string; expires_at: string | null; reopened_for_selection_at?: string | null } | null
+  gallery: { status: string; expires_at: string | null; reopened_for_selection_at?: string | null } | null,
+  expectedId = 'gallery-1'
 ): SupabaseClient {
   return {
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          single: async () => ({ data: gallery, error: gallery ? null : { message: 'not found' } }),
-        }),
-      }),
-    }),
+    from: (table: string) => {
+      expect(table).toBe('galleries');
+      return {
+        select: (columns: string) => {
+          const requested = columns.split(',').map((c) => c.trim());
+          expect(requested).toEqual(expect.arrayContaining(EXPECTED_COLUMNS));
+          return {
+            eq: (column: string, value: string) => {
+              expect(column).toBe('id');
+              expect(value).toBe(expectedId);
+              return {
+                single: async () => ({ data: gallery, error: gallery ? null : { message: 'not found' } }),
+              };
+            },
+          };
+        },
+      };
+    },
   } as unknown as SupabaseClient;
 }
 
@@ -33,7 +49,7 @@ describe('checkGalleryWritable', () => {
   });
 
   it('rejects with 404 when the gallery does not exist', async () => {
-    const supabase = mockSupabase(null);
+    const supabase = mockSupabase(null, 'missing-gallery');
     const result = await checkGalleryWritable(supabase, 'missing-gallery');
     expect(result).toEqual({ ok: false, status: 404, error: 'גלריה לא נמצאה' });
   });

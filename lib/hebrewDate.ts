@@ -3,7 +3,7 @@
 // כבר נותן לנו את שם החודש העברי ואת המספרים (יום/שנה) בלוח השנה העברי, אבל
 // לא ממיר אותם לאותיות גימטריה בעצמו (בדקנו: numberingSystem: 'hebr' לא עובד
 // על Intl.DateTimeFormat) - לכן ההמרה למספרים עבריים כתובה כאן ידנית.
-function numberToHebrewLetters(num: number): string {
+export function numberToHebrewLetters(num: number): string {
   const values: [number, string][] = [
     [400, 'ת'], [300, 'ש'], [200, 'ר'], [100, 'ק'],
     [90, 'צ'], [80, 'פ'], [70, 'ע'], [60, 'ס'], [50, 'נ'], [40, 'מ'], [30, 'ל'], [20, 'כ'], [10, 'י'],
@@ -13,16 +13,26 @@ function numberToHebrewLetters(num: number): string {
   let n = num;
   let letters = '';
 
+  // מאות קודם, כדי ש-715 ייכתב תשט״ו ולא טות״ש.
+  for (const [value, letter] of values) {
+    if (value < 100) break;
+    while (n >= value) {
+      letters += letter;
+      n -= value;
+    }
+  }
+
   // 15/16 נכתבים ט״ו/ט״ז ולא י״ה/י״ו, כדי לא לאיית את שם ה'.
-  if (n % 100 === 15) {
+  if (n === 15) {
     letters += 'טו';
-    n -= 15;
-  } else if (n % 100 === 16) {
+    n = 0;
+  } else if (n === 16) {
     letters += 'טז';
-    n -= 16;
+    n = 0;
   }
 
   for (const [value, letter] of values) {
+    if (value >= 100) continue;
     while (n >= value) {
       letters += letter;
       n -= value;

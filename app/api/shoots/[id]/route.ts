@@ -17,7 +17,7 @@ async function loadOwnedShoot(supabase: ReturnType<typeof createClient>, shootId
 
   const { data: shoot } = await supabase
     .from('shoots')
-    .select('id, client_id, shoot_date, start_time')
+    .select('id, client_id, shoot_date, start_time, location')
     .eq('id', shootId)
     .eq('photographer_id', photographer.id)
     .single();
@@ -90,11 +90,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     gallery_id: body.galleryId || null,
   };
 
-  // הצילום הוזז (או הוחלפה לקוחה) - התזכורת שכבר נשלחה (אם נשלחה) הייתה על
+  // הצילום הוזז (מועד/מיקום, או הוחלפה לקוחה) - התזכורת שכבר נשלחה (אם נשלחה) הייתה על
   // המועד הישן, אז מאפסים כדי שה-cron ישלח תזכורת חדשה על המועד החדש.
   const moved =
     fields.value.shoot_date !== shoot.shoot_date ||
     fields.value.start_time !== formatShootTime(shoot.start_time) ||
+    fields.value.location !== shoot.location ||
     client.id !== shoot.client_id;
   if (moved) update.reminder_sent_at = null;
 

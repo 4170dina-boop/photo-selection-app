@@ -433,10 +433,10 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   }
 
   // toggle - פותח ללקוחה עריכה חוזרת של הבחירה בלי לשנות status (עדיין
-  // 'completed') כדי לא להפעיל בטעות את מגבלת הגלריה הפעילה האחת בחשבון
-  // חינמי (trg_enforce_active_gallery_limit) - ראו ההערה המלאה ב-
-  // supabase/schema.sql על reopened_for_selection_at. אותה קריאה גם נועלת
-  // בחזרה אם כבר פתוחה.
+  // 'completed') - ראו ההערה המלאה ב-supabase/schema.sql על
+  // reopened_for_selection_at. בחשבון חינמי גלריה שנפתחה מחדש נספרת כפעילה,
+  // אז השרת מחזיר שגיאה ברורה אם יש כבר גלריה פעילה אחרת. אותה קריאה גם
+  // נועלת בחזרה אם כבר פתוחה.
   async function handleToggleReopenSelection() {
     setReopenMessage('');
     setError('');
@@ -456,7 +456,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   }
 
   async function handleDelete() {
-    if (!window.confirm('למחוק את הגלריה הזו? כל התמונות והבחירות יימחקו לצמיתות - אי אפשר לבטל את זה.')) return;
+    if (!window.confirm('למחוק את הגלריה הזו? כל התמונות, הבחירות והיסטוריית התשלומים יימחקו לצמיתות - אי אפשר לבטל את זה.')) return;
 
     setDeleting(true);
     const res = await fetch(`/api/galleries/${galleryId}`, { method: 'DELETE' });
@@ -686,7 +686,9 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
 
             </button>
           )}
-          {status === 'completed' && (
+          {/* אחרי שתמונות המקור נמחקו (originalsCleanedUpAt) אין מה לבחור מתוכו -
+              מסתירים את הפתיחה מחדש (השרת גם דוחה), אבל נעילה בחזרה תמיד זמינה. */}
+          {status === 'completed' && (reopenedForSelectionAt || !originalsCleanedUpAt) && (
             <button
               type="button"
               onClick={handleToggleReopenSelection}

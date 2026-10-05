@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { listAllKeys, deleteObjects } from '@/lib/r2';
-import { isValidEmail } from '@/lib/email';
+import { parseAdditionalInviteEmails } from '@/lib/email';
+import { syncPaidAtAfterTotalChange } from '@/lib/galleryPayments';
 
 // עריכה/מחיקה של גלריה קיימת, בדיוק כמו app/api/galleries/route.ts (יצירה) -
 // רץ עם session הצלם (לא service key), כך שה-RLS הקיים כבר דואג שאי אפשר
@@ -73,7 +74,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     expiresAt?: string | null;
     photographerNotes?: string | null;
     reminderDays?: number | null;
-    additionalInviteEmails?: string[];
+    additionalInviteEmails?: unknown;
   };
   try {
     body = await req.json();
@@ -93,13 +94,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   // כמו ב-POST ליצירה (app/api/galleries/route.ts) - אופציונלי, אבל אם ניתנו
   // כתובות הן חייבות להיות תקינות.
-  const additionalInviteEmails = (body.additionalInviteEmails ?? [])
-    .map((email) => email.trim())
-    .filter((email) => email.length > 0);
-
-  if (additionalInviteEmails.some((email) => !isValidEmail(email))) {
-    return NextResponse.json({ error: 'אחת מכתובות המייל הנוספות לא תקינה' }, { status: 400 });
+  const parsedInviteEmails = parseAdditionalInviteEmails(body.additionalInviteEmails);
+  if (!parsedInviteEmails.ok) {
+    return NextResponse.json({ error: parsedInviteEmails.error }, { status: 400 });
   }
+  const additionalInviteEmails = parsedInviteEmails.value;
 
   const { error: clientError } = await supabase
     .from('clients')
@@ -132,6 +131,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (packageError) {
     return NextResponse.json({ error: 'עדכון החבילה נכשל' }, { status: 500 });
   }
+
+  // מחיר/מכסת החבילה אולי השתנו - paid_at נגזר מהיתרה כשיש תשלומים (best-effort)
+  await syncPaidAtAfterTotalChange(supabase, gallery.id);
 
   return NextResponse.json({ success: true });
 }
@@ -172,11 +174,15 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   // הלקוחה שייכת לגלריה אחת בלבד במודל הנוכחי - מוחקים גם אותה כדי לא להשאיר יתום.
   // חריג: אם יש לה צילום ביומן (shoots.client_id, on delete cascade) - מחיקת
   // הלקוחה הייתה מוחקת בשקט גם את הצילום, אז במקרה הזה משאירים אותה.
-  const { count: shootCount } = await supabase
+  // מוחקים רק כשהספירה הצליחה ובאמת 0 - שגיאה בשאילתה (count=null) לא
+  // אומרת שאין צילומים, ומחיקה במקרה כזה הייתה מוחקת בשקט גם את הצילום.
+  const { count: shootCount, error: shootCountError } = await supabase
     .from('shoots')
     .select('id', { count: 'exact', head: true })
     .eq('client_id', gallery.client_id);
-  if (!shootCount) {
+  if (shootCountError) {
+    console.error('[gallery delete] ספירת צילומים ללקוחה נכשלה, הלקוחה לא נמחקה:', shootCountError);
+  } else if (shootCount === 0) {
     await supabase.from('clients').delete().eq('id', gallery.client_id);
   }
 

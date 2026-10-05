@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import sharp from 'sharp';
-import { computeSharpnessScore } from './sharpness';
+import { computeSharpnessScore, BLUR_THRESHOLD } from './sharpness';
 
 // בונה תמונת בדיקה עם הרבה קצוות (רשת משבצות) - יש לזה מרקם אמיתי לנתח,
 // בניגוד לצבע אחיד שהיה נותן variance אפס תמיד (גם לפני טשטוש)
@@ -39,5 +39,20 @@ describe('computeSharpnessScore', () => {
 
     const score = await computeSharpnessScore(flat);
     expect(score).toBeLessThan(1);
+  });
+
+  // BLUR_THRESHOLD הוא הסף שבו app/api/gallery/[id]/route.ts מסמן תג "ייתכן
+  // שמטושטשת" (sharpness_score < BLUR_THRESHOLD) - בודקים שהוא באמת מפריד
+  // בין תמונה חדה לתמונה מטושטשת ולתמונה שטוחה
+  it('classifies sharp vs blurred/flat images correctly against BLUR_THRESHOLD', async () => {
+    const sharpImage = await buildCheckerboard();
+    const blurredImage = await sharp(sharpImage).blur(8).toBuffer();
+    const flat = await sharp({ create: { width: 200, height: 200, channels: 3, background: { r: 128, g: 128, b: 128 } } })
+      .png()
+      .toBuffer();
+
+    expect(await computeSharpnessScore(sharpImage)).toBeGreaterThanOrEqual(BLUR_THRESHOLD);
+    expect(await computeSharpnessScore(blurredImage)).toBeLessThan(BLUR_THRESHOLD);
+    expect(await computeSharpnessScore(flat)).toBeLessThan(BLUR_THRESHOLD);
   });
 });

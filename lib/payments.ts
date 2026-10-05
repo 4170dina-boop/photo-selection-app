@@ -74,7 +74,9 @@ export function computePaymentSummary(input: {
   };
 }
 
-export type PaymentChange = 'payment_added' | 'payment_deleted' | 'amount_changed';
+// total_changed = הסכום מהחבילה השתנה בעקיפין (בחירה של הלקוחה, סימון מתנה,
+// עריכת החבילה) - לא דרך מסך התשלומים. מתנהג כמו amount_changed.
+export type PaymentChange = 'payment_added' | 'payment_deleted' | 'amount_changed' | 'total_changed';
 
 // הערך החדש של galleries.paid_at אחרי שינוי בתשלומים/בסכום לתשלום.
 //
@@ -83,6 +85,8 @@ export type PaymentChange = 'payment_added' | 'payment_deleted' | 'amount_change
 //   את הסכום (שומר את התאריך המקורי אם כבר היה מסומן), ומתבטל כשלא.
 // - שינוי הסכום לתשלום בגלריה *בלי אף תשלום רשום* לא נוגע ב-paid_at - כדי
 //   לא למחוק סימון ידני ישן של צלמת שלא משתמשת ברישום תשלומים בכלל.
+// - מחיקת התשלום האחרון (לא נשאר אף תשלום) גם היא לא נוגעת ב-paid_at - אין
+//   יותר ממה לגזור, וסימון ידני שקדם לרישום התשלומים לא אמור להימחק איתו.
 // - הכפתור הידני (toggle-paid) ממשיך לעבוד כמו קודם ולא עובר דרך כאן; הוא
 //   "דורס" עד השינוי הבא ברשימת התשלומים.
 export function nextPaidAt(
@@ -91,7 +95,7 @@ export function nextPaidAt(
   change: PaymentChange,
   nowIso: string
 ): string | null {
-  if (change === 'amount_changed' && summary.paymentCount === 0) return currentPaidAt;
+  if (summary.paymentCount === 0 && change !== 'payment_added') return currentPaidAt;
   const fullyPaid = summary.paid > 0 && summary.paid >= summary.total;
   return fullyPaid ? currentPaidAt ?? nowIso : null;
 }

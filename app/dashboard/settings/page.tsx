@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import { createClient } from '@/lib/supabase/client';
+import { classifySignInError, isRateLimitError, RATE_LIMIT_MESSAGE } from '@/lib/authErrors';
 
 const DEFAULT_BRAND_COLOR = '#c98f89'; // theme.gold - הגוון הקבוע, מוצג כברירת מחדל בבורר הצבע
 const LOGO_BUCKET = 'photographer-logos';
@@ -43,6 +44,7 @@ export default function SettingsPage() {
   const [themeError, setThemeError] = useState('');
   const [themeSaved, setThemeSaved] = useState(false);
 
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
@@ -252,17 +254,53 @@ export default function SettingsPage() {
     }
 
     setChangingPassword(true);
-    // בניגוד ל-app/login/reset-password/page.tsx (שם ה-session הוא "recovery"
-    // מקישור במייל), כאן כבר יש session רגיל של צלמת מחוברת - אותה קריאה
-    // בדיוק (updateUser) עובדת גם עליו, בלי צורך בסיסמה הישנה.
+    // Supabase מאפשר updateUser על כל session מאומת, בלי הסיסמה הישנה - כך
+    // שמי שתפס מחשב פתוח/session גנוב היה יכול להשתלט על החשבון. לכן כאן
+    // (בניגוד ל-app/login/reset-password, שם ה-session הוא "recovery" מקישור
+    // במייל) קודם מאמתים את הסיסמה הנוכחית מול Supabase.
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user?.email) {
+      setChangingPassword(false);
+      setPasswordError('לא הצלחנו לזהות את החשבון, נסי להתחבר מחדש');
+      return;
+    }
+
+    const { error: verifyError } = await supabase.auth.signInWithPassword({
+      email: user.email,
+      password: currentPassword,
+    });
+    if (verifyError) {
+      setChangingPassword(false);
+      const kind = classifySignInError(verifyError);
+      if (kind === 'rate_limited') {
+        setPasswordError(RATE_LIMIT_MESSAGE);
+      } else if (kind === 'invalid_credentials') {
+        setPasswordError('הסיסמה הנוכחית שגויה');
+      } else {
+        console.error('current password verification failed', verifyError);
+        setPasswordError('אימות הסיסמה הנוכחית נכשל, נסי שוב');
+      }
+      return;
+    }
+
     const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
     setChangingPassword(false);
 
     if (updateError) {
-      setPasswordError('עדכון הסיסמה נכשל, נסי שוב');
+      console.error('updateUser(password) failed', updateError);
+      setPasswordError(
+        isRateLimitError(updateError)
+          ? RATE_LIMIT_MESSAGE
+          : updateError.code === 'same_password'
+            ? 'הסיסמה החדשה זהה לנוכחית'
+            : 'עדכון הסיסמה נכשל, נסי שוב'
+      );
       return;
     }
 
+    setCurrentPassword('');
     setNewPassword('');
     setConfirmPassword('');
     setPasswordSaved(true);
@@ -538,6 +576,18 @@ export default function SettingsPage() {
         <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '1rem' }}>שינוי סיסמה</h2>
 
         <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            סיסמה נוכחית
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              style={inputStyle}
+              autoComplete="current-password"
+              required
+            />
+          </label>
+
           <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
             סיסמה חדשה
             <input
