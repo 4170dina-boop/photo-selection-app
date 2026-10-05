@@ -387,6 +387,43 @@ create policy "photographers manage own manual email sends" on manual_email_send
     ))
   );
 
+-- בקשות הארכה של תקופת הבחירה מצד הלקוחה (הבעלים בלבד) - כפתור "לבקש
+-- הארכה" בבאנר הספירה לאחור בגלריה. מגבלות (נאכפות בשרת, lib/extensionRequests.ts):
+-- עד 2 בקשות לגלריה בסך הכל, עד 7 ימים לבקשה, ובקשה ממתינה אחת בכל פעם
+-- (האינדקס הייחודי החלקי למטה - גם מול בקשות מקבילות). הלקוחה ניגשת רק דרך
+-- app/api/gallery/[id]/extension-request (service_role אחרי בדיקת session
+-- הגלריה + בעלים), לכן אין לה policy. הצלמת רואה ומעדכנת (אישור/דחייה) רק
+-- בקשות של הגלריות שלה - app/api/galleries/[id]/extension-requests.
+create table gallery_extension_requests (
+  id uuid primary key default uuid_generate_v4(),
+  gallery_id uuid references galleries(id) on delete cascade not null,
+  participant_id uuid references gallery_participants(id) on delete set null,
+  requested_days int not null check (requested_days between 1 and 7),
+  status text not null default 'pending' check (status in ('pending', 'approved', 'declined')),
+  created_at timestamptz default now() not null,
+  decided_at timestamptz
+);
+create index idx_gallery_extension_requests_gallery on gallery_extension_requests(gallery_id);
+create unique index gallery_extension_requests_one_pending on gallery_extension_requests(gallery_id) where status = 'pending';
+alter table gallery_extension_requests enable row level security;
+create policy "photographers select own extension requests" on gallery_extension_requests
+  for select using (gallery_id in (
+    select id from galleries where photographer_id in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  ));
+create policy "photographers update own extension requests" on gallery_extension_requests
+  for update using (gallery_id in (
+    select id from galleries where photographer_id in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  ))
+  with check (gallery_id in (
+    select id from galleries where photographer_id in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  ));
+
 -- אינדקסים בסיסיים לביצועים
 create index idx_clients_photographer on clients(photographer_id);
 create index idx_galleries_photographer on galleries(photographer_id);
@@ -2008,3 +2045,39 @@ create policy "photographers read own logo" on storage.objects
 --     ))
 --   );
 -- ===== סוף מיגרציה: מגבלת קצב למיילים ידניים =====
+
+-- ===== מיגרציה: בקשות הארכה לתקופת הבחירה (gallery_extension_requests) =====
+-- להריץ פעם אחת על פרויקט קיים (הכל idempotent). עד שמריצים - הקוד לא נשבר:
+-- כפתור "לבקש הארכה" פשוט לא מוצג ללקוחה, ואזור הבקשות לא מוצג בדף העריכה.
+-- create table if not exists gallery_extension_requests (
+--   id uuid primary key default uuid_generate_v4(),
+--   gallery_id uuid references galleries(id) on delete cascade not null,
+--   participant_id uuid references gallery_participants(id) on delete set null,
+--   requested_days int not null check (requested_days between 1 and 7),
+--   status text not null default 'pending' check (status in ('pending', 'approved', 'declined')),
+--   created_at timestamptz default now() not null,
+--   decided_at timestamptz
+-- );
+-- create index if not exists idx_gallery_extension_requests_gallery on gallery_extension_requests(gallery_id);
+-- create unique index if not exists gallery_extension_requests_one_pending on gallery_extension_requests(gallery_id) where status = 'pending';
+-- alter table gallery_extension_requests enable row level security;
+-- drop policy if exists "photographers select own extension requests" on gallery_extension_requests;
+-- create policy "photographers select own extension requests" on gallery_extension_requests
+--   for select using (gallery_id in (
+--     select id from galleries where photographer_id in (
+--       select id from photographers where auth_user_id = auth.uid()
+--     )
+--   ));
+-- drop policy if exists "photographers update own extension requests" on gallery_extension_requests;
+-- create policy "photographers update own extension requests" on gallery_extension_requests
+--   for update using (gallery_id in (
+--     select id from galleries where photographer_id in (
+--       select id from photographers where auth_user_id = auth.uid()
+--     )
+--   ))
+--   with check (gallery_id in (
+--     select id from galleries where photographer_id in (
+--       select id from photographers where auth_user_id = auth.uid()
+--     )
+--   ));
+-- ===== סוף מיגרציה: בקשות הארכה לתקופת הבחירה =====

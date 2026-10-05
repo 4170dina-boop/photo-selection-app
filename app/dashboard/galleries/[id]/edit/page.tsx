@@ -13,6 +13,7 @@ import MagicButton from '@/components/MagicButton';
 import GalleryPaymentsSection from '@/components/GalleryPaymentsSection';
 import EmailInput from '@/components/EmailInput';
 import ClientInviteMessageCopy from '@/components/ClientInviteMessageCopy';
+import ExtensionRequestsPanel from '@/components/ExtensionRequestsPanel';
 import { MANUAL_EMAIL_COOLDOWN_SECONDS, formatCooldownLeft } from '@/lib/manualEmailCooldown';
 
 // סוגי המיילים הידניים בדף הזה - לכל אחד מגבלת קצב נפרדת בשרת (429)
@@ -529,6 +530,16 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           </div>
         </div>
       )}
+
+      {/* בקשות הארכה מהלקוחה (אישור/דחייה) - components/ExtensionRequestsPanel.tsx */}
+      <ExtensionRequestsPanel
+        galleryId={galleryId}
+        onApproved={(newExpiresAt, newStatus) => {
+          // בלי loadGallery (שמציג "טוען..." ומאפס את הטופס) - רק התוקף והסטטוס
+          setExpiresAt(newExpiresAt.slice(0, 10));
+          if (newStatus) setStatus(newStatus);
+        }}
+      />
 
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>

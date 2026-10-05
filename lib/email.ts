@@ -598,3 +598,74 @@ export async function sendShootsDailySummaryEmail(params: ShootsDailySummaryPara
 
   return sendEmail(params.to, `הצילומים שלך מחר: ${countText}`, html, { fromName: 'אזור צלמים ✨' });
 }
+
+// ---------- בקשת הארכה לתקופת הבחירה (gallery_extension_requests) ----------
+
+// "12.10.2026 · כ״ט בתשרי תשפ״ז" - לועזי (לפי היום בישראל) לצד העברי
+export function extensionDateText(iso: string): string {
+  return `${new Date(iso).toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' })} · ${toHebrewDateString(new Date(iso))}`;
+}
+
+interface ExtensionRequestedParams {
+  to: string;
+  clientName: string;
+  days: number;
+  currentExpiresAt: string | null;
+  dashboardUrl: string;
+}
+
+// מודיעה לצלמת שהלקוחה ביקשה הארכה (app/api/gallery/[id]/extension-request) -
+// התראה מהמערכת ("אזור צלמים"), כמו sendSelectionCompleteEmail. האישור/הדחייה
+// נעשים בדף עריכת הגלריה.
+export async function sendExtensionRequestedEmail(params: ExtensionRequestedParams): Promise<SendResult> {
+  const daysText = params.days === 1 ? 'יום אחד' : `${params.days} ימים`;
+  const html = wrapEmailHtml({
+    headerText: 'אזור צלמים',
+    bodyHtml: `
+      <p style="margin: 0 0 8px;">היי,</p>
+      <p style="margin: 0 0 8px;">הלקוחה <b>${escapeHtml(params.clientName)}</b> ביקשה הארכה של <b>${escapeHtml(daysText)}</b> לבחירת התמונות.</p>
+      ${params.currentExpiresAt ? `<p style="margin: 0; font-size: 13px; color: #6b6156;">תאריך הסיום הנוכחי: ${escapeHtml(extensionDateText(params.currentExpiresAt))}</p>` : ''}
+    `,
+    ctaText: 'לאישור או דחייה',
+    ctaUrl: params.dashboardUrl,
+  });
+
+  return sendEmail(params.to, `הלקוחה ${params.clientName} ביקשה הארכה של ${daysText}`, html, { fromName: 'אזור צלמים ✨' });
+}
+
+interface ExtensionDecisionParams {
+  to: string;
+  clientName: string;
+  businessName: string;
+  galleryUrl: string;
+  approved: boolean;
+  newExpiresAt?: string | null;
+  replyTo?: string;
+}
+
+// מודיעה ללקוחה על ההחלטה של הצלמת לגבי בקשת ההארכה - נשלחת מ-
+// app/api/galleries/[id]/extension-requests/[requestId] (אישור או דחייה).
+export async function sendExtensionDecisionEmail(params: ExtensionDecisionParams): Promise<SendResult> {
+  const approvedWithDate = params.approved && !!params.newExpiresAt;
+  const dateText = approvedWithDate ? extensionDateText(params.newExpiresAt as string) : '';
+  const html = wrapEmailHtml({
+    headerText: params.businessName || 'אזור צלמים',
+    bodyHtml: approvedWithDate
+      ? `
+      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
+      <p style="margin: 0 0 8px;">הצלמת האריכה את הבחירה עד <b>${escapeHtml(dateText)}</b> 💛</p>
+      <p style="margin: 0; font-size: 13px; color: #6b6156;">אפשר להמשיך לבחור באותו קישור וקוד גישה.</p>
+    `
+      : `
+      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
+      <p style="margin: 0;">הפעם לא ניתן להאריך את תקופת הבחירה - כדאי לסיים לבחור עד התאריך שנקבע. לשאלות אפשר להשיב למייל הזה.</p>
+    `,
+    ctaText: 'כניסה לגלריה',
+    ctaUrl: params.galleryUrl,
+  });
+
+  const subject = approvedWithDate
+    ? `הצלמת האריכה את הבחירה עד ${dateText}`
+    : `עדכון לגבי בקשת ההארכה שלך${params.businessName ? ` אצל ${params.businessName}` : ''}`;
+  return sendEmail(params.to, subject, html, { fromName: params.businessName || undefined, replyTo: params.replyTo });
+}
