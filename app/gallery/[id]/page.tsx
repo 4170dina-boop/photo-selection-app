@@ -27,6 +27,21 @@ import {
   enlargedShortcutStatus,
   tapHintKey,
 } from '@/lib/galleryClient';
+import {
+  type ResumeState,
+  formatShekels,
+  extraPriceLabel,
+  crossedIncludedQuota,
+  extraPriceToastKey,
+  computeFinishSummary,
+  focusTrapIndex,
+  emptyResumeState,
+  parseResumeState,
+  recordPhotoView,
+  resumeOffer as computeResumeOffer,
+  resumeStateKey,
+  viewedProgress,
+} from '@/lib/galleryReview';
 
 interface GalleryPageProps {
   params: { id: string };
@@ -221,6 +236,37 @@ function saveFinishDeadline(galleryId: string, participantId: string, deadline: 
 function clearFinishDeadline(galleryId: string, participantId: string) {
   localStorage.removeItem(finishDeadlineKey(galleryId, participantId));
 }
+
+// "להמשיך מאיפה שעצרתי" (lib/galleryReview.ts) - נוחות תצוגה בלבד, לכן
+// אחסון חסום/מלא פשוט מתעלמים ממנו.
+function loadResumeState(galleryId: string, participantId: string): ResumeState {
+  try {
+    return parseResumeState(localStorage.getItem(resumeStateKey(galleryId, participantId)));
+  } catch {
+    return emptyResumeState();
+  }
+}
+
+function saveResumeState(galleryId: string, participantId: string, state: ResumeState) {
+  try {
+    localStorage.setItem(resumeStateKey(galleryId, participantId), JSON.stringify(state));
+  } catch {}
+}
+
+// גלילה עדינה - בלי אנימציה למי שביקשה להפחית תנועה
+function scrollBehavior(): ScrollBehavior {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  } catch {
+    return 'auto';
+  }
+}
+
+// כפתורים/שדות שאפשר להגיע אליהם ב-Tab בתוך חלון (למלכודת הפוקוס בחלון הסיכום)
+const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// כמה זמן ההודעה הקופצת על מחיר תמונה נוספת נשארת על המסך
+const EXTRA_PRICE_TOAST_MS = 6000;
 
 export default function GalleryPage({ params }: GalleryPageProps) {
   const galleryId = params.id;
@@ -514,6 +560,82 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [ownerEmailInput, setOwnerEmailInput] = useState('');
   const [identifying, setIdentifying] = useState(false);
   const [identityError, setIdentityError] = useState('');
+
+  // חלון הסיכום לפני "שליחה לצלמת" (במקום window.confirm) - ראו handleFinish
+  const [finishModalOpen, setFinishModalOpen] = useState(false);
+  const finishModalRef = useRef<HTMLDivElement>(null);
+  useModalFocus(finishModalOpen, finishModalRef);
+  // הגלריה ננעלה בינתיים (רענון ברקע) - החלון כבר לא רלוונטי
+  useEffect(() => {
+    if (isLocked) setFinishModalOpen(false);
+  }, [isLocked]);
+
+  // הודעה קופצת חד-פעמית כשהבעלים עוברת לראשונה את מכסת החבילה
+  const [showExtraPriceToast, setShowExtraPriceToast] = useState(false);
+  const prevOwnerSelectedRef = useRef<number | null>(null);
+
+  // "להמשיך מאיפה שעצרתי": התמונה האחרונה שנצפתה + אילו כבר נצפו (localStorage,
+  // מפתח לכל גלריה+משתתפת). ה-ref הוא מקור האמת לכתיבה, ה-state לתצוגה.
+  const resumeStateRef = useRef<ResumeState | null>(null);
+  const [viewedIds, setViewedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [resumeOffer, setResumeOffer] = useState<{ photoId: string; index: number } | null>(null);
+
+  // התמונה שמוצגת כרגע במסך מלא - תצוגה מוגדלת / סקירה ברצף / בחירה מהירה
+  const currentViewedPhotoId: string | null = enlargedId
+    ? enlargedId
+    : slideshowActive && photos.length > 0
+    ? photos[Math.min(slideshowIndex, photos.length - 1)].id
+    : swipeMode && swipeCursor < swipeQueue.length
+    ? swipeQueue[swipeCursor]
+    : null;
+
+  // טעינת מצב "להמשיך" פעם אחת לכל משתתפת, אחרי שהתמונות נטענו
+  useEffect(() => {
+    if (!myParticipant || photos.length === 0 || resumeStateRef.current) return;
+    const state = loadResumeState(galleryId, myParticipant.id);
+    resumeStateRef.current = state;
+    setViewedIds(new Set(state.viewed));
+    setResumeOffer(computeResumeOffer(state, photos.map((p) => p.id)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myParticipant?.id, photos.length]);
+
+  // רישום כל תמונה שנפתחה במסך מלא. ברגע שהלקוחה כבר פתחה תמונה, ההצעה
+  // "להמשיך מתמונה N" כבר לא רלוונטית.
+  useEffect(() => {
+    if (!currentViewedPhotoId || !myParticipant || !resumeStateRef.current) return;
+    setResumeOffer(null);
+    const next = recordPhotoView(resumeStateRef.current, currentViewedPhotoId);
+    if (next === resumeStateRef.current) return;
+    resumeStateRef.current = next;
+    saveResumeState(galleryId, myParticipant.id, next);
+    setViewedIds((prev) => (prev.has(currentViewedPhotoId) ? prev : new Set(prev).add(currentViewedPhotoId)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentViewedPhotoId, myParticipant?.id]);
+
+  // חציית מכסת החבילה בפעם הראשונה (רק בעלים, רק כשיש מחיר לתמונה נוספת,
+  // ופעם אחת בלבד - נשמר ב-localStorage). הערך הראשון אחרי טעינה לא נחשב חציה.
+  useEffect(() => {
+    if (!packageInfo || !myParticipant?.isOwner) {
+      prevOwnerSelectedRef.current = null;
+      return;
+    }
+    const prev = prevOwnerSelectedRef.current;
+    prevOwnerSelectedRef.current = ownerSelectedCount;
+    if (packageInfo.extraPrice <= 0 || !crossedIncludedQuota(prev, ownerSelectedCount, packageInfo.included)) return;
+    const key = extraPriceToastKey(galleryId, myParticipant.id);
+    try {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, '1');
+    } catch {}
+    setShowExtraPriceToast(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownerSelectedCount, packageInfo, myParticipant?.id, myParticipant?.isOwner]);
+
+  useEffect(() => {
+    if (!showExtraPriceToast) return;
+    const t = setTimeout(() => setShowExtraPriceToast(false), EXTRA_PRICE_TOAST_MS);
+    return () => clearTimeout(t);
+  }, [showExtraPriceToast]);
 
   useEffect(() => {
     loadGallery();
@@ -1422,8 +1544,60 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
   }
 
+  // "סיימתי" פותח קודם חלון סיכום (במקום window.confirm) - רק לבעלים, רק
+  // כשהבחירה פתוחה ויש לפחות תמונה אחת. אורחות לא יכולות לסיים (כמו קודם).
   function handleFinish() {
-    if (!window.confirm('לשלוח את הבחירה? אחרי זה לא ניתן יהיה לשנות אותה.')) return;
+    if (!myParticipant?.isOwner || isLocked || ownerSelectedCount === 0) return;
+    if (finishDeadline !== null || finishInFlightRef.current) return;
+    setFinishModalOpen(true);
+  }
+
+  // "שליחה לצלמת ✓" בחלון הסיכום - נכנס לזרימה הקיימת, כולל ספירת הביטול
+  function confirmFinishFromModal() {
+    setFinishModalOpen(false);
+    if (!myParticipant?.isOwner || isLocked || ownerSelectedCount === 0) return;
+    startFinishCountdown();
+  }
+
+  // "לעבור עליהן" - סוגר את החלון ומציג בגריד רק את ה"אולי"
+  function reviewMaybesFromModal() {
+    setFinishModalOpen(false);
+    setViewFilter('maybe');
+    setTimeout(() => {
+      document.getElementById('gallery-filter-row')?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+    }, 0);
+  }
+
+  // Escape סוגר, ו-Tab/Shift+Tab נשארים בתוך החלון (focusTrapIndex)
+  function handleFinishModalKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      setFinishModalOpen(false);
+      return;
+    }
+    if (e.key !== 'Tab' || !finishModalRef.current) return;
+    const focusables = Array.from(finishModalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+    const target = focusTrapIndex(focusables.indexOf(document.activeElement as HTMLElement), focusables.length, e.shiftKey);
+    if (target === null) return;
+    e.preventDefault();
+    focusables[target].focus();
+  }
+
+  // "המשך" בבאנר ברוכה השבה - גוללת לכרטיס ופותחת אותו בגדול
+  function resumeFromOffer() {
+    const offer = resumeOffer;
+    setResumeOffer(null);
+    if (!offer) return;
+    const photo = photos.find((p) => p.id === offer.photoId);
+    if (!photo) return;
+    document.getElementById(`photo-card-${photo.id}`)?.scrollIntoView({ behavior: scrollBehavior(), block: 'center' });
+    if (photo.thumbnailUrl && photo.fullUrl) {
+      setZoomScale(1);
+      setEnlargedId(photo.id);
+    }
+  }
+
+  function startFinishCountdown() {
     const deadline = Date.now() + FINISH_UNDO_SECONDS * 1000;
     if (myParticipant) {
       saveFinishDeadline(galleryId, myParticipant.id, deadline);
@@ -1697,6 +1871,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const visiblePhotos = viewFilter === 'all' ? photos : photos.filter((p) => myStatuses[p.id] === viewFilter);
   const owner = participants.find((p) => p.isOwner);
   const isOwner = myParticipant?.isOwner ?? false;
+  const extraLabel = extraPriceLabel(packageInfo?.extraPrice);
+  const viewProgress = viewedProgress(viewedIds, photos.map((p) => p.id));
+  // הפס התחתון הקבוע בגריד - רק לבעלים כשהבחירה פתוחה, ולא כשמסך מלא פתוח
+  // (לתצוגה המוגדלת יש פס משלה).
+  const showBottomBar = isOwner && !isLocked && !enlargedId && !slideshowActive && !swipeMode && !compareViewOpen;
 
   // "צבע מותג": אם הצלמת לא הגדירה אחד בהגדרות, נשארים עם הפלטה המקורית
   // (theme.gold/goldBright) - ראו app/api/gallery/[id]/route.ts.
@@ -1840,6 +2019,24 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             <div style={{ fontSize: 12, color: theme.textFaint }}>
               {isOwner ? `${maybeCount} תמונות "אולי"` : `הבחירות שלך (קלט בלבד): ${mySelectedCount} נבחרו, ${maybeCount} אולי`}
             </div>
+            {/* כמה תמונות כבר נפתחו במסך מלא (מקומי, למכשיר הזה) */}
+            {!isLocked && viewProgress.seen > 0 && (
+              <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 3 }}>
+                <span>
+                  עברת על <bdi dir="ltr">{viewProgress.seen}</bdi> מתוך <bdi dir="ltr">{viewProgress.total}</bdi> תמונות
+                </span>
+                <div
+                  role="progressbar"
+                  aria-label="תמונות שעברת עליהן"
+                  aria-valuemin={0}
+                  aria-valuemax={viewProgress.total}
+                  aria-valuenow={viewProgress.seen}
+                  style={{ height: 3, borderRadius: 2, background: theme.panelInput, marginTop: 3, overflow: 'hidden' }}
+                >
+                  <div style={{ width: `${viewProgress.pct}%`, height: '100%', background: accentSolid }} />
+                </div>
+              </div>
+            )}
           </div>
           <div
             style={{
@@ -1877,6 +2074,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             {remaining > 0 && <> · נשארו לך עוד <b style={{ color: accent }}>{remaining}</b> במסגרת החבילה</>}
           </span>
         )}
+        {/* מחיר תמונה נוספת מוצג מראש, לא רק אחרי שכבר חרגו מהחבילה */}
+        {packageInfo && extraLabel && <span style={{ color: theme.text }}>{extraLabel}</span>}
         {packageInfo && packageInfo.basePrice > 0 && (
           <span>
             סה״כ משוער לחבילה: <b style={{ color: accent }}>{Math.round(totalEstimate)} ₪</b>
@@ -1942,6 +2141,35 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {resumeOffer && (
+        <div
+          role="status"
+          style={{
+            margin: '0.6rem 1.5rem 0', padding: '0.4rem 0.5rem 0.4rem 0.75rem', borderRadius: 8,
+            background: theme.panel, border: `1px solid ${accent}55`, color: theme.text, fontSize: 14,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap',
+          }}
+        >
+          <span>👋 ברוכה השבה! להמשיך מתמונה <bdi dir="ltr">{resumeOffer.index + 1}</bdi>?</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+            <button type="button" onClick={resumeFromOffer} style={{ ...primaryButtonStyle, padding: '0.4rem 1.1rem', minHeight: 44 }}>
+              המשך
+            </button>
+            <button
+              type="button"
+              onClick={() => setResumeOffer(null)}
+              aria-label="סגירת ההודעה"
+              style={{
+                width: 44, height: 44, borderRadius: '50%', border: 'none',
+                background: 'transparent', color: theme.textMuted, fontSize: 16, cursor: 'pointer',
+              }}
+            >
+              ✕
+            </button>
+          </span>
         </div>
       )}
 
@@ -2135,62 +2363,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </button>
         )}
 
-        {!isLocked && isOwner && finishCountdown !== null && (
-          <div
-            role="status"
-            aria-live="polite"
-            style={{
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem',
-              margin: '0.75rem auto 0', padding: '0.75rem 1rem', maxWidth: 340,
-              background: theme.successBg, color: theme.successText, borderRadius: 8,
-            }}
-          >
-            <span>הבחירה תישלח בעוד {finishCountdown} שניות...</span>
-            <button onClick={cancelFinish} style={{ ...outlineButtonStyle, padding: '0.4rem 1rem' }}>
-              ביטול שליחה
-            </button>
-          </div>
-        )}
-
-        {!isLocked && isOwner && finishCountdown === null && finishFailed && (
-          <div
-            role="alert"
-            style={{
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem',
-              margin: '0.75rem auto 0', padding: '0.75rem 1rem', maxWidth: 340,
-              background: theme.errorBg, color: theme.errorText, borderRadius: 8,
-            }}
-          >
-            <span>הבחירה עוד לא נשלחה.</span>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-              <button
-                onClick={() => submitFinish()}
-                disabled={finishing}
-                style={{ ...primaryButtonStyle, padding: '0.4rem 1rem', opacity: finishing ? 0.6 : 1 }}
-              >
-                {finishing ? 'שולחת...' : 'נסי שוב לשלוח'}
-              </button>
-              <button onClick={cancelFinish} disabled={finishing} style={{ ...outlineButtonStyle, padding: '0.4rem 1rem' }}>
-                ביטול
-              </button>
-            </div>
-          </div>
-        )}
-
-        {!isLocked && isOwner && finishCountdown === null && !finishFailed && (
-          <button
-            onClick={handleFinish}
-            disabled={finishing || ownerSelectedCount === 0}
-            title={ownerSelectedCount === 0 ? 'בחרי לפחות תמונה אחת קודם' : undefined}
-            style={{
-              ...primaryButtonStyle,
-              display: 'block', margin: '0.75rem auto 0',
-              opacity: finishing || ownerSelectedCount === 0 ? 0.5 : 1,
-            }}
-          >
-            {finishing ? 'שולחת...' : 'סיימתי לבחור ✓'}
-          </button>
-        )}
+        {/* "סיימתי" / ספירת הביטול / "נסי שוב" של הבעלים - בפס התחתון הקבוע (למטה) */}
 
         {!isLocked && !isOwner && (
           <p style={{ fontSize: 13, color: theme.textFaint, marginTop: '0.75rem' }}>
@@ -2870,7 +3043,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '0.5rem', padding: '0 1.5rem 0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+      <div id="gallery-filter-row" style={{ display: 'flex', gap: '0.5rem', padding: '0 1.5rem 0.75rem', justifyContent: 'center', flexWrap: 'wrap', scrollMarginTop: 96 }}>
         {([
           { key: 'all' as const, label: `הכל (${photos.length})` },
           { key: 'selected' as const, label: `נבחרו (${mySelectedCount})` },
@@ -2903,7 +3076,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           gridTemplateColumns: 'repeat(auto-fill, minmax(min(140px, 45vw), 1fr))',
           alignItems: 'start',
           gap: '1rem',
-          padding: '0 1.5rem 1.5rem',
+          // מקום לפס התחתון הקבוע, כדי שלא יכסה את השורה האחרונה
+          padding: showBottomBar ? '0 1.5rem calc(6.5rem + env(safe-area-inset-bottom))' : '0 1.5rem 1.5rem',
         }}
       >
         {visiblePhotos.map((photo) => {
@@ -2951,6 +3125,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           return (
             <div
               key={photo.id}
+              id={`photo-card-${photo.id}`}
               role="group"
               aria-label={`${photo.original_filename}, ${statusLabel}`}
               onContextMenu={(e) => e.preventDefault()} // חסימת קליק ימני - הרתעה בלבד, לא הגנה אמיתית
@@ -2971,6 +3146,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   padding: '2px 7px', borderRadius: 10,
                 }}
               >
+                {/* כבר נפתחה במסך מלא - אייקון עין קטן, לא רק צבע */}
+                {viewedIds.has(photo.id) && <span title="כבר צפית בתמונה הזו" style={{ marginInlineEnd: 4, opacity: 0.85 }}>👁</span>}
                 {photo.original_filename}
               </div>
 
@@ -3127,6 +3304,209 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           );
         })}
       </div>
+
+      {/* פס תחתון קבוע בגריד (בעיקר לנייד): המונה + "סיימתי" / ספירת הביטול /
+          "נסי שוב". רק לבעלים כשהבחירה פתוחה (showBottomBar). */}
+      {showBottomBar && (
+        <div
+          style={{
+            position: 'fixed', bottom: 0, insetInline: 0, zIndex: 45,
+            background: 'rgba(15,22,38,0.96)', borderTop: `1px solid ${theme.border}`, backdropFilter: 'blur(12px)',
+            padding: '0.6rem 1rem calc(0.6rem + env(safe-area-inset-bottom))',
+          }}
+        >
+          <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+            {finishCountdown !== null ? (
+              <>
+                <span role="status" aria-live="polite" style={{ color: theme.successText, fontSize: 14 }}>
+                  הבחירה תישלח בעוד <bdi dir="ltr">{finishCountdown}</bdi> שניות...
+                </span>
+                <button onClick={cancelFinish} style={{ ...outlineButtonStyle, minHeight: 48, padding: '0.4rem 1.1rem' }}>
+                  ביטול שליחה
+                </button>
+              </>
+            ) : finishFailed ? (
+              <>
+                <span role="alert" style={{ color: theme.errorText, fontSize: 14 }}>הבחירה עוד לא נשלחה.</span>
+                <span style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    onClick={() => submitFinish()}
+                    disabled={finishing}
+                    style={{ ...primaryButtonStyle, minHeight: 48, padding: '0.4rem 1.1rem', opacity: finishing ? 0.6 : 1 }}
+                  >
+                    {finishing ? 'שולחת...' : 'נסי שוב לשלוח'}
+                  </button>
+                  <button onClick={cancelFinish} disabled={finishing} style={{ ...outlineButtonStyle, minHeight: 48, padding: '0.4rem 1rem' }}>
+                    ביטול
+                  </button>
+                </span>
+              </>
+            ) : (
+              <>
+                <span style={{ fontSize: 15 }}>
+                  <bdi dir="ltr">
+                    <b style={{ color: accent, fontFamily: theme.fontSerif }}>{ownerSelectedCount}</b>
+                    {packageInfo ? ` / ${packageInfo.included}` : ''}
+                  </bdi>{' '}
+                  נבחרו
+                  {overIncluded > 0 && <span style={{ color: accent, fontSize: 13 }}> · +{overIncluded} נוספות</span>}
+                </span>
+                <button
+                  onClick={handleFinish}
+                  disabled={finishing || ownerSelectedCount === 0}
+                  title={ownerSelectedCount === 0 ? 'בחרי לפחות תמונה אחת קודם' : undefined}
+                  style={{
+                    ...primaryButtonStyle, minHeight: 48, padding: '0.4rem 1.4rem',
+                    opacity: finishing || ownerSelectedCount === 0 ? 0.5 : 1,
+                  }}
+                >
+                  {finishing ? 'שולחת...' : 'סיימתי ✓'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* חלון סיכום לפני השליחה לצלמת (במקום window.confirm) */}
+      {finishModalOpen && isOwner && !isLocked && (() => {
+        const summary = computeFinishSummary({
+          selectedCount: ownerSelectedCount,
+          included: packageInfo?.included ?? 0,
+          extraPrice: packageInfo?.extraPrice ?? 0,
+          maybeCount,
+        });
+        const rowStyle: React.CSSProperties = {
+          display: 'flex', justifyContent: 'space-between', gap: '0.75rem', padding: '0.45rem 0',
+          borderBottom: `1px solid ${theme.border}`, fontSize: 14,
+        };
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 65, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+            onClick={() => setFinishModalOpen(false)}
+          >
+            <div
+              ref={finishModalRef}
+              tabIndex={-1}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="finish-dialog-title"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={handleFinishModalKeyDown}
+              style={{
+                background: theme.panel, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 14,
+                padding: '1.25rem 1.25rem 1rem', width: '100%', maxWidth: 380, maxHeight: '90vh', overflowY: 'auto',
+              }}
+            >
+              <p id="finish-dialog-title" style={{ fontFamily: theme.fontSerif, fontSize: 20, margin: '0 0 0.75rem', textAlign: 'center' }}>
+                לפני שנשלח לצלמת ✨
+              </p>
+
+              <div style={rowStyle}>
+                <span>נבחרו</span>
+                <b style={{ color: accent }}>{summary.selected}</b>
+              </div>
+              {packageInfo && (
+                <div style={rowStyle}>
+                  <span>כלולות בחבילה</span>
+                  <b>{summary.includedUsed}</b>
+                </div>
+              )}
+              {packageInfo && summary.extraCount > 0 && (
+                <div style={rowStyle}>
+                  <span>תמונות נוספות</span>
+                  <b style={{ color: accent }}>
+                    {summary.extraPrice > 0 ? (
+                      <bdi dir="rtl">{summary.extraCount} × {formatShekels(summary.extraPrice)} ₪ = {formatShekels(summary.extraCost)} ₪</bdi>
+                    ) : (
+                      summary.extraCount
+                    )}
+                  </b>
+                </div>
+              )}
+              {giftPhotos.length > 0 && (
+                <div style={{ ...rowStyle, color: theme.textMuted }}>
+                  <span>🎁 תמונות מתנה (כלולות, בלי תוספת)</span>
+                  <b>{giftPhotos.length}</b>
+                </div>
+              )}
+
+              {packageInfo && summary.remainingIncluded > 0 && (
+                <p style={{ fontSize: 13, color: theme.textMuted, margin: '0.75rem 0 0' }}>
+                  נשארו לך עוד <b style={{ color: accent }}>{summary.remainingIncluded}</b> תמונות בלי תוספת
+                </p>
+              )}
+
+              {summary.undecidedMaybe > 0 && (
+                <div
+                  style={{
+                    marginTop: '0.75rem', padding: '0.6rem 0.75rem', borderRadius: 8,
+                    background: theme.panelInput, fontSize: 13,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap',
+                  }}
+                >
+                  <span>🤔 {summary.undecidedMaybe === 1 ? 'תמונת "אולי" אחת שלא הוכרעה' : `${summary.undecidedMaybe} תמונות "אולי" שלא הוכרעו`}</span>
+                  <button type="button" onClick={reviewMaybesFromModal} style={{ ...outlineButtonStyle, minHeight: 44, padding: '0.3rem 0.9rem', fontSize: 13 }}>
+                    לעבור עליהן
+                  </button>
+                </div>
+              )}
+
+              {pendingCount > 0 && (
+                <p style={{ fontSize: 12, color: theme.warningText, margin: '0.75rem 0 0' }}>
+                  יש {pendingCount} שינויים שעוד לא נשמרו - הם יישלחו קודם.
+                </p>
+              )}
+
+              <p style={{ fontSize: 12, color: theme.textFaint, margin: '0.75rem 0 0' }}>
+                אחרי השליחה לא ניתן יהיה לשנות את הבחירה (יש {FINISH_UNDO_SECONDS} שניות לביטול).
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
+                <button type="button" onClick={confirmFinishFromModal} style={{ ...primaryButtonStyle, minHeight: 48 }}>
+                  שליחה לצלמת ✓
+                </button>
+                <button type="button" onClick={() => setFinishModalOpen(false)} style={{ ...outlineButtonStyle, minHeight: 48 }}>
+                  חזרה לבחירה
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* הודעה קופצת חד-פעמית: עברת את מכסת החבילה (ראו prevOwnerSelectedRef) */}
+      {showExtraPriceToast && packageInfo && extraLabel && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="gallery-toast"
+          style={{
+            position: 'fixed', top: 'calc(0.75rem + env(safe-area-inset-top))', left: '50%', transform: 'translateX(-50%)',
+            zIndex: 80, width: 'max-content', maxWidth: 'calc(100vw - 2rem)',
+            background: theme.panel, color: theme.text, border: `1px solid ${accent}88`, borderRadius: 10,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.4)', padding: '0.4rem 0.4rem 0.4rem 0.9rem', fontSize: 14,
+            display: 'flex', alignItems: 'center', gap: '0.5rem',
+          }}
+        >
+          <style>{`
+            @keyframes gallery-toast-in { from { opacity: 0; } to { opacity: 1; } }
+            .gallery-toast { animation: gallery-toast-in 0.25s ease-out; }
+            @media (prefers-reduced-motion: reduce) { .gallery-toast { animation: none; } }
+          `}</style>
+          <span>
+            ✨ עברת את {packageInfo.included} התמונות שבחבילה · כל תמונה נוספת: {formatShekels(packageInfo.extraPrice)} ₪
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowExtraPriceToast(false)}
+            aria-label="סגירת ההודעה"
+            style={{ width: 44, height: 44, flexShrink: 0, borderRadius: '50%', border: 'none', background: 'transparent', color: theme.textMuted, fontSize: 15, cursor: 'pointer' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }
