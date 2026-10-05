@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
+import PriceInput from '@/components/PriceInput';
 import { toHebrewDateString } from '@/lib/hebrewDate';
 import { israelEndOfDayIso } from '@/lib/israelTime';
 import { canDeliverFinals } from '@/lib/galleryLifecycle';
@@ -618,10 +619,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
           מחיר החבילה (₪)
-          <input
-            type="number"
-            min={0}
-            step="any"
+          <PriceInput
             value={basePrice}
             onChange={(e) => setBasePrice(e.target.value)}
             style={inputStyle}
@@ -630,10 +628,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
           מחיר לתמונה נוספת (₪)
-          <input
-            type="number"
-            min={0}
-            step="any"
+          <PriceInput
             value={extraPhotoPrice}
             onChange={(e) => setExtraPhotoPrice(e.target.value)}
             style={inputStyle}
