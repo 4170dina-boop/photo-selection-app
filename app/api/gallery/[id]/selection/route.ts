@@ -63,23 +63,28 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'זו תמונת מתנה - היא כבר כלולה אצלך, אין צורך לבחור אותה' }, { status: 400 });
   }
 
-  if (status === null) {
-    await supabaseAdmin
-      .from('selections')
-      .delete()
-      .eq('gallery_id', galleryId)
-      .eq('photo_id', photoId)
-      .eq('participant_id', session.participantId);
-  } else {
-    await supabaseAdmin.from('selections').upsert(
-      { gallery_id: galleryId, photo_id: photoId, participant_id: session.participantId, status },
-      { onConflict: 'gallery_id,photo_id,participant_id' }
-    );
+  const { error: writeError } =
+    status === null
+      ? await supabaseAdmin
+          .from('selections')
+          .delete()
+          .eq('gallery_id', galleryId)
+          .eq('photo_id', photoId)
+          .eq('participant_id', session.participantId)
+      : await supabaseAdmin.from('selections').upsert(
+          { gallery_id: galleryId, photo_id: photoId, participant_id: session.participantId, status },
+          { onConflict: 'gallery_id,photo_id,participant_id' }
+        );
+
+  if (writeError) {
+    console.error('[selection] שמירת הבחירה נכשלה:', writeError);
+    return NextResponse.json({ error: 'שמירת הבחירה נכשלה, נסי שוב' }, { status: 500 });
   }
 
-  // התראה לצלמת ברגע שהבעלים (לא בן משפחה אחר) מגיעה בדיוק למכסת החבילה -
-  // best-effort, לא חוסמת את התשובה ללקוחה. בודקים "בדיוק" (לא ≥) כדי שהמייל
-  // ייצא פעם אחת בלבד ולא בכל בחירה נוספת אחרי זה.
+  // התראה לצלמת ברגע שהבעלים (לא בן משפחה אחר) מגיעה למכסת החבילה -
+  // best-effort, לא חוסמת את התשובה ללקוחה. פעם אחת בלבד לכל גלריה: "תופסים"
+  // את galleries.quota_notified_at ב-UPDATE מותנה (is null), כך שגם בחירות
+  // נוספות, ביטול-ובחירה-מחדש או בקשות מקבילות לא שולחים מייל חוזר.
   const { data: gallery } = await supabaseAdmin
     .from('galleries')
     .select('owner_participant_id, photographer_id, clients(full_name)')
@@ -104,7 +109,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         // בלי תמונות מתנה - הן לא חלק מהמכסה (lib/gifts.ts)
         const count = countBillableSelected(ownerSelected ?? [], giftIds);
 
-        if (count === pkg.included_photos) {
+        let shouldNotify = false;
+        if (count >= pkg.included_photos) {
+          const { data: claimed, error: claimError } = await supabaseAdmin
+            .from('galleries')
+            .update({ quota_notified_at: new Date().toISOString() })
+            .eq('id', galleryId)
+            .is('quota_notified_at', null)
+            .select('id');
+          // לפני שהמיגרציה של quota_notified_at רצה העמודה לא קיימת - נופלים
+          // להתנהגות הישנה (רק בהגעה בדיוק למכסה) במקום לשלוח בכל בחירה.
+          shouldNotify = claimError ? count === pkg.included_photos : (claimed ?? []).length > 0;
+        }
+
+        if (shouldNotify) {
           const { data: photographer } = await supabaseAdmin
             .from('photographers')
             .select('auth_user_id')
@@ -117,7 +135,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             const clientName = (gallery as any).clients?.full_name ?? 'לקוחה';
 
             if (photographerEmail) {
-              const siteUrl = req.nextUrl.origin;
+              const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
               await sendQuotaReachedEmail({
                 to: photographerEmail,
                 clientName,
@@ -161,11 +179,16 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return NextResponse.json({ error: writable.error }, { status: writable.status });
   }
 
-  await supabaseAdmin
+  const { error: deleteError } = await supabaseAdmin
     .from('selections')
     .delete()
     .eq('gallery_id', galleryId)
     .eq('participant_id', session.participantId);
+
+  if (deleteError) {
+    console.error('[selection] ביטול כל הבחירה נכשל:', deleteError);
+    return NextResponse.json({ error: 'ביטול הבחירה נכשל, נסי שוב' }, { status: 500 });
+  }
 
   const { data: gallery } = await supabaseAdmin
     .from('galleries')

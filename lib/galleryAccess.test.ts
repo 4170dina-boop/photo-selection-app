@@ -1,6 +1,94 @@
 import { describe, it, expect } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { checkGalleryWritable } from './galleryAccess';
+import {
+  checkGalleryWritable,
+  decideIdentify,
+  evaluateGalleryWritable,
+  isGalleryExpired,
+  resolveGalleryViewAccess,
+} from './galleryAccess';
+
+const NOW = new Date('2026-06-01T12:00:00.000Z');
+const PAST = '2026-05-01T00:00:00.000Z';
+const FUTURE = '2026-07-01T00:00:00.000Z';
+
+describe('isGalleryExpired', () => {
+  it('treats null/undefined expiry as never expiring', () => {
+    expect(isGalleryExpired(null, NOW)).toBe(false);
+    expect(isGalleryExpired(undefined, NOW)).toBe(false);
+  });
+  it('compares against now', () => {
+    expect(isGalleryExpired(PAST, NOW)).toBe(true);
+    expect(isGalleryExpired(FUTURE, NOW)).toBe(false);
+  });
+});
+
+describe('resolveGalleryViewAccess', () => {
+  it('allows normal (writable-looking) access before expiry, regardless of status', () => {
+    expect(resolveGalleryViewAccess({ status: 'in_progress', expires_at: FUTURE }, false, NOW)).toEqual({ ok: true, readOnly: false });
+    expect(resolveGalleryViewAccess({ status: 'completed', expires_at: null }, false, NOW)).toEqual({ ok: true, readOnly: false });
+  });
+
+  it('blocks an expired gallery that was never completed or delivered', () => {
+    expect(resolveGalleryViewAccess({ status: 'expired', expires_at: PAST }, false, NOW)).toEqual({ ok: false });
+    expect(resolveGalleryViewAccess({ status: 'in_progress', expires_at: PAST, delivered_at: null }, false, NOW)).toEqual({ ok: false });
+  });
+
+  it('keeps an expired but completed gallery open read-only', () => {
+    expect(resolveGalleryViewAccess({ status: 'completed', expires_at: PAST }, false, NOW)).toEqual({ ok: true, readOnly: true });
+  });
+
+  it('keeps an expired gallery with delivered photos open read-only (delivered_at or rows)', () => {
+    expect(resolveGalleryViewAccess({ status: 'expired', expires_at: PAST, delivered_at: PAST }, false, NOW)).toEqual({
+      ok: true,
+      readOnly: true,
+    });
+    expect(resolveGalleryViewAccess({ status: 'expired', expires_at: PAST }, true, NOW)).toEqual({ ok: true, readOnly: true });
+  });
+});
+
+describe('evaluateGalleryWritable', () => {
+  it('still blocks writes on an expired gallery that is readable read-only', () => {
+    const gallery = { status: 'completed', expires_at: PAST, reopened_for_selection_at: null };
+    expect(resolveGalleryViewAccess(gallery, true, NOW).ok).toBe(true);
+    expect(evaluateGalleryWritable(gallery, NOW)).toMatchObject({ ok: false, status: 410 });
+  });
+});
+
+describe('decideIdentify', () => {
+  it('lets the first visitor (no participant yet) claim the owner ("כן, זאת אני")', () => {
+    expect(decideIdentify({ sessionParticipantId: null, ownerParticipantId: 'owner', asOwner: true })).toEqual({ kind: 'owner' });
+  });
+
+  it('creates a guest for a first visitor who typed a name', () => {
+    expect(decideIdentify({ sessionParticipantId: null, ownerParticipantId: 'owner', asOwner: false })).toEqual({ kind: 'guest' });
+  });
+
+  it('rejects a guest session trying to upgrade itself to owner', () => {
+    expect(decideIdentify({ sessionParticipantId: 'guest-1', ownerParticipantId: 'owner', asOwner: true })).toMatchObject({
+      kind: 'reject',
+      status: 403,
+    });
+  });
+
+  it('reuses the existing participant on repeat calls instead of creating another one', () => {
+    expect(decideIdentify({ sessionParticipantId: 'guest-1', ownerParticipantId: 'owner', asOwner: false })).toEqual({
+      kind: 'reuse',
+      participantId: 'guest-1',
+    });
+    expect(decideIdentify({ sessionParticipantId: 'owner', ownerParticipantId: 'owner', asOwner: true })).toEqual({
+      kind: 'reuse',
+      participantId: 'owner',
+    });
+  });
+
+  it('errors when claiming owner on a gallery without a registered owner', () => {
+    expect(decideIdentify({ sessionParticipantId: null, ownerParticipantId: null, asOwner: true })).toMatchObject({
+      kind: 'reject',
+      status: 500,
+    });
+  });
+});
 
 // בונה מוק מינימלי ל-Supabase שתומך רק בשרשרת המדויקת שגם checkGalleryWritable
 // משתמשת בה: from().select().eq().single(). המוק בודק גם את הטבלה, את מחרוזת

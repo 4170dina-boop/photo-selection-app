@@ -2,7 +2,28 @@ import crypto from 'crypto';
 
 // טוקן session חתום (HMAC-SHA256), לא JWT מלא כי אין כאן claims מורכבים -
 // אבל אותו עיקרון: payload + חתימה, ולא אפשר לזייף בלי SESSION_SECRET.
-const SECRET = process.env.SESSION_SECRET as string;
+//
+// הסוד נקרא בעצלתיים (בשימוש הראשון) ולא ברמת המודול, כדי ש-next build
+// (שמייבא את ה-routes בלי סביבת ריצה מלאה) לא ייפול - אבל בשימוש הראשון
+// בפועל זורקים שגיאה ברורה אם הסוד חסר/קצר מדי, במקום לחתום בשקט עם
+// "undefined" או עם סוד חלש שקל לנחש (ואז אפשר לזייף session לכל גלריה).
+export const MIN_SESSION_SECRET_LENGTH = 32;
+
+export function assertValidSessionSecret(secret: string | undefined): string {
+  if (!secret) {
+    throw new Error('SESSION_SECRET חסר - יש להגדיר ערך אקראי חזק (לפחות 32 תווים) במשתני הסביבה');
+  }
+  if (secret.length < MIN_SESSION_SECRET_LENGTH) {
+    throw new Error(
+      `SESSION_SECRET קצר מדי (${secret.length} תווים) - נדרשים לפחות ${MIN_SESSION_SECRET_LENGTH}, למשל: openssl rand -base64 32`
+    );
+  }
+  return secret;
+}
+
+function getSecret(): string {
+  return assertValidSessionSecret(process.env.SESSION_SECRET);
+}
 
 export interface SessionPayload {
   galleryId: string;
@@ -15,7 +36,7 @@ export interface SessionPayload {
 }
 
 function hmac(body: string): string {
-  return crypto.createHmac('sha256', SECRET).update(body).digest('base64url');
+  return crypto.createHmac('sha256', getSecret()).update(body).digest('base64url');
 }
 
 export function signSession(payload: SessionPayload): string {
@@ -60,4 +81,12 @@ export function safeCompare(a: string, b: string): boolean {
   const aHash = crypto.createHash('sha256').update(a).digest();
   const bHash = crypto.createHash('sha256').update(b).digest();
   return crypto.timingSafeEqual(aHash, bHash);
+}
+
+// קודי הגישה נוצרים באותיות גדולות (hex, ראו generateAccessCode ב-
+// app/api/galleries/route.ts), אבל לקוחה שמקלידה ממובייל מקבלת לרוב אותיות
+// קטנות - משווים בלי תלות ברישיות ובלי רווחים בקצוות, עדיין בזמן קבוע.
+export function accessCodesMatch(expected: string | null | undefined, provided: string | null | undefined): boolean {
+  if (!expected || !provided) return false;
+  return safeCompare(expected.trim().toUpperCase(), provided.trim().toUpperCase());
 }
