@@ -19,8 +19,40 @@ import {
   swipeNavDelta,
   enlargedShortcutStatus,
   tapHintKey,
+  neighborPrefetchUrls,
   type PendingAction,
 } from './galleryClient';
+
+describe('neighborPrefetchUrls', () => {
+  const photos = [
+    { id: 'a', fullUrl: 'https://r2/a' },
+    { id: 'b', fullUrl: 'https://r2/b' },
+    { id: 'c', fullUrl: null },
+    { id: 'd', fullUrl: 'https://r2/d' },
+  ];
+
+  it('returns the next photo first, then the previous', () => {
+    expect(neighborPrefetchUrls(photos, 'b')).toEqual(['https://r2/a']); // הבאה (c) עוד בעיבוד
+    expect(neighborPrefetchUrls(photos, 'a')).toEqual(['https://r2/b']);
+    expect(neighborPrefetchUrls(photos, 'c')).toEqual(['https://r2/d', 'https://r2/b']);
+    expect(neighborPrefetchUrls(photos, 'd')).toEqual([]);
+  });
+
+  it('returns nothing when closed or the id is unknown', () => {
+    expect(neighborPrefetchUrls(photos, null)).toEqual([]);
+    expect(neighborPrefetchUrls(photos, 'zzz')).toEqual([]);
+    expect(neighborPrefetchUrls([], 'a')).toEqual([]);
+  });
+
+  it('skips duplicates of the current URL', () => {
+    const same = [
+      { id: 'x', fullUrl: 'u' },
+      { id: 'y', fullUrl: 'u' },
+      { id: 'z', fullUrl: 'v' },
+    ];
+    expect(neighborPrefetchUrls(same, 'y')).toEqual(['v']);
+  });
+});
 
 const s = (photoId: string, status: 'maybe' | 'selected' | null): PendingAction => ({ type: 'status', photoId, status });
 const n = (photoId: string, note: string): PendingAction => ({ type: 'note', photoId, note });

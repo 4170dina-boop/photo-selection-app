@@ -63,8 +63,39 @@ export function buildFinalPhotoKey(galleryId: string, uuid: string, ext: string)
 }
 
 // key קבוע לכל תמונה - עיבוד חוזר דורס את אותו אובייקט במקום להשאיר thumbs יתומים.
+// פורמט ישן (לפני תמונות הגריד הקטנות) - תמונות שעובדו אז עדיין שמורות כך,
+// ו-/process מחליף אותן ל-previewKey בהרצה הבאה.
 export function thumbnailKey(galleryId: string, photoId: string): string {
   return `${galleryId}/thumbs/${photoId}.jpg`;
+}
+
+// תצוגה עם סימן מים (2000px) + תמונת גריד קטנה לידה (480px, אותו סימן מים).
+// בלי עמודה חדשה ב-DB: thumbnail_path שמסתיים ב-PREVIEW_KEY_SUFFIX הוא הסימן
+// לכך שתמונת הגריד כבר קיימת - /process מעלה אותה *לפני* שהוא כותב את
+// thumbnail_path החדש, כך שאין מצב שבו ה-API מפנה לאובייקט שלא קיים (ואין
+// צורך ב-HEAD לכל תמונה בכל טעינת גלריה). thumbnail_path בפורמט הישן = אין
+// גריד, וה-API נופל חזרה לתצוגה הגדולה.
+export const PREVIEW_KEY_SUFFIX = '.hd.jpg';
+export const GRID_THUMB_KEY_SUFFIX = '.sm.jpg';
+
+export function previewKey(galleryId: string, photoId: string): string {
+  return `${galleryId}/thumbs/${photoId}${PREVIEW_KEY_SUFFIX}`;
+}
+
+// key של תמונת הגריד, נגזר דטרמיניסטית מ-thumbnail_path. null = אין (פורמט
+// ישן / לא עובד / נתיב שלא בתיקיית thumbs).
+export function gridThumbKey(thumbnailPath: string | null | undefined): string | null {
+  if (typeof thumbnailPath !== 'string') return null;
+  if (!thumbnailPath.endsWith(PREVIEW_KEY_SUFFIX) || !thumbnailPath.includes('/thumbs/')) return null;
+  const base = thumbnailPath.slice(0, -PREVIEW_KEY_SUFFIX.length);
+  if (!base || base.endsWith('/')) return null;
+  return `${base}${GRID_THUMB_KEY_SUFFIX}`;
+}
+
+// תמונה מעובדת (יש תצוגה עם סימן מים) שעדיין בלי תמונת גריד - מועמדת
+// להשלמה "עצלה" מדף ההעלאה של הצלמת (/process?mode=grid).
+export function needsGridThumbBackfill(photo: { file_path: string; thumbnail_path: string | null }): boolean {
+  return hasWatermarkedThumbnail(photo) && !gridThumbKey(photo.thumbnail_path);
 }
 
 // האם ה-key שייך לתיקיית הגלריה - אותו כלל כמו ה-CHECK constraint ב-schema.sql.

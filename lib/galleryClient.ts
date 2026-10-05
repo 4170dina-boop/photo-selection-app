@@ -247,3 +247,24 @@ export function enlargedShortcutStatus(e: { code: string; ctrlKey?: boolean; alt
 export function tapHintKey(galleryId: string): string {
   return `gallery_tap_hint_v2_${galleryId}`;
 }
+
+// ---- טעינה מוקדמת בתצוגה המוגדלת ----
+
+// כתובות התצוגה הגדולה של התמונה הבאה (ואחריה הקודמת) לפי סדר photos - אותו
+// סדר שבו מנווטים בתצוגה המוגדלת ובסליידשואו - כדי שמעבר יהיה מיידי. בלי
+// כפילויות ובלי התמונה הנוכחית עצמה.
+export function neighborPrefetchUrls(
+  photos: { id: string; fullUrl: string | null }[],
+  currentId: string | null
+): string[] {
+  if (!currentId) return [];
+  const i = photos.findIndex((p) => p.id === currentId);
+  if (i === -1) return [];
+  const current = photos[i].fullUrl;
+  const urls: string[] = [];
+  for (const p of [photos[i + 1], photos[i - 1]]) {
+    const url = p?.fullUrl;
+    if (url && url !== current && !urls.includes(url)) urls.push(url);
+  }
+  return urls;
+}

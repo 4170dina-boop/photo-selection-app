@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import sharp from 'sharp';
-import { createWatermarkedPreview } from './watermark';
+import { createGridThumbnail, createWatermarkedPreview, GRID_THUMB_DIMENSION } from './watermark';
 
 async function buildTestImage(width: number, height: number): Promise<Buffer> {
   return sharp({ create: { width, height, channels: 3, background: { r: 100, g: 150, b: 200 } } })
@@ -70,6 +70,47 @@ describe('createWatermarkedPreview', () => {
     const meta = await sharp(output).metadata();
     expect(meta.width).toBe(400);
     expect(meta.format).toBe('jpeg');
+  });
+});
+
+describe('createGridThumbnail', () => {
+  it('shrinks the watermarked preview to the grid size, keeping aspect ratio and JPEG', async () => {
+    const preview = await createWatermarkedPreview(await buildTestImage(3000, 2000), 'Studio Demo');
+    const grid = await createGridThumbnail(preview);
+
+    const meta = await sharp(grid).metadata();
+    expect(meta.format).toBe('jpeg');
+    expect(meta.width).toBe(GRID_THUMB_DIMENSION);
+    expect(Math.abs(meta.width! / meta.height! - 1.5)).toBeLessThan(0.02);
+  });
+
+  it('is much smaller in bytes than the 2000px preview on a photo-like (noisy) image', async () => {
+    const noisy = await sharp({ create: { width: 3000, height: 2000, channels: 3, background: { r: 0, g: 0, b: 0 }, noise: { type: 'gaussian', mean: 128, sigma: 40 } } })
+      .jpeg({ quality: 90 })
+      .toBuffer();
+    const preview = await createWatermarkedPreview(noisy, 'Studio Demo');
+    const grid = await createGridThumbnail(preview);
+    expect(grid.length * 8).toBeLessThan(preview.length);
+  });
+
+  it('does not enlarge a preview that is already small, and keeps the watermark (derived from the preview)', async () => {
+    const preview = await createWatermarkedPreview(await buildTestImage(300, 200), 'Studio Demo');
+    const grid = await createGridThumbnail(preview);
+    const meta = await sharp(grid).metadata();
+    expect(meta.width).toBe(300);
+    expect(meta.height).toBe(200);
+
+    // תמונת הגריד נגזרת מהתצוגה עם סימן המים - היא קרובה אליה, לא למקור הנקי
+    const clean = await sharp(await buildTestImage(300, 200)).raw().toBuffer();
+    const a = await sharp(preview).raw().toBuffer();
+    const b = await sharp(grid).raw().toBuffer();
+    let diffPreview = 0;
+    let diffClean = 0;
+    for (let i = 0; i < b.length; i++) {
+      diffPreview += Math.abs(a[i] - b[i]);
+      diffClean += Math.abs(clean[i] - b[i]);
+    }
+    expect(diffPreview).toBeLessThan(diffClean);
   });
 });
 

@@ -30,11 +30,16 @@ interface ExistingPhoto {
   giftMessage: string | null;
   // אין עדיין thumbnail עם סימן מים - התמונה מוסתרת מהלקוחה עד שהעיבוד יצליח
   needsProcessing: boolean;
+  // תמונה ישנה שעובדה לפני תמונות הגריד הקטנות - מושלמת ברקע (ראו למטה)
+  needsGridThumb?: boolean;
   createdAt: string | null;
 }
 
 // כמה בקשות עיבוד חוזר (/process) רצות בו-זמנית - כל אחת כבדה בצד שרת.
 const PROCESS_RETRY_CONCURRENCY = 3;
+// השלמת תמונת גריד לתמונות ישנות (/process?mode=grid) - קלה (מורידה רק את
+// התצוגה הקיימת, לא את המקור), אבל עדיין לא מציפים את השרת.
+const GRID_BACKFILL_CONCURRENCY = 2;
 
 const FULL_RES_STORAGE_KEY = 'upload-full-resolution';
 
@@ -238,6 +243,22 @@ export default function UploadPage({ params }: UploadPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existingPhotos, uploading, galleryId]);
 
+  // השלמה "עצלה" של תמונות גריד קטנות לתמונות ישנות: כל פעם שהצלמת פותחת את
+  // הדף, מנסים כל תמונה כזו פעם אחת. בסוף טוענים מחדש, כי ההשלמה מוחקת את
+  // ה-thumbnail בפורמט הישן שה-URL הנוכחי במסך מפנה אליו. עד שזה קורה הלקוחה
+  // פשוט מקבלת את התצוגה הגדולה גם בגריד, כמו פעם.
+  const attemptedGridRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (uploading || !existingPhotos) return;
+    const due = existingPhotos.filter((p) => p.needsGridThumb && !p.needsProcessing && !attemptedGridRef.current.has(p.id));
+    if (due.length === 0) return;
+    due.forEach((p) => attemptedGridRef.current.add(p.id));
+    mapWithConcurrency(due, GRID_BACKFILL_CONCURRENCY, (p) =>
+      fetch(`/api/galleries/${galleryId}/photos/${p.id}/process?mode=grid`, { method: 'POST' }).catch(() => null)
+    ).then(() => loadExistingPhotos());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingPhotos, uploading, galleryId]);
+
   // מסמנים קבצים ששמם חוזר על עצמו בתוך הבחירה הנוכחית, או שכבר קיימים
   // בגלריה (לפי original_filename) - השוואה מדויקת של השם, בלי נרמול.
   function buildItems(selected: File[]): UploadItem[] {
@@ -345,6 +366,8 @@ export default function UploadPage({ params }: UploadPageProps) {
                   <img
                     src={photo.thumbnailUrl ?? ''}
                     alt=""
+                    loading="lazy"
+                    decoding="async"
                     style={{ width: '100%', aspectRatio: '3/4', objectFit: 'cover', display: 'block' }}
                   />
                   {statusLabel && (
