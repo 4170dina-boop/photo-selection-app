@@ -143,6 +143,22 @@ Supabase דוחה כתובות בדומיינים שמורים כמו `example.c
 (`POST /api/galleries/[id]/photos/presign-upload` ומקבילו ל-final-photos) ורק אז מעלים
 אליו ישירות - הבייטים עצמם עדיין לא עוברים דרך שרת האפליקציה.
 
+**חובה: כלל CORS על ה-bucket.** מכיוון שהדפדפן ניגש ישירות ל-URLs החתומים של R2
+(GET לצפייה/הורדה/ZIP, ו-PUT להעלאות), בלי כלל CORS הבקשות ייחסמו בדפדפן. מגדירים
+ב-Cloudflare: R2 > ה-bucket > Settings > CORS Policy, עם כתובת האתר (וגם
+`http://localhost:3000` לפיתוח מקומי):
+```json
+[
+  {
+    "AllowedOrigins": ["https://your-site.vercel.app", "http://localhost:3000"],
+    "AllowedMethods": ["GET", "PUT"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
 ה-bucket `gallery-photos` הישן ב-Supabase Storage נשאר בסכמה (`supabase/schema.sql`) אבל
 כבר לא בשימוש - כל מה שהיה בו היה נתוני בדיקה חד-פעמיים, אז לא בוצעה מיגרציה בפועל של
 תמונות ישנות ל-R2 (ההחלטה הייתה במפורש לא להשקיע בזה).

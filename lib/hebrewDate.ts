@@ -3,7 +3,7 @@
 // כבר נותן לנו את שם החודש העברי ואת המספרים (יום/שנה) בלוח השנה העברי, אבל
 // לא ממיר אותם לאותיות גימטריה בעצמו (בדקנו: numberingSystem: 'hebr' לא עובד
 // על Intl.DateTimeFormat) - לכן ההמרה למספרים עבריים כתובה כאן ידנית.
-function numberToHebrewLetters(num: number): string {
+export function numberToHebrewLetters(num: number): string {
   const values: [number, string][] = [
     [400, 'ת'], [300, 'ש'], [200, 'ר'], [100, 'ק'],
     [90, 'צ'], [80, 'פ'], [70, 'ע'], [60, 'ס'], [50, 'נ'], [40, 'מ'], [30, 'ל'], [20, 'כ'], [10, 'י'],
