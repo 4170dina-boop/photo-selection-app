@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { theme, inputStyle, goldButtonStyle } from '@/lib/theme';
+import { callbackErrorMessage, isRateLimitError, RATE_LIMIT_MESSAGE } from '@/lib/authErrors';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -11,23 +12,31 @@ export default function ForgotPasswordPage() {
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
 
+  // הגענו לכאן מ-/auth/callback/reset אחרי קישור שפג תוקף (?error=link_expired)
+  useEffect(() => {
+    const message = callbackErrorMessage(new URLSearchParams(window.location.search).get('error'));
+    if (message) setError(message);
+  }, []);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
     setLoading(true);
 
     const supabase = createClient();
-    // הקישור במייל מוביל ל-auth/callback (אותו endpoint ששימש עד עכשיו רק
-    // לאימות הרשמה) שממיר קוד ל-session ואז מפנה ל-login/reset-password,
-    // שם הצלם קובע סיסמה חדשה בזמן שיש לו session תקף (recovery).
+    // הקישור במייל מוביל ל-/auth/callback/reset שממיר קוד ל-session ואז מפנה
+    // ל-login/reset-password, שם הצלמת קובעת סיסמה חדשה בזמן שיש לה session
+    // תקף (recovery). נתיב נפרד בלי query string - כדי שיתאים בדיוק לרשימת
+    // ה-Redirect URLs המורשים ב-Supabase (ראו README ו-app/auth/callback/reset).
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?next=/login/reset-password`,
+      redirectTo: `${window.location.origin}/auth/callback/reset`,
     });
 
     setLoading(false);
 
     if (resetError) {
-      setError('שליחת המייל נכשלה, נסי שוב');
+      console.error('resetPasswordForEmail failed', resetError);
+      setError(isRateLimitError(resetError) ? RATE_LIMIT_MESSAGE : 'שליחת המייל נכשלה, נסי שוב');
       return;
     }
 
