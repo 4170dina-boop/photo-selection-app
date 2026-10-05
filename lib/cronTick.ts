@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'crypto';
 import { israelDateString, daysBetweenDateStrings } from '@/lib/israelTime';
 import { isSelectionFinal } from '@/lib/galleryLifecycle';
+import type { RowGuard } from '@/lib/rowGuard';
 
 // לוגיקה טהורה של app/api/cron/tick/route.ts (בלי DB ובלי שליחת מיילים) -
 // כדי שההחלטות "האם מותר/צריך עכשיו" ייבדקו ב-vitest.
@@ -91,6 +92,31 @@ export function isOriginalsCleanupDue(gallery: OriginalsCleanupCandidate, now: D
   if (Number.isNaN(delivered) || delivered > now.getTime() - ORIGINALS_GRACE_DAYS * MS_PER_DAY) return false;
   const warnedOn = israelDateString(new Date(gallery.originals_deletion_warning_sent_at));
   return daysBetweenDateStrings(warnedOn, israelDateString(now)) >= ORIGINALS_WARNING_DAYS_BEFORE;
+}
+
+// "תפיסה" של גלריה לניקוי *לפני* מחיקה כלשהי ב-R2: UPDATE מותנה שמסמן
+// originals_cleaned_up_at רק אם השורה עדיין בדיוק במצב שעליו isOriginalsCleanupDue
+// החליטה (עדיין completed, לא נפתחה מחדש, לא נוקתה, ואותם delivered_at/התראה).
+// בלי זה: ה-cron שלף גלריה כזכאית, הצלמת פתחה בינתיים את הבחירה מחדש (או ביטלה
+// "נמסר"), וה-cron מחק את המקור של גלריה שהלקוחה בוחרת בה שוב. מחיקה רק אם
+// ה-UPDATE באמת החזיר את השורה. הצד השני (reopen-selection) מותנה ב-
+// originals_cleaned_up_at is null - כך רק אחד מהשניים יכול לנצח.
+export function originalsCleanupClaimGuard(gallery: OriginalsCleanupCandidate): RowGuard {
+  return {
+    status: 'completed',
+    reopened_for_selection_at: null,
+    originals_cleaned_up_at: null,
+    delivered_at: gallery.delivered_at,
+    originals_deletion_warning_sent_at: gallery.originals_deletion_warning_sent_at,
+  };
+}
+
+// אחרי תפיסה, כישלון בניקוי: אם עוד לא נמחק אף קובץ - משחררים את התפיסה כדי
+// שהריצה הבאה תנסה שוב (ותתפוס שוב רק אם הגלריה עדיין זכאית). אם כבר נמחק
+// חלק מהמקור - משאירים "נוקה": המקור כבר לא שלם, ואסור לאפשר פתיחה מחדש של
+// בחירה מתוכו (הקבצים שנשארו הם רק בזבוז אחסון).
+export function shouldReleaseCleanupClaim(deletedCount: number): boolean {
+  return deletedCount === 0;
 }
 
 // התאריך שמוצג לצלמת בהתראה: 30 יום אחרי המסירה, אבל לא לפני 5 ימים מהיום
