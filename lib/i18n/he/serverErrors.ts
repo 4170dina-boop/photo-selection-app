@@ -1,0 +1,48 @@
+// עברית: הודעות שגיאה ידועות מה-API של גלריית הלקוח/ה. הטקסט העברי כאן
+// חייב להיות זהה בדיוק למה שהשרת מחזיר - lib/i18n/serverErrors.ts ממפה
+// לפיו טקסט שגיאה מהשרת למפתח, כדי להציג אותו בשפת הגלריה.
+import type { Message } from '../types';
+
+export const serverErrors = {
+  'srv.notAuthenticated': 'לא מאומת',
+  'srv.galleryNotFound': 'גלריה לא נמצאה',
+  'srv.galleryExpired': 'תוקף הגלריה פג',
+  'srv.wrongCode': 'קוד גישה שגוי',
+  'srv.lockedOut': 'יותר מדי ניסיונות שגויים - נסו שוב בעוד כמה דקות',
+  'srv.ownerLockedOut': 'יותר מדי ניסיונות שגויים - נסי שוב בעוד כמה דקות',
+  'srv.unavailable': 'השירות לא זמין כרגע, נסו שוב בעוד כמה דקות',
+  'srv.unavailableF': 'השירות לא זמין כרגע, נסי שוב בעוד כמה דקות',
+  'srv.badRequest': 'גוף בקשה לא תקין',
+  'srv.missingDetails': 'חסרים פרטים',
+  'srv.identifyFirst': 'צריך לזהות את עצמך קודם',
+  'srv.ownerEmailMismatch':
+    'כתובת המייל לא תואמת לזו שהצלמת רשמה. אם את/ה לא הלקוחה הרשומה, יש לבחור "לא, אני בן/בת משפחה או חבר/ה"',
+  'srv.alreadyOtherName': 'כבר נכנסת לגלריה בשם אחר - אי אפשר להחליף לבעלת הגלריה',
+  'srv.nameRequired': 'צריך למלא שם',
+  'srv.joinFailed': 'ההצטרפות נכשלה',
+  'srv.ownerEmailRequired': 'צריך להקליד את כתובת המייל שלך',
+  'srv.noOwnerEmail': 'לא רשום מייל ללקוחה בגלריה הזו - פני לצלמת',
+  'srv.genderRequired': 'צריך לבחור לשון פנייה',
+  'srv.genderInvalid': 'לשון הפנייה לא תקינה',
+  'srv.selectionLocked': 'הבחירה כבר נשלחה - אי אפשר לערוך אותה יותר',
+  'srv.giftNoSelect': 'זו תמונת מתנה - היא כבר כלולה אצלך, אין צורך לבחור אותה',
+  'srv.photoNotFound': 'תמונה לא נמצאה',
+  'srv.noteUnmarked': 'אי אפשר להוסיף הערה לתמונה שלא סומנה',
+  'srv.noneSelected': 'עדיין לא בחרת אף תמונה - צריך לבחור לפחות תמונה אחת לפני שמסיימים',
+  'srv.onlyOwnerFinish': 'רק הלקוחה הראשית יכולה לסיים את הבחירה',
+  'srv.finishFailed': 'שליחת הבחירה נכשלה',
+  'srv.saveSelectionFailed': 'שמירת הבחירה נכשלה, נסי שוב',
+  'srv.saveNoteFailed': 'שמירת ההערה נכשלה, נסי שוב',
+  'srv.clearFailed': 'ביטול הבחירה נכשל, נסי שוב',
+  'srv.aiNotConfigured': 'שירות ה-AI לא מוגדר עדיין',
+  'srv.aiFailed': 'הניתוח לא הצליח כרגע - ההרצה לא נספרה, נסי שוב בעוד כמה דקות',
+  'srv.aiAllMarked': 'כל התמונות כבר מסומנות',
+  'srv.noPhotos': 'אין עדיין תמונות בגלריה',
+  'srv.extLimit': 'כבר ביקשת הארכה פעמיים - לשאלות פני לצלמת',
+  'srv.extPending': 'כבר שלחת בקשת הארכה - הצלמת תעדכן אותך בקרוב',
+  'srv.extOnlyOwner': 'רק הלקוחה הראשית יכולה לבקש הארכה',
+  'srv.extNoDeadline': 'לגלריה הזו אין תאריך סיום לבחירה',
+  'srv.extAlreadyDone': 'הבחירה כבר הסתיימה - אין צורך בהארכה',
+  'srv.extUnavailable': 'בקשת הארכה עוד לא זמינה בגלריה הזו',
+  'srv.extSendFailed': 'שליחת הבקשה נכשלה, נסי שוב',
+} satisfies Record<string, Message>;
