@@ -3286,7 +3286,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           alignItems: 'start',
           gap: '1rem',
           // מקום לפס התחתון הקבוע, כדי שלא יכסה את השורה האחרונה
-          padding: showBottomBar ? '0 1.5rem calc(6.5rem + env(safe-area-inset-bottom))' : '0 1.5rem 1.5rem',
+          padding: showBottomBar ? '0 1.5rem calc(4.5rem + env(safe-area-inset-bottom))' : '0 1.5rem 1.5rem',
         }}
       >
         {visiblePhotos.map((photo) => {
@@ -3530,16 +3530,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           style={{
             position: 'fixed', bottom: 0, insetInline: 0, zIndex: 45,
             background: 'rgba(15,22,38,0.96)', borderTop: `1px solid ${theme.border}`, backdropFilter: 'blur(12px)',
-            padding: '0.6rem 1rem calc(0.6rem + env(safe-area-inset-bottom))',
+            padding: '0.35rem 1rem calc(0.35rem + env(safe-area-inset-bottom))',
           }}
         >
-          <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div style={{ maxWidth: 520, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
             {finishCountdown !== null ? (
               <>
                 <span role="status" aria-live="polite" style={{ color: theme.successText, fontSize: 14 }}>
                   הבחירה תישלח בעוד <bdi dir="ltr">{finishCountdown}</bdi> שניות...
                 </span>
-                <button onClick={cancelFinish} style={{ ...outlineButtonStyle, minHeight: 48, padding: '0.4rem 1.1rem' }}>
+                <button onClick={cancelFinish} style={{ ...outlineButtonStyle, minHeight: 40, padding: '0.3rem 1rem' }}>
                   ביטול שליחה
                 </button>
               </>
@@ -3550,11 +3550,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   <button
                     onClick={() => submitFinish()}
                     disabled={finishing}
-                    style={{ ...primaryButtonStyle, minHeight: 48, padding: '0.4rem 1.1rem', opacity: finishing ? 0.6 : 1 }}
+                    style={{ ...primaryButtonStyle, minHeight: 40, padding: '0.3rem 1rem', opacity: finishing ? 0.6 : 1 }}
                   >
                     {finishing ? 'שולחת...' : 'נסי שוב לשלוח'}
                   </button>
-                  <button onClick={cancelFinish} disabled={finishing} style={{ ...outlineButtonStyle, minHeight: 48, padding: '0.4rem 1rem' }}>
+                  <button onClick={cancelFinish} disabled={finishing} style={{ ...outlineButtonStyle, minHeight: 40, padding: '0.3rem 0.9rem' }}>
                     ביטול
                   </button>
                 </span>
@@ -3574,7 +3574,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   disabled={finishing || ownerSelectedCount === 0}
                   title={ownerSelectedCount === 0 ? 'בחרי לפחות תמונה אחת קודם' : undefined}
                   style={{
-                    ...primaryButtonStyle, minHeight: 48, padding: '0.4rem 1.4rem',
+                    ...primaryButtonStyle, minHeight: 40, padding: '0.3rem 1.1rem', fontSize: 14,
                     opacity: finishing || ownerSelectedCount === 0 ? 0.5 : 1,
                   }}
                 >
