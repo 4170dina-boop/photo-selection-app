@@ -138,6 +138,9 @@ create table galleries (
   -- לשון הפנייה ללקוח/ה הראשי/ת בגלריה ובמיילים (lib/gender.ts): 'f' = נקבה
   -- (ברירת המחדל), 'm' = זכר. נקבע ע"י הצלמת בטופס יצירה/עריכה של הגלריה.
   client_gender text default 'f' not null check (client_gender in ('f', 'm')),
+  -- שפת הגלריה והמיילים ללקוח/ה (lib/i18n): he/en/yi/es/fr, ברירת מחדל עברית.
+  -- הלקוח/ה עדיין יכול/ה להחליף שפה בבורר שבגלריה (נשמר רק בדפדפן).
+  language text default 'he' not null check (language in ('he', 'en', 'yi', 'es', 'fr')),
   created_at timestamptz default now()
 );
 
