@@ -61,3 +61,10 @@ export function addDaysToDateString(dateStr: string, days: number): string {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+
+// תאריך לתצוגה בעברית (למשל "5.10.2026") לפי הלוח בישראל - toLocaleDateString
+// בלי timeZone משתמש באזור הזמן של השרת (UTC ב-Vercel), כך שגלריה שנוצרה
+// בישראל אחרי חצות (21:00-24:00 UTC) הייתה מוצגת עם התאריך של יום קודם.
+export function formatIsraelDate(value: string | Date): string {
+  return new Date(value).toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' });
+}

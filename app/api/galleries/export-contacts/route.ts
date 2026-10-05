@@ -1,18 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { buildCsv } from '@/lib/csv';
+import { fetchAllPages } from '@/lib/fetchAllPages';
+import { formatIsraelDate } from '@/lib/israelTime';
 
 // מייצא CSV של כל הלקוחות של הצלמת המחוברת - שם, אימייל, סטטוס גלריה, תאריך
 // יצירה ותוקף - לרשימת אנשי קשר/תיעוד מחוץ למערכת. שונה מ-selections-export
 // (שם קובץ+הערה של תמונות שנבחרו בגלריה בודדת) - זה על כל הגלריות ביחד,
 // בלי פרטי תמונות בכלל. רץ עם session הצלם, לא service key - RLS דואג
 // שהשאילתה על galleries/clients תחזיר רק את הרשומות של הצלמת המחוברת.
-
-function escapeCsvField(value: string): string {
-  if (/[",\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
 
 function statusLabel(status: string): string {
   switch (status) {
@@ -50,26 +46,34 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'לא נמצא פרופיל צלם' }, { status: 404 });
   }
 
-  const { data: galleries } = await supabase
-    .from('galleries')
-    .select('status, expires_at, created_at, clients(full_name, email)')
-    .eq('photographer_id', photographer.id)
-    .order('created_at', { ascending: false });
+  // עמוד אחרי עמוד (.range) - בלי זה Supabase חותך בשקט ב-1000 שורות. order משני
+  // לפי id כדי שהסדר יהיה יציב בין עמודים גם כשיש created_at זהים.
+  let galleries: any[];
+  try {
+    galleries = await fetchAllPages<any>((from, to) =>
+      supabase
+        .from('galleries')
+        .select('id, status, expires_at, created_at, clients(full_name, email)')
+        .eq('photographer_id', photographer.id)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
+  } catch (err) {
+    console.error('export-contacts query failed', err);
+    return NextResponse.json({ error: 'שליפת הגלריות נכשלה' }, { status: 500 });
+  }
 
-  const rows = (galleries ?? []).map((g: any) => [
+  // תאריכים לפי שעון ישראל, לא לפי אזור הזמן של השרת (UTC)
+  const rows = galleries.map((g: any) => [
     g.clients?.full_name ?? '',
     g.clients?.email ?? '',
     statusLabel(g.status),
-    new Date(g.created_at).toLocaleDateString('he-IL'),
-    g.expires_at ? new Date(g.expires_at).toLocaleDateString('he-IL') : '',
+    formatIsraelDate(g.created_at),
+    g.expires_at ? formatIsraelDate(g.expires_at) : '',
   ]);
 
-  const csvLines = [
-    'שם לקוחה,אימייל,סטטוס,תאריך יצירה,תוקף',
-    ...rows.map((row) => row.map(escapeCsvField).join(',')),
-  ];
-  // BOM כדי ש-Excel יזהה UTF-8 נכון (בלי זה עברית מוצגת כג'יבריש בפתיחה ישירה)
-  const csv = '﻿' + csvLines.join('\r\n');
+  const csv = buildCsv(['שם לקוחה', 'אימייל', 'סטטוס', 'תאריך יצירה', 'תוקף'], rows);
 
   return new NextResponse(csv, {
     headers: {

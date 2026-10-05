@@ -14,7 +14,10 @@ const supabaseAdmin = createAdminClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY as string
 );
 
-const SIGNED_URL_TTL_SECONDS = 60 * 10; // 10 דקות - מספיק להורדת ZIP, לא נשאר תקף לנצח
+// שעה - ה-ZIP מוריד את הקבצים אחד אחרי השני, ובגלריה גדולה/חיבור איטי 10 דקות
+// לא הספיקו (ה-URLs האחרונים פגו באמצע וחזרו 403). MagicButton גם יודע לבקש
+// URLs טריים מה-route הזה אם בכל זאת פגו.
+const SIGNED_URL_TTL_SECONDS = 60 * 60;
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient();
@@ -73,11 +76,16 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const photos = await Promise.all(
     merged.map(async (p) => ({
+      id: p.photoId,
       filename: p.filename,
       url: await getPresignedDownloadUrl(p.filePath, SIGNED_URL_TTL_SECONDS),
       isGift: p.isGift,
     }))
   );
 
-  return NextResponse.json({ photos: photos.filter((p) => p.url) });
+  // url=null = הקובץ המקורי כבר לא קיים ב-R2 (למשל נוקה ע"י ניקוי המקור
+  // האוטומטי) - לא מחזירים אותו, אבל מדווחים כמה כאלה היו כדי שהצלמת תדע
+  // שה-ZIP לא שלם במקום לקבל "הורדו X" בלי הסבר.
+  const available = photos.filter((p) => p.url);
+  return NextResponse.json({ photos: available, missingCount: photos.length - available.length });
 }

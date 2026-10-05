@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { israelEndOfDayIso, israelDateString, daysBetweenDateStrings } from './israelTime';
+import { israelEndOfDayIso, israelDateString, daysBetweenDateStrings, formatIsraelDate } from './israelTime';
+
+describe('formatIsraelDate', () => {
+  it('uses the Israel calendar date, not UTC, late in the UTC evening', () => {
+    // 22:30Z ב-15 ביולי = 01:30 ב-16 ביולי בישראל (UTC+3)
+    expect(formatIsraelDate('2026-07-15T22:30:00Z')).toBe(new Date('2026-07-16T12:00:00Z').toLocaleDateString('he-IL', { timeZone: 'UTC' }));
+  });
+
+  it('keeps the same date in the middle of the day', () => {
+    expect(formatIsraelDate('2026-12-15T10:00:00Z')).toBe(new Date('2026-12-15T12:00:00Z').toLocaleDateString('he-IL', { timeZone: 'UTC' }));
+  });
+});
 
 describe('israelEndOfDayIso', () => {
   it('uses +03:00 (IDT) for a summer date', () => {

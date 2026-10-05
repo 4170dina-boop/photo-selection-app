@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { mergeGiftPhotosIntoExport } from '@/lib/gifts';
+import { buildCsv, attachmentContentDisposition } from '@/lib/csv';
 
 // מייצא CSV של התמונות שנבחרו בגלריה - נוח למסירה למעבדת הדפסה או לתיעוד,
 // בנפרד מהורדת הקבצים עצמם (MagicButton/ZIP). רק שם קובץ + הערה, בלי URLs -
@@ -11,13 +12,6 @@ const supabaseAdmin = createAdminClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
   process.env.SUPABASE_SERVICE_ROLE_KEY as string
 );
-
-function escapeCsvField(value: string): string {
-  if (/[",\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient();
@@ -75,19 +69,17 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     gifts.map((g) => ({ photoId: g.id, filename: g.original_filename, note: '' }))
   );
 
-  const csvLines = [
-    'שם קובץ,הערה,מתנה',
-    ...rows.map((r) => `${escapeCsvField(r.filename)},${escapeCsvField(r.note)},${r.isGift ? 'כן' : ''}`),
-  ];
-  // BOM כדי ש-Excel יזהה UTF-8 נכון (בלי זה עברית מוצגת כג'יבריש בפתיחה ישירה)
-  const csv = '﻿' + csvLines.join('\r\n');
+  const csv = buildCsv(
+    ['שם קובץ', 'הערה', 'מתנה'],
+    rows.map((r) => [r.filename, r.note, r.isGift ? 'כן' : ''])
+  );
 
   const clientName = (gallery as any).clients?.full_name ?? 'גלריה';
 
   return new NextResponse(csv, {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="selections-${encodeURIComponent(clientName)}.csv"`,
+      'Content-Disposition': attachmentContentDisposition(`selections-${clientName}.csv`, 'selections.csv'),
     },
   });
 }
