@@ -5,6 +5,7 @@ import { requireGallerySession } from '@/lib/gallerySession';
 import { checkGalleryWritable } from '@/lib/galleryAccess';
 import { downloadToBuffer } from '@/lib/r2';
 import { hasWatermarkedThumbnail } from '@/lib/uploadPolicy';
+import { fetchGiftPhotos } from '@/lib/giftQueries';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -80,27 +81,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'לא נמצא פרופיל צלם' }, { status: 404 });
   }
 
-  // הבדיקה וה"תפיסה" של המכסה היומית (reserve_ai_picks_quota, ראו
-  // supabase/schema.sql) קורות יחד באופן אטומי ב-DB *לפני* קריאות ה-AI ועיבוד
-  // התמונות למטה - לא רק בדיקה מוקדמת עם כתיבה מאוחרת בסוף כמו קודם - כדי
-  // ששתי בקשות מקבילות (למשל הבעלים ובן משפחה שלוחצים "עזרי לי לבחור" כמעט
-  // יחד) לא יוכלו שתיהן לעבור את הבדיקה על סמך אותו usedToday ולצרוך שתי
-  // הרצות AI בתשלום כשהמונה בפועל מתקדם ב-1 בלבד. לא "מחזירים" מכסה שנתפסה
-  // אם ההרצה עצמה נכשלת/לא מוצאת כלום אחר כך - מכסה יומית רכה בלבד, וגם הקוד
-  // הקודם לא זיכה הרצה חוזרת בחינם על כשל.
-  const { data: quotaReserved, error: quotaError } = await supabaseAdmin.rpc('reserve_ai_picks_quota', {
-    p_photographer_id: photographer.id,
-    p_daily_limit: DAILY_LIMIT,
-  });
-
-  if (quotaError) {
-    return NextResponse.json({ error: 'שגיאה בבדיקת המכסה היומית, נסו שוב' }, { status: 500 });
-  }
-
-  if (!quotaReserved) {
-    return NextResponse.json({ error: `הגעתם למגבלה היומית (${DAILY_LIMIT} הרצות) - נסו שוב מחר` }, { status: 429 });
-  }
-
   // רק תמונות שהלקוחה בפועל רואה (עם thumbnail מעובד) - ראו app/api/gallery/[id]/route.ts.
   const { data: allPhotos } = await supabaseAdmin.from('photos').select('id, file_path, thumbnail_path').eq('gallery_id', galleryId);
   const photos = (allPhotos ?? []).filter(hasWatermarkedThumbnail);
@@ -115,13 +95,37 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     .eq('participant_id', session.participantId);
   const alreadyMarkedIds = new Set((existingMarks ?? []).map((s) => s.photo_id));
 
+  // תמונות מתנה (lib/gifts.ts) כבר כלולות - לא מציעים אותן (route הבחירה גם
+  // חוסם סימון שלהן), אחרת ההרצה הייתה "מבזבזת" הצעות על תמונות שלא נספרות.
+  const giftIds = new Set((await fetchGiftPhotos(supabaseAdmin, [galleryId])).map((g) => g.id));
+
   const candidates = evenSample(
-    photos.filter((p) => !alreadyMarkedIds.has(p.id)),
+    photos.filter((p) => !alreadyMarkedIds.has(p.id) && !giftIds.has(p.id)),
     MAX_PHOTOS_TO_ANALYZE
   );
 
   if (candidates.length === 0) {
     return NextResponse.json({ error: 'כל התמונות כבר מסומנות' }, { status: 400 });
+  }
+
+  // הבדיקה וה"תפיסה" של המכסה היומית (reserve_ai_picks_quota, ראו
+  // supabase/schema.sql) קורות יחד באופן אטומי ב-DB *לפני* קריאות ה-AI ועיבוד
+  // התמונות למטה - כדי ששתי בקשות מקבילות (למשל הבעלים ובן משפחה שלוחצים
+  // "עזרי לי לבחור" כמעט יחד) לא יוכלו שתיהן לעבור את הבדיקה על סמך אותו
+  // usedToday. נתפסת רק אחרי הבדיקות הזולות למעלה ("אין תמונות"/"הכל מסומן"),
+  // כדי שבקשה שממילא לא תקרא ל-AI לא תשרוף הרצה. אם אף קריאת AI לא הצליחה -
+  // ההרצה מוחזרת (release_ai_picks_quota למטה).
+  const { data: quotaReserved, error: quotaError } = await supabaseAdmin.rpc('reserve_ai_picks_quota', {
+    p_photographer_id: photographer.id,
+    p_daily_limit: DAILY_LIMIT,
+  });
+
+  if (quotaError) {
+    return NextResponse.json({ error: 'שגיאה בבדיקת המכסה היומית, נסו שוב' }, { status: 500 });
+  }
+
+  if (!quotaReserved) {
+    return NextResponse.json({ error: `הגעתם למגבלה היומית (${DAILY_LIMIT} הרצות) - נסו שוב מחר` }, { status: 429 });
   }
 
   // מכינים תמונות קטנות (base64) לכל מועמדת - best-effort, תמונה שנכשלת
@@ -150,6 +154,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const pickedIds = new Set<string>();
+  let succeededBatches = 0;
 
   await Promise.all(
     batches.map(async (batch) => {
@@ -179,10 +184,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
       if (!aiResponse.ok) return;
 
-      const aiData: any = await aiResponse.json();
-      const rawText: string = aiData?.content?.[0]?.text ?? '';
       try {
+        const aiData: any = await aiResponse.json();
+        const rawText: string = aiData?.content?.[0]?.text ?? '';
         const indices = extractJsonArray(rawText);
+        succeededBatches++;
         indices.forEach((i) => {
           if (batch[i]) pickedIds.add(batch[i].photoId);
         });
@@ -192,20 +198,44 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     })
   );
 
+  // אף באטש לא קיבל תשובה תקינה מה-AI (שירות לא זמין, כל ההורדות נכשלו וכו') -
+  // הלקוחה לא קיבלה כלום, אז מחזירים את ההרצה שנתפסה למכסה היומית. הזיכוי
+  // אטומי ב-DB ומוגבל לאותו יום (release_ai_picks_quota, supabase/schema.sql) -
+  // אם היום התחלף בינתיים, המונה כבר אופס ממילא ולא יורד מתחת ל-0.
+  // best-effort: אם הפונקציה עוד לא קיימת (מיגרציה לא רצה) פשוט לא מזכים.
+  if (succeededBatches === 0) {
+    const { error: releaseError } = await supabaseAdmin.rpc('release_ai_picks_quota', {
+      p_photographer_id: photographer.id,
+    });
+    if (releaseError) console.error('[ai-picks] החזרת המכסה נכשלה:', releaseError);
+    return NextResponse.json({ error: 'הניתוח לא הצליח כרגע - ההרצה לא נספרה, נסי שוב בעוד כמה דקות' }, { status: 502 });
+  }
+
   if (pickedIds.size > 0) {
-    await supabaseAdmin.from('selections').upsert(
+    // קריאות ה-AI לוקחות זמן - בינתיים הבעלים אולי לחצה "סיימתי לבחור" או
+    // שהתוקף פג. בודקים שוב רגע לפני הכתיבה, אותה בדיקה כמו בתחילת הבקשה.
+    const stillWritable = await checkGalleryWritable(supabaseAdmin, galleryId);
+    if (!stillWritable.ok) {
+      return NextResponse.json({ error: stillWritable.error }, { status: stillWritable.status });
+    }
+
+    // insert בלבד (ignoreDuplicates): סימון שהלקוחה עשתה בעצמה בזמן הניתוח
+    // (למשל "נבחר") לא נדרס ל"אולי" ע"י הצעת ה-AI.
+    const { error: insertError } = await supabaseAdmin.from('selections').upsert(
       Array.from(pickedIds).map((photoId) => ({
         gallery_id: galleryId,
         photo_id: photoId,
         participant_id: session.participantId,
         status: 'maybe' as const,
       })),
-      { onConflict: 'gallery_id,photo_id,participant_id' }
+      { onConflict: 'gallery_id,photo_id,participant_id', ignoreDuplicates: true }
     );
+    if (insertError) {
+      console.error('[ai-picks] שמירת ההצעות נכשלה:', insertError);
+      return NextResponse.json({ error: 'שמירת ההצעות נכשלה, נסי שוב' }, { status: 500 });
+    }
   }
 
-  // המכסה כבר נתפסה אטומית למעלה (reserve_ai_picks_quota) לפני קריאות ה-AI -
-  // אין צורך בעדכון מונה נוסף כאן.
   return NextResponse.json({
     pickedCount: pickedIds.size,
     analyzedCount: ready.length,

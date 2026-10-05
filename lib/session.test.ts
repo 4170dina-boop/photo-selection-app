@@ -1,5 +1,33 @@
 import { describe, it, expect } from 'vitest';
-import { signSession, verifySession, safeCompare } from './session';
+import { signSession, verifySession, safeCompare, accessCodesMatch, assertValidSessionSecret } from './session';
+
+describe('assertValidSessionSecret', () => {
+  it('throws a clear error when the secret is missing', () => {
+    expect(() => assertValidSessionSecret(undefined)).toThrow(/SESSION_SECRET חסר/);
+    expect(() => assertValidSessionSecret('')).toThrow(/SESSION_SECRET חסר/);
+  });
+
+  it('throws when the secret is shorter than 32 characters', () => {
+    expect(() => assertValidSessionSecret('a'.repeat(31))).toThrow(/קצר מדי/);
+  });
+
+  it('accepts a secret of at least 32 characters', () => {
+    expect(assertValidSessionSecret('a'.repeat(32))).toBe('a'.repeat(32));
+  });
+});
+
+describe('accessCodesMatch', () => {
+  it('matches regardless of case and surrounding whitespace', () => {
+    expect(accessCodesMatch('AB12CD34', 'ab12cd34')).toBe(true);
+    expect(accessCodesMatch('AB12CD34', '  Ab12Cd34 ')).toBe(true);
+  });
+
+  it('rejects a different code or a missing value', () => {
+    expect(accessCodesMatch('AB12CD34', 'AB12CD35')).toBe(false);
+    expect(accessCodesMatch(null, 'AB12CD34')).toBe(false);
+    expect(accessCodesMatch('AB12CD34', '')).toBe(false);
+  });
+});
 
 const GALLERY_ID = '11111111-1111-1111-1111-111111111111';
 const OTHER_GALLERY_ID = '22222222-2222-2222-2222-222222222222';

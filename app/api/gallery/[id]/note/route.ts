@@ -8,6 +8,9 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY as string
 );
 
+// תקרה בצד שרת - גם אם ה-UI מגביל, בקשה ישירה לא אמורה להכניס טקסט בלי גבול.
+const NOTE_MAX_LENGTH = 1000;
+
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const galleryId = params.id;
   const session = requireGallerySession(req, galleryId);
@@ -31,9 +34,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const { photoId } = body;
-  const note = (body.note ?? '').trim();
-  if (!photoId) {
+  if (!photoId || (body.note != null && typeof body.note !== 'string')) {
     return NextResponse.json({ error: 'חסרים פרטים' }, { status: 400 });
+  }
+  const note = (body.note ?? '').trim();
+  if (note.length > NOTE_MAX_LENGTH) {
+    return NextResponse.json({ error: `ההערה ארוכה מדי (עד ${NOTE_MAX_LENGTH} תווים)` }, { status: 400 });
   }
 
   const { data: selection } = await supabaseAdmin
@@ -48,12 +54,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'אי אפשר להוסיף הערה לתמונה שלא סומנה' }, { status: 400 });
   }
 
-  await supabaseAdmin
+  const { error: updateError } = await supabaseAdmin
     .from('selections')
     .update({ note: note || null })
     .eq('gallery_id', galleryId)
     .eq('photo_id', photoId)
     .eq('participant_id', session.participantId);
+
+  if (updateError) {
+    console.error('[note] שמירת ההערה נכשלה:', updateError);
+    return NextResponse.json({ error: 'שמירת ההערה נכשלה, נסי שוב' }, { status: 500 });
+  }
 
   return NextResponse.json({ success: true });
 }

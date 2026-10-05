@@ -127,6 +127,10 @@ create table galleries (
   -- נסמן שהעריכה מותרת למרות זאת (checkGalleryWritable ב-lib/galleryAccess.ts
   -- בודקת גם אותה). null = נעולה כרגיל, לא-null = פתוחה לבחירה מחדש.
   reopened_for_selection_at timestamptz,
+  -- מתי נשלחה לצלמת התראת "הלקוחה הגיעה למכסת החבילה" (sendQuotaReachedEmail,
+  -- app/api/gallery/[id]/selection) - null = טרם נשלחה. נתפסת ב-UPDATE מותנה
+  -- (is null) כדי שהמייל ייצא פעם אחת בלבד לכל גלריה, גם בבקשות מקבילות.
+  quota_notified_at timestamptz,
   created_at timestamptz default now()
 );
 
@@ -935,6 +939,12 @@ begin
     return;
   end if;
 
+  -- נעילה קודמת שכבר הסתיימה: מתחילים לספור מחדש מ-0 - אחרת המונה נשאר על
+  -- 5+ וכל טעות בודדת אחרי הנעילה הייתה נועלת מחדש מיד ל-15 דקות.
+  if current_locked_until is not null and current_locked_until <= now() then
+    current_attempts := 0;
+  end if;
+
   new_attempts := coalesce(current_attempts, 0) + 1;
   if new_attempts >= 5 then -- MAX_ATTEMPTS, ראו lib/accessLockout.ts
     new_locked_until := now() + interval '15 minutes'; -- LOCKOUT_MINUTES, ראו lib/accessLockout.ts
@@ -960,9 +970,9 @@ $$ language plpgsql;
 -- שורת הצלמת כדי ששתי בקשות מקבילות לא יקראו שתיהן את אותו usedToday "לפני".
 -- מחזירה true אם "נתפסה" מכסה (מותר להמשיך לקרוא ל-AI), false אם המכסה
 -- היומית כבר נוצלה (כולל ע"י בקשה מקבילה אחרת שזכתה קודם) - ה-route אז
--- מחזיר 429 בלי לקרוא ל-Anthropic בכלל. בכוונה לא "מחזירים" מכסה שנתפסה אם
--- קריאת ה-AI עצמה נכשלת אחר כך - מכסות יומיות רכות בלבד, וגם הקוד הקודם לא
--- זיכה ניסיון חוזר בחינם על כשל.
+-- מחזיר 429 בלי לקרוא ל-Anthropic בכלל. בעיצוב הגלריה לא "מחזירים" מכסה
+-- שנתפסה אם קריאת ה-AI נכשלת אחר כך (מכסה רכה). ב"עזרי לי לבחור" כן מזכים
+-- כשאף באטש לא הצליח - ראו release_ai_picks_quota למטה.
 create or replace function reserve_theme_gen_quota(p_photographer_id uuid, p_daily_limit int)
 returns boolean as $$
 declare
@@ -1034,6 +1044,28 @@ begin
 end;
 $$ language plpgsql;
 
+-- זיכוי הרצה אחת של "עזרי לי לבחור" כשאף קריאת AI לא הצליחה (ראו
+-- app/api/gallery/[id]/ai-picks/route.ts). אטומי, ומוגבל לאותו יום: אם
+-- ai_picks_date כבר לא היום (המונה התאפס ממילא) לא נוגעים, ולא יורדים מתחת ל-0.
+create or replace function release_ai_picks_quota(p_photographer_id uuid)
+returns void as $$
+  update photographers
+  set ai_picks_count = ai_picks_count - 1
+  where id = p_photographer_id
+    and ai_picks_date = current_date
+    and ai_picks_count > 0;
+$$ language sql;
+
+-- מונה צפיות של הלקוחה (galleries.view_count, app/api/gallery/[id]/route.ts) -
+-- הגדלה אטומית ב-UPDATE אחד במקום read-then-write ב-JS, שאיבד ספירות בטעינות מקבילות.
+create or replace function increment_gallery_view_count(p_gallery_id uuid)
+returns void as $$
+  update galleries
+  set view_count = view_count + 1,
+      last_viewed_at = now()
+  where id = p_gallery_id;
+$$ language sql;
+
 -- ===== הרשאות הרצה לפונקציות האטומיות - service_role בלבד =====
 -- שלושתן נקראות רק עם מפתח service_role (app/api/verify-access,
 -- app/api/photographer/design-theme, app/api/gallery/[id]/ai-picks). Supabase
@@ -1046,6 +1078,10 @@ revoke execute on function reserve_ai_picks_quota(uuid, int) from public, anon, 
 grant execute on function register_failed_access_attempt(uuid) to service_role;
 grant execute on function reserve_theme_gen_quota(uuid, int) to service_role;
 grant execute on function reserve_ai_picks_quota(uuid, int) to service_role;
+revoke execute on function release_ai_picks_quota(uuid) from public, anon, authenticated;
+revoke execute on function increment_gallery_view_count(uuid) from public, anon, authenticated;
+grant execute on function release_ai_picks_quota(uuid) to service_role;
+grant execute on function increment_gallery_view_count(uuid) to service_role;
 -- ===== סוף הרשאות הרצה =====
 
 -- אם כבר הרצת גרסה קודמת של הסכמה בלי שלוש הפונקציות האטומיות למעלה
@@ -1720,3 +1756,74 @@ create policy "photographers read own logo" on storage.objects
 -- (אופציונלי, אחרי שבדקת שאין שורות חריגות:)
 -- alter table photos validate constraint photos_paths_in_gallery;
 -- alter table delivered_photos validate constraint delivered_photos_path_in_gallery;
+
+-- ===== מיגרציה: API גלריית הלקוחה (תפוגה/נעילה/מכסה/צפיות) =====
+-- להריץ פעם אחת על פרויקט קיים (הכל idempotent):
+-- alter table galleries add column if not exists quota_notified_at timestamptz;
+--
+-- create or replace function register_failed_access_attempt(p_client_id uuid)
+-- returns table (already_locked_out boolean, failed_attempts int, locked_until timestamptz) as $$
+-- declare
+--   current_attempts int;
+--   current_locked_until timestamptz;
+--   new_attempts int;
+--   new_locked_until timestamptz;
+-- begin
+--   select c.failed_access_attempts, c.locked_until
+--   into current_attempts, current_locked_until
+--   from clients c
+--   where c.id = p_client_id
+--   for update;
+--
+--   if not found then
+--     return query select false, 0, null::timestamptz;
+--     return;
+--   end if;
+--
+--   if current_locked_until is not null and current_locked_until > now() then
+--     return query select true, coalesce(current_attempts, 0), current_locked_until;
+--     return;
+--   end if;
+--
+--   if current_locked_until is not null and current_locked_until <= now() then
+--     current_attempts := 0;
+--   end if;
+--
+--   new_attempts := coalesce(current_attempts, 0) + 1;
+--   if new_attempts >= 5 then
+--     new_locked_until := now() + interval '15 minutes';
+--   else
+--     new_locked_until := null;
+--   end if;
+--
+--   update clients
+--   set failed_access_attempts = new_attempts,
+--       locked_until = new_locked_until
+--   where id = p_client_id;
+--
+--   return query select false, new_attempts, new_locked_until;
+-- end;
+-- $$ language plpgsql;
+--
+-- create or replace function release_ai_picks_quota(p_photographer_id uuid)
+-- returns void as $$
+--   update photographers
+--   set ai_picks_count = ai_picks_count - 1
+--   where id = p_photographer_id
+--     and ai_picks_date = current_date
+--     and ai_picks_count > 0;
+-- $$ language sql;
+--
+-- create or replace function increment_gallery_view_count(p_gallery_id uuid)
+-- returns void as $$
+--   update galleries
+--   set view_count = view_count + 1,
+--       last_viewed_at = now()
+--   where id = p_gallery_id;
+-- $$ language sql;
+--
+-- revoke execute on function release_ai_picks_quota(uuid) from public, anon, authenticated;
+-- revoke execute on function increment_gallery_view_count(uuid) from public, anon, authenticated;
+-- grant execute on function release_ai_picks_quota(uuid) to service_role;
+-- grant execute on function increment_gallery_view_count(uuid) to service_role;
+-- ===== סוף מיגרציה: API גלריית הלקוחה =====

@@ -49,6 +49,31 @@ describe('afterFailedAttempt', () => {
   });
 });
 
+describe('afterFailedAttempt after a lock has ended', () => {
+  it('restarts counting from 1 instead of re-locking on a single wrong guess', () => {
+    const now = new Date('2026-01-01T01:00:00.000Z');
+    const endedLock = new Date(now.getTime() - 60_000).toISOString();
+    const result = afterFailedAttempt({ failed_access_attempts: MAX_ATTEMPTS, locked_until: endedLock }, now);
+    expect(result).toEqual({ failed_access_attempts: 1, locked_until: null });
+  });
+
+  it('locks again only after MAX_ATTEMPTS fresh failures', () => {
+    const now = new Date('2026-01-01T01:00:00.000Z');
+    const endedLock = new Date(now.getTime() - 60_000).toISOString();
+    let state: { failed_access_attempts: number; locked_until: string | null } = {
+      failed_access_attempts: MAX_ATTEMPTS,
+      locked_until: endedLock,
+    };
+    for (let i = 1; i < MAX_ATTEMPTS; i++) {
+      state = afterFailedAttempt(state, now);
+      expect(state.locked_until).toBeNull();
+    }
+    const final = afterFailedAttempt(state, now);
+    expect(final.failed_access_attempts).toBe(MAX_ATTEMPTS);
+    expect(final.locked_until).not.toBeNull();
+  });
+});
+
 describe('clearedLockoutState', () => {
   it('resets attempts and lockout together', () => {
     expect(clearedLockoutState).toEqual({ failed_access_attempts: 0, locked_until: null });

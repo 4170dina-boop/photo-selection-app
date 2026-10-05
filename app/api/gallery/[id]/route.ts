@@ -6,6 +6,7 @@ import { getPresignedDownloadUrl } from '@/lib/r2';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { countBillableSelected } from '@/lib/gifts';
 import { hasWatermarkedThumbnail } from '@/lib/uploadPolicy';
+import { resolveGalleryViewAccess } from '@/lib/galleryAccess';
 
 // service_role - נשאר בצד שרת בלבד. כל הגישה של הלקוחה לנתוני הגלריה
 // עוברת דרך ה-API הזה (ולא דרך anon key ישירות מהדפדפן), כי אין policy
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error: galleryError } = await supabaseAdmin
     .from('galleries')
-    .select('id, status, expires_at, owner_participant_id, view_count, reopened_for_selection_at, clients(full_name), photographers(brand_color, business_name, logo_url, custom_theme)')
+    .select('id, status, expires_at, delivered_at, owner_participant_id, view_count, reopened_for_selection_at, clients(full_name), photographers(brand_color, business_name, logo_url, custom_theme)')
     .eq('id', galleryId)
     .single();
 
@@ -35,39 +36,58 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
-  if (gallery.expires_at && new Date(gallery.expires_at) < new Date()) {
+  // תמונות סופיות שנמסרו (delivered_photos) - תוצאה סופית לכולם, לא בחירה
+  // אישית כמו selections, אז לא תלוי ב-session.participantId ונטען עוד לפני
+  // בדיקת הזיהוי למטה (מוצג גם למי שעוד לא זוהה/תה). נטען לפני בדיקת התוקף,
+  // כי גם הוא קובע אם גלריה שפג תוקפה עדיין פתוחה לצפייה/הורדה.
+  const { data: deliveredPhotosData } = await supabaseAdmin
+    .from('delivered_photos')
+    .select('id, file_path, original_filename')
+    .eq('gallery_id', galleryId);
+
+  // אחרי התפוגה: גלריה שהושלמה/נמסרה נשארת פתוחה לצפייה בלבד (readOnly) כדי
+  // שאפשר יהיה להוריד את התמונות הסופיות - כתיבה (selection/note/finish/ai-picks)
+  // עדיין חסומה שם ע"י checkGalleryWritable. אחרת 410 כמו קודם.
+  const access = resolveGalleryViewAccess(gallery, (deliveredPhotosData ?? []).length > 0);
+  if (!access.ok) {
     return NextResponse.json({ error: 'תוקף הגלריה פג' }, { status: 410 });
   }
+  const readOnly = access.readOnly;
 
   // "ממתין לפתיחה" (sent) -> "בבחירה" (in_progress) ברגע שהלקוחה בפועל פותחת
   // את הגלריה (קוד גישה כבר אומת ב-verify-access לפני שמגיעים לכאן) - בלי זה
   // הלוח של הצלמת ממשיך להראות "ממתין לפתיחה" לנצח, גם אחרי שהלקוחה כבר
-  // בפנים ובוחרת תמונות. לא נוגעים בסטטוסים אחרים (completed/expired).
-  if (gallery.status === 'sent') {
-    await supabaseAdmin
+  // בפנים ובוחרת תמונות. מותנה ב-status='sent' גם בתוך ה-UPDATE עצמו, כדי
+  // שטעינה מקבילה לא תדרוס סטטוס שהשתנה בינתיים (למשל completed מ-finish).
+  if (gallery.status === 'sent' && !readOnly) {
+    const { data: moved } = await supabaseAdmin
       .from('galleries')
       .update({ status: 'in_progress', last_activity_at: new Date().toISOString() })
-      .eq('id', galleryId);
-    gallery.status = 'in_progress';
+      .eq('id', galleryId)
+      .eq('status', 'sent')
+      .select('id');
+    if (moved && moved.length > 0) gallery.status = 'in_progress';
   }
 
   // מונה צפיות - כל טעינה מוצלחת של הגלריה (כולל רענון), לא ייחודי לפי מבקר.
   // לצלמת אין דרך אחרת לדעת אם הלקוחה בכלל פתחה את הקישור בפועל (למשל אם
   // המייל האוטומטי לא הגיע, או שהקישור נחסם אצל הלקוחה) - ראו app/dashboard/galleries/[id]/edit/page.tsx.
-  // best-effort, לא חוסם את הטעינה אם נכשל.
+  // הגדלה אטומית ב-DB (increment_gallery_view_count, ראו supabase/schema.sql),
+  // כדי שטעינות מקבילות לא יאבדו ספירות. אם המיגרציה עוד לא רצה - נופלים
+  // לעדכון הישן (לא אטומי). best-effort, לא חוסם את הטעינה אם נכשל.
   supabaseAdmin
-    .from('galleries')
-    .update({ view_count: (gallery.view_count ?? 0) + 1, last_viewed_at: new Date().toISOString() })
-    .eq('id', galleryId)
-    .then(() => {}, () => {});
-
-  // תמונות סופיות שנמסרו (delivered_photos) - תוצאה סופית לכולם, לא בחירה
-  // אישית כמו selections, אז לא תלוי ב-session.participantId ונטען עוד לפני
-  // בדיקת הזיהוי למטה (מוצג גם למי שעוד לא זוהה/תה).
-  const { data: deliveredPhotosData } = await supabaseAdmin
-    .from('delivered_photos')
-    .select('id, file_path, original_filename')
-    .eq('gallery_id', galleryId);
+    .rpc('increment_gallery_view_count', { p_gallery_id: galleryId })
+    .then(
+      ({ error }) => {
+        if (!error) return;
+        return supabaseAdmin
+          .from('galleries')
+          .update({ view_count: (gallery.view_count ?? 0) + 1, last_viewed_at: new Date().toISOString() })
+          .eq('id', galleryId)
+          .then(() => {}, () => {});
+      },
+      () => {}
+    );
 
   const deliveredPhotos = await Promise.all(
     (deliveredPhotosData ?? []).map(async (photo) => ({
@@ -83,6 +103,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if (!session.participantId) {
     return NextResponse.json({
       needsIdentity: true,
+      readOnly,
       registeredName: (gallery as any).clients?.full_name ?? null,
       deliveredPhotos,
     });
@@ -178,6 +199,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   return NextResponse.json({
     status: gallery.status,
+    readOnly,
     reopenedForSelectionAt: gallery.reopened_for_selection_at,
     photos,
     deliveredPhotos,
