@@ -348,6 +348,41 @@ create table app_settings (
 );
 alter table app_settings enable row level security;
 
+-- יומן מיילים ידניים (לחיצת כפתור של הצלמת: הזמנה מחדש, תזכורת, "התמונות
+-- מוכנות", בקשת ביקורת, עדכון צילום) - בסיס למגבלת הקצב בשרת
+-- (lib/manualEmailCooldown.ts, lib/manualEmailLog.ts): 60 שניות בין שליחות
+-- מאותו סוג לאותה גלריה/צילום, ועד 10 ב-24 שעות. שורה נרשמת רק אחרי שליחה
+-- מוצלחת. מיילים אוטומטיים (cron) לא נרשמים כאן.
+create table manual_email_sends (
+  id uuid primary key default uuid_generate_v4(),
+  photographer_id uuid references photographers(id) on delete cascade not null,
+  gallery_id uuid references galleries(id) on delete cascade,
+  shoot_id uuid references shoots(id) on delete cascade,
+  email_type text not null check (email_type in ('invite', 'reminder', 'delivery', 'review', 'shoot_update')),
+  sent_at timestamptz default now() not null,
+  check (gallery_id is not null or shoot_id is not null)
+);
+create index idx_manual_email_sends_gallery on manual_email_sends(gallery_id, email_type, sent_at) where gallery_id is not null;
+create index idx_manual_email_sends_shoot on manual_email_sends(shoot_id, email_type, sent_at) where shoot_id is not null;
+create index idx_manual_email_sends_photographer on manual_email_sends(photographer_id);
+alter table manual_email_sends enable row level security;
+-- with check מוודא שהגלריה/הצילום שייכים לאותה צלמת (FK לא עובר דרך RLS)
+create policy "photographers manage own manual email sends" on manual_email_sends
+  for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
+  with check (
+    photographer_id in (select id from photographers where auth_user_id = auth.uid())
+    and (gallery_id is null or gallery_id in (
+      select id from galleries where photographer_id in (
+        select id from photographers where auth_user_id = auth.uid()
+      )
+    ))
+    and (shoot_id is null or shoot_id in (
+      select id from shoots where photographer_id in (
+        select id from photographers where auth_user_id = auth.uid()
+      )
+    ))
+  );
+
 -- אינדקסים בסיסיים לביצועים
 create index idx_clients_photographer on clients(photographer_id);
 create index idx_galleries_photographer on galleries(photographer_id);
@@ -1827,3 +1862,38 @@ create policy "photographers read own logo" on storage.objects
 -- grant execute on function release_ai_picks_quota(uuid) to service_role;
 -- grant execute on function increment_gallery_view_count(uuid) to service_role;
 -- ===== סוף מיגרציה: API גלריית הלקוחה =====
+
+-- ===== מיגרציה: מגבלת קצב למיילים ידניים (manual_email_sends) =====
+-- להריץ פעם אחת על פרויקט קיים (הכל idempotent). עד שמריצים - הקוד לא נשבר:
+-- השליחה ממשיכה לעבוד, ומגבלת 60 השניות חלה רק על תזכורת תפוגה ועדכון צילום
+-- (לפי last_reminder_sent_at / confirmation_sent_at הקיימות).
+-- create table if not exists manual_email_sends (
+--   id uuid primary key default uuid_generate_v4(),
+--   photographer_id uuid references photographers(id) on delete cascade not null,
+--   gallery_id uuid references galleries(id) on delete cascade,
+--   shoot_id uuid references shoots(id) on delete cascade,
+--   email_type text not null check (email_type in ('invite', 'reminder', 'delivery', 'review', 'shoot_update')),
+--   sent_at timestamptz default now() not null,
+--   check (gallery_id is not null or shoot_id is not null)
+-- );
+-- create index if not exists idx_manual_email_sends_gallery on manual_email_sends(gallery_id, email_type, sent_at) where gallery_id is not null;
+-- create index if not exists idx_manual_email_sends_shoot on manual_email_sends(shoot_id, email_type, sent_at) where shoot_id is not null;
+-- create index if not exists idx_manual_email_sends_photographer on manual_email_sends(photographer_id);
+-- alter table manual_email_sends enable row level security;
+-- drop policy if exists "photographers manage own manual email sends" on manual_email_sends;
+-- create policy "photographers manage own manual email sends" on manual_email_sends
+--   for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
+--   with check (
+--     photographer_id in (select id from photographers where auth_user_id = auth.uid())
+--     and (gallery_id is null or gallery_id in (
+--       select id from galleries where photographer_id in (
+--         select id from photographers where auth_user_id = auth.uid()
+--       )
+--     ))
+--     and (shoot_id is null or shoot_id in (
+--       select id from shoots where photographer_id in (
+--         select id from photographers where auth_user_id = auth.uid()
+--       )
+--     ))
+--   );
+-- ===== סוף מיגרציה: מגבלת קצב למיילים ידניים =====

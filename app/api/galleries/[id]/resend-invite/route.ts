@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sendGalleryInviteEmail } from '@/lib/email';
+import { getManualEmailCooldown, recordManualEmailSend, cooldownResponse } from '@/lib/manualEmailLog';
 
 // שולחת שוב את מייל ההזמנה (קישור + קוד גישה) ללקוחה הקיימת של הגלריה - שימושי
 // כשהלקוחה מדווחת שהיא לא מצאה/מחקה את המייל המקורי. רץ עם session הצלם (לא
@@ -41,6 +42,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'חסרים פרטי לקוחה' }, { status: 500 });
   }
 
+  // מגבלת קצב לשליחה ידנית (lib/manualEmailCooldown.ts) - לפני השליחה בפועל
+  const cooldown = await getManualEmailCooldown(supabase, { galleryId: gallery.id }, 'invite');
+  if (!cooldown.allowed) return cooldownResponse(cooldown);
+
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
 
   // הלקוחה הראשית ואז הכתובות הנוספות (additional_invite_emails), בדיוק כמו
@@ -63,6 +68,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const emailSent = results[0]?.sent ?? false;
+  if (results.some((r) => r.sent)) {
+    await recordManualEmailSend(supabase, photographer.id, { galleryId: gallery.id }, 'invite');
+  }
   const failedAdditional = results.slice(1).filter((r) => !r.sent).map((r) => r.to);
 
   return NextResponse.json({ emailSent, results, failedAdditional });

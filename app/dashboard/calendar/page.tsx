@@ -259,7 +259,13 @@ export default function CalendarPage() {
     const wantedEmail = form.sendEmail;
     let message = isNew ? 'הצילום נשמר ביומן' : 'השינויים נשמרו';
     if (wantedEmail) {
-      message += data.emailSent ? ' - ונשלח מייל ללקוחה ✓' : ' - אבל שליחת המייל ללקוחה נכשלה';
+      // emailCooldown: השינויים נשמרו, אבל המייל דולג כי נשלח ממש עכשיו
+      // (מגבלת קצב בשרת, ראו app/api/shoots/[id]/route.ts)
+      message += data.emailSent
+        ? ' - ונשלח מייל ללקוחה ✓'
+        : data.emailCooldown?.message
+          ? ` - אבל המייל לא נשלח: ${data.emailCooldown.message}`
+          : ' - אבל שליחת המייל ללקוחה נכשלה';
     }
     setNotice(message);
     setForm(null);
