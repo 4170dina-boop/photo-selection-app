@@ -589,7 +589,7 @@ export async function sendShootsDailySummaryEmail(params: ShootsDailySummaryPara
     headerText: 'אזור צלמים',
     bodyHtml: `
       <p style="margin: 0 0 8px;">היי,</p>
-      <p style="margin: 0 0 8px;">מחר (${escapeHtml(formatShootDateLabel(params.shootDate))}) יש לך ${countText}:</p>
+      <p style="margin: 0 0 8px;">מחר (${escapeHtml(shootDateText(params.shootDate))}) יש לך ${countText}:</p>
       <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 12px auto 0; border-collapse: collapse; font-size: 14px;">${rows}</table>
     `,
     ctaText: 'פתיחת היומן',
