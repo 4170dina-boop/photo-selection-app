@@ -113,7 +113,7 @@ export default function GalleriesDashboard() {
   // מספיק שזה לא בעיית ביצועים.
   async function handleBulkDelete() {
     if (selectedIds.size === 0) return;
-    if (!window.confirm(`למחוק ${selectedIds.size} גלריות? כל התמונות והבחירות שלהן יימחקו לצמיתות - אי אפשר לבטל את זה.`)) return;
+    if (!window.confirm(`למחוק ${selectedIds.size} גלריות? כל התמונות, הבחירות והיסטוריית התשלומים שלהן יימחקו לצמיתות - אי אפשר לבטל את זה.`)) return;
 
     setBulkWorking(true);
     setBulkMessage('');

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
-import { sendGalleryInviteEmail, isValidEmail } from '@/lib/email';
+import { sendGalleryInviteEmail, parseAdditionalInviteEmails } from '@/lib/email';
 
 // יוצר גלריה חדשה (client + gallery + package) עבור הצלם המחובר.
 // רץ דרך לקוח השרת עם ה-session של הצלם (לא service key) - כך RLS הקיים
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     extraPhotoPrice?: number;
     expiresAt?: string;
     reminderDays?: number;
-    additionalInviteEmails?: string[];
+    additionalInviteEmails?: unknown;
   };
   try {
     body = await req.json();
@@ -47,13 +47,11 @@ export async function POST(req: NextRequest) {
   // כתובות מייל נוספות (למשל בני משפחה) - אופציונלי, אבל אם ניתנו כולן חייבות
   // להיות כתובות תקינות. ראו lib/email.ts: isValidEmail ו-additional_invite_emails
   // ב-supabase/schema.sql.
-  const additionalInviteEmails = (body.additionalInviteEmails ?? [])
-    .map((email) => email.trim())
-    .filter((email) => email.length > 0);
-
-  if (additionalInviteEmails.some((email) => !isValidEmail(email))) {
-    return NextResponse.json({ error: 'אחת מכתובות המייל הנוספות לא תקינה' }, { status: 400 });
+  const parsedInviteEmails = parseAdditionalInviteEmails(body.additionalInviteEmails);
+  if (!parsedInviteEmails.ok) {
+    return NextResponse.json({ error: parsedInviteEmails.error }, { status: 400 });
   }
+  const additionalInviteEmails = parsedInviteEmails.value;
 
   const { data: photographer, error: photographerError } = await supabase
     .from('photographers')

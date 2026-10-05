@@ -43,6 +43,28 @@ export function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+export const MAX_ADDITIONAL_INVITE_EMAILS = 10;
+
+// אימות additionalInviteEmails מגוף הבקשה (יצירה/עריכה של גלריה): חסר/null =
+// רשימה ריקה; אחרת חייב להיות מערך של מחרוזות, כולן כתובות תקינות (אחרי
+// trim, מחרוזות ריקות מסוננות), ועד MAX_ADDITIONAL_INVITE_EMAILS כתובות.
+export function parseAdditionalInviteEmails(
+  value: unknown
+): { ok: true; value: string[] } | { ok: false; error: string } {
+  if (value === undefined || value === null) return { ok: true, value: [] };
+  if (!Array.isArray(value) || value.some((email) => typeof email !== 'string')) {
+    return { ok: false, error: 'רשימת כתובות המייל הנוספות לא תקינה' };
+  }
+  const emails = (value as string[]).map((email) => email.trim()).filter((email) => email.length > 0);
+  if (emails.length > MAX_ADDITIONAL_INVITE_EMAILS) {
+    return { ok: false, error: `אפשר להוסיף עד ${MAX_ADDITIONAL_INVITE_EMAILS} כתובות מייל נוספות` };
+  }
+  if (emails.some((email) => !isValidEmail(email))) {
+    return { ok: false, error: 'אחת מכתובות המייל הנוספות לא תקינה' };
+  }
+  return { ok: true, value: emails };
+}
+
 interface SendOptions {
   // שם התצוגה שמופיע אצל הנמען לצד הכתובת (למשל '"סטודיו דינה" <onboarding@resend.dev>') -
   // הכתובת עצמה נשארת קבועה (עד שיהיה דומיין מאומת ב-Resend), אבל שם התצוגה

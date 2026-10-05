@@ -5,6 +5,7 @@ import { checkGalleryWritable } from '@/lib/galleryAccess';
 import { sendQuotaReachedEmail } from '@/lib/email';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { countBillableSelected } from '@/lib/gifts';
+import { syncPaidAtAfterTotalChange } from '@/lib/galleryPayments';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -132,6 +133,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
   }
 
+  // רק בחירות הבעלים נספרות לחיוב - שינוי שלהן אולי שינה את הסכום לתשלום.
+  if (gallery?.owner_participant_id === session.participantId) {
+    await syncPaidAtAfterTotalChange(supabaseAdmin, galleryId);
+  }
+
   return NextResponse.json({ success: true });
 }
 
@@ -160,6 +166,15 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     .delete()
     .eq('gallery_id', galleryId)
     .eq('participant_id', session.participantId);
+
+  const { data: gallery } = await supabaseAdmin
+    .from('galleries')
+    .select('owner_participant_id')
+    .eq('id', galleryId)
+    .single();
+  if (gallery?.owner_participant_id === session.participantId) {
+    await syncPaidAtAfterTotalChange(supabaseAdmin, galleryId);
+  }
 
   return NextResponse.json({ success: true });
 }

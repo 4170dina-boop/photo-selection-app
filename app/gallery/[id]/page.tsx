@@ -487,7 +487,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     // ממשיכה/משלימה ספירת "סיימתי לבחור" שאולי נשארה תלויה מהפעלה קודמת של
     // העמוד (טאב שנסגר/הוקפא לפני שהספירה הספיקה להסתיים) - ראו checkPendingFinish.
     if (data.myParticipant) {
-      checkPendingFinish(data.myParticipant.id, data.status);
+      // נעילה בפועל (לא status לבד) - גלריה שנפתחה מחדש היא completed אבל לא
+      // נעולה, וספירה ממתינה בה צריכה להמשיך ולא להימחק.
+      checkPendingFinish(data.myParticipant.id, data.status === 'completed' && !data.reopenedForSelectionAt);
     }
 
     // שער פתיחה: מוצג פעם אחת לכל משתתף/ת בכל גלריה (נשמר ב-localStorage,
@@ -799,6 +801,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       return { ...prev, [photoId]: [...others, ...mine] };
     });
 
+    // תמונת מתנה לא נספרת ב-ownerSelectedCount (השרת סופר עם countBillableSelected) -
+    // ביטול סימון ישן שלה (או החזרתו אחרי שגיאת שרת) לא משנה את המונה.
+    if (isGiftPhoto(photoId)) return;
     if (myParticipant.isOwner && next === 'selected') {
       setOwnerSelectedCount((prev) => prev + (current === 'selected' ? 0 : 1));
     } else if (myParticipant.isOwner && current === 'selected' && next !== 'selected') {
@@ -851,8 +856,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // שסטייט ה-myParticipant הספיק להתעדכן (setState אסינכרוני) - כדי לנקות את
   // מפתח ה-localStorage הנכון גם במקרה הזה.
   //
-  // /api/gallery/[id]/finish אידמפוטנטי (בודק gallery.status !== 'completed'
-  // לפני שהוא שולח מיילים) - קריאה כפולה לא גורמת למייל כפול, אבל
+  // /api/gallery/[id]/finish אידמפוטנטי (פועל רק כש-status !== 'completed' או
+  // שהגלריה נפתחה מחדש, לפני שהוא שולח מיילים) - קריאה כפולה לא גורמת למייל כפול, אבל
   // finishInFlightRef עדיין מונע שתי בקשות במקביל (למשל טיימר שהגיע ל-0 בדיוק
   // כשחוזרים לפוקוס והדפדפן גם שולח אירוע visibilitychange על אותו רגע).
   async function submitFinish(participantIdForCleanup?: string) {
@@ -888,6 +893,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     setActionError('');
     setGalleryStatus('completed');
+    // סיום אחרי פתיחה מחדש: השרת מנקה את reopened_for_selection_at - מסנכרנים
+    // כדי ש-isLocked יחזור להיות true מיד.
+    setReopenedForSelectionAt(null);
     setConfettiPieces(generateConfetti());
     setShowCelebration(true);
     setTimeout(() => setShowCelebration(false), 3500);
@@ -896,13 +904,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // בודקת אם יש ספירת "סיימתי לבחור" ממתינה שהתחילה בהפעלה קודמת של העמוד
   // (נשמרה ב-localStorage ע"י handleFinish) - ראו הערה מפורטת ליד ה-useEffect
   // שמאזין ל-finishDeadline, ואת שני מקומות הקריאה (loadGallery, ו-
-  // visibilitychange). currentStatus מועבר רק כשידוע טרי מהשרת (loadGallery);
-  // אם הגלריה כבר completed אין טעם לנסות לשלוח שוב - רק מנקים רשומה ישנה.
-  function checkPendingFinish(participantId: string, currentStatus?: string) {
+  // visibilitychange). currentlyLocked מועבר רק כשידוע טרי מהשרת (loadGallery);
+  // אם הגלריה כבר נעולה (completed ולא נפתחה מחדש) אין טעם לנסות לשלוח שוב -
+  // רק מנקים רשומה ישנה.
+  function checkPendingFinish(participantId: string, currentlyLocked?: boolean) {
     const deadline = loadFinishDeadline(galleryId, participantId);
     if (deadline === null) return;
 
-    if (currentStatus === 'completed') {
+    if (currentlyLocked) {
       clearFinishDeadline(galleryId, participantId);
       return;
     }

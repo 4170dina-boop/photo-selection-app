@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { normalizeGiftMessage } from '@/lib/gifts';
+import { syncPaidAtAfterTotalChange } from '@/lib/galleryPayments';
 
 // סימון/ביטול "תמונת מתנה" (photos.is_gift + gift_message, ראו lib/gifts.ts) -
 // רק הצלמת. רץ עם session הצלם (לא service key), בדיוק כמו
@@ -32,13 +33,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id')
+    .select('id, originals_cleaned_up_at')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
 
   if (!gallery) {
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
+  }
+
+  // תמונות המקור נמחקו (cron, 30 יום אחרי המסירה) - הלקוחה כבר לא רואה אותן,
+  // ומתנה עליהן לא הייתה מגיעה אליה.
+  if (gallery.originals_cleaned_up_at) {
+    return NextResponse.json(
+      { error: 'אי אפשר לשנות תמונת מתנה - תמונות המקור של הגלריה כבר נמחקו' },
+      { status: 409 }
+    );
   }
 
   let body: { isGift?: unknown; message?: unknown };
@@ -71,6 +81,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   if (!updated) {
     return NextResponse.json({ error: 'תמונה לא נמצאה' }, { status: 404 });
   }
+
+  // מתנה לא נספרת לחיוב - הסכום לתשלום אולי השתנה (best-effort, לא מכשיל)
+  await syncPaidAtAfterTotalChange(supabase, params.id);
 
   return NextResponse.json({ success: true, isGift: updated.is_gift, giftMessage: updated.gift_message });
 }

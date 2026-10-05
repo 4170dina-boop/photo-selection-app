@@ -53,6 +53,9 @@ export default function UploadPage({ params }: UploadPageProps) {
   const [giftDraft, setGiftDraft] = useState('');
   const [savingGift, setSavingGift] = useState(false);
   const [giftError, setGiftError] = useState('');
+  // תמונות המקור נמחקו (cron, 30 יום אחרי המסירה) - אי אפשר יותר לשנות מתנות
+  // (השרת גם דוחה, ראו app/api/galleries/[id]/photos/[photoId]/gift/route.ts).
+  const [originalsCleanedUp, setOriginalsCleanedUp] = useState(false);
 
   // מוודאים שהגלריה שייכת לצלמת המחוברת (אותו דפוס כמו דף העריכה) לפני שמציגים
   // את ממשק ההעלאה - בלי זה, כל צלמת יכולה לנווט לפי galleryId של גלריה של
@@ -74,6 +77,7 @@ export default function UploadPage({ params }: UploadPageProps) {
       }
       const gallery = await res.json().catch(() => null);
       setClientName(gallery?.clients?.full_name ?? null);
+      setOriginalsCleanedUp(!!gallery?.originals_cleaned_up_at);
       await loadExistingPhotos();
       setCheckingOwnership(false);
     })();
@@ -121,6 +125,7 @@ export default function UploadPage({ params }: UploadPageProps) {
   }
 
   function openGiftEditor(photo: ExistingPhoto) {
+    if (originalsCleanedUp) return;
     setGiftError('');
     setGiftEditingId(photo.id);
     setGiftDraft(photo.giftMessage ?? '');
@@ -285,16 +290,23 @@ export default function UploadPage({ params }: UploadPageProps) {
                   )}
                   <button
                     onClick={() => openGiftEditor(photo)}
-                    title={photo.isGift ? `תמונת מתנה${photo.giftMessage ? ` - "${photo.giftMessage}"` : ''} · לחצי לעריכה` : 'סימון כתמונת מתנה'}
+                    disabled={originalsCleanedUp}
+                    title={
+                      originalsCleanedUp
+                        ? 'תמונות המקור כבר נמחקו - אי אפשר לשנות תמונות מתנה'
+                        : photo.isGift
+                          ? `תמונת מתנה${photo.giftMessage ? ` - "${photo.giftMessage}"` : ''} · לחצי לעריכה`
+                          : 'סימון כתמונת מתנה'
+                    }
                     aria-label={photo.isGift ? 'עריכת תמונת מתנה' : 'סימון כתמונת מתנה'}
                     aria-pressed={photo.isGift}
                     style={{
-                      position: 'absolute', top: 6, right: 6, cursor: 'pointer',
+                      position: 'absolute', top: 6, right: 6, cursor: originalsCleanedUp ? 'default' : 'pointer',
                       width: 26, height: 26, borderRadius: '50%', fontSize: 13,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       border: `1px solid ${photo.isGift ? theme.goldBright : 'rgba(255,255,255,0.4)'}`,
                       background: photo.isGift ? theme.goldBright : 'rgba(0,0,0,0.55)',
-                      opacity: photo.isGift ? 1 : 0.85,
+                      opacity: photo.isGift ? 1 : originalsCleanedUp ? 0.4 : 0.85,
                     }}
                   >
                     🎁
