@@ -32,10 +32,13 @@ function expiryDateText(expiresAt: string | null | undefined): string | null {
   return isNaN(date.getTime()) ? null : toHebrewDateString(date);
 }
 
+// הקוד לבד בשורה משלו - לחיצה ארוכה בוואטסאפ/SMS מסמנת רק אותו (בלי
+// "קוד גישה:" לפניו). התווית נשארת בשורה שמעל, כדי שהדבקת ההודעה כולה במסך
+// הקוד תחלץ ממנה את הקוד (extractAccessCode ב-lib/accessCodePaste.ts).
 export function buildInviteMessageText(params: InviteMessageParams): string {
   const expiry = expiryDateText(params.expiresAt);
-  const expiryLine = expiry ? `\nהגלריה פתוחה לבחירה עד ${expiry}.` : '';
-  return `היי ${params.clientName || ''}! 📸\n\nהגלריה שלך עם התמונות מוכנה לבחירה.\n\nקישור: ${params.galleryUrl}\nקוד גישה: ${params.accessCode}${expiryLine}\n\nמחכה לראות מה תבחרי! ✨`;
+  const expiryLine = expiry ? `\n\nהגלריה פתוחה לבחירה עד ${expiry}.` : '';
+  return `היי ${params.clientName || ''}! 📸\n\nהגלריה שלך עם התמונות מוכנה לבחירה.\n\nקישור: ${params.galleryUrl}\n\n🔑 קוד גישה:\n${params.accessCode}${expiryLine}\n\nמחכה לראות מה תבחרי! ✨`;
 }
 
 export function buildInviteMessageHtml(params: InviteMessageParams): string {
@@ -61,7 +64,8 @@ export function buildInviteMessageHtml(params: InviteMessageParams): string {
               <p style="margin: 0 0 8px;">הגלריה שלך עם התמונות מוכנה לבחירה.${expiryLine}</p>
               <div style="margin: 18px 0; padding: 12px 20px; background: #f4f1ec; border: 1px dashed #c98f89; border-radius: 8px; display: inline-block;">
                 <span style="font-size: 12px; color: #9a8f7d;">קוד גישה</span><br />
-                <span style="font-size: 22px; font-weight: 700; letter-spacing: 2px; color: #a06a63; font-family: monospace;">${accessCode}</span>
+                <span dir="ltr" style="font-size: 22px; font-weight: 700; letter-spacing: 2px; color: #a06a63; font-family: monospace; user-select: all; -webkit-user-select: all;">${accessCode}</span><br />
+                <span style="font-size: 11px; color: #9a8f7d;">לחיצה ארוכה על הקוד להעתקה</span>
               </div>
               <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">מחכה לראות מה תבחרי! ✨</p>
               <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 24px auto 0;">

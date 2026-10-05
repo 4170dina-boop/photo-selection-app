@@ -27,6 +27,7 @@ import {
   enlargedShortcutStatus,
   tapHintKey,
 } from '@/lib/galleryClient';
+import { extractAccessCode } from '@/lib/accessCodePaste';
 
 interface GalleryPageProps {
   params: { id: string };
@@ -500,6 +501,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [codeInput, setCodeInput] = useState('');
   const [submittingCode, setSubmittingCode] = useState(false);
   const [authError, setAuthError] = useState('');
+  // כפתור "הדבקה" במסך הקוד - מוצג רק אם הדפדפן תומך ב-clipboard.readText
+  // (נבדק אחרי mount כדי לא לשבור hydration).
+  const [canPasteCode, setCanPasteCode] = useState(false);
+  useEffect(() => {
+    setCanPasteCode(typeof navigator !== 'undefined' && typeof navigator.clipboard?.readText === 'function');
+  }, []);
   const [actionError, setActionError] = useState('');
 
   // שיתוף גלריה משפחתי: אחרי קוד גישה תקין, עוד לא ידוע מי בפועל נכנס/ת
@@ -866,6 +873,32 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setShowTapHint(false);
   }
 
+  // הדבקה לתיבת הקוד (גם Ctrl+V/לחיצה ארוכה) - אם הודבקה ההודעה כולה
+  // ("קוד גישה: XXXX") מחלצים רק את הקוד, ובכל מקרה בלי רווחים/מקפים.
+  function handleCodeInputPaste(e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text');
+    if (!text) return;
+    e.preventDefault();
+    setCodeInput(extractAccessCode(text));
+    setAuthError('');
+  }
+
+  async function handlePasteCodeButton() {
+    try {
+      const text = await navigator.clipboard.readText();
+      const code = extractAccessCode(text || '');
+      if (!code) {
+        setAuthError('לא נמצא קוד בהעתקה - אפשר להקליד אותו ידנית');
+        return;
+      }
+      setCodeInput(code);
+      setAuthError('');
+    } catch {
+      // הרשאה נדחתה / דפדפן שחוסם קריאה מהלוח
+      setAuthError('לא הצלחנו לקרוא את ההעתקה - אפשר להדביק בתיבה בלחיצה ארוכה');
+    }
+  }
+
   async function handleSubmitCode(e: React.FormEvent) {
     e.preventDefault();
     if (submittingCode) return;
@@ -940,12 +973,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           <label htmlFor="access-code" style={{ display: 'block', marginBottom: '1.25rem', color: theme.gold, fontSize: 18 }}>
             ✨ הזיני את קוד הגישה שקיבלת
           </label>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'stretch', marginBottom: '0.75rem' }}>
           <input
             id="access-code"
             type="text"
             value={codeInput}
             onChange={(e) => setCodeInput(e.target.value)}
-            style={{ ...inputStyle, width: '100%', marginBottom: '0.75rem', textAlign: 'center', fontSize: 18, letterSpacing: 1 }}
+            onPaste={handleCodeInputPaste}
+            style={{ ...inputStyle, flex: 1, minWidth: 0, width: '100%', textAlign: 'center', fontSize: 18, letterSpacing: 1 }}
             aria-describedby={authError ? 'access-code-error' : undefined}
             aria-invalid={authError ? true : undefined}
             autoCapitalize="characters"
@@ -956,6 +991,18 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             disabled={submittingCode}
             autoFocus
           />
+          {canPasteCode && (
+            <button
+              type="button"
+              onClick={handlePasteCodeButton}
+              disabled={submittingCode}
+              aria-label="הדבקת קוד הגישה מההעתקה"
+              style={{ ...outlineButtonStyle, whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              📋 הדבקה
+            </button>
+          )}
+          </div>
           <button
             type="submit"
             disabled={submittingCode}

@@ -21,13 +21,13 @@ const base = {
 describe('buildInviteMessageText', () => {
   it('matches the existing ready-to-send message exactly', () => {
     expect(buildInviteMessageText(base)).toBe(
-      'היי רחל! 📸\n\nהגלריה שלך עם התמונות מוכנה לבחירה.\n\nקישור: https://example.com/gallery/abc\nקוד גישה: XY12AB\n\nמחכה לראות מה תבחרי! ✨'
+      'היי רחל! 📸\n\nהגלריה שלך עם התמונות מוכנה לבחירה.\n\nקישור: https://example.com/gallery/abc\n\n🔑 קוד גישה:\nXY12AB\n\nמחכה לראות מה תבחרי! ✨'
     );
   });
 
   it('adds the expiry line in Hebrew date when expiresAt exists', () => {
     const msg = buildInviteMessageText({ ...base, expiresAt: '2026-10-20' });
-    expect(msg).toContain(`קוד גישה: XY12AB\nהגלריה פתוחה לבחירה עד ${toHebrewDateString(new Date('2026-10-20'))}.`);
+    expect(msg).toContain(`🔑 קוד גישה:\nXY12AB\n\nהגלריה פתוחה לבחירה עד ${toHebrewDateString(new Date('2026-10-20'))}.`);
   });
 
   it('omits the expiry line for empty / invalid dates and never prints undefined', () => {
@@ -48,6 +48,13 @@ describe('buildInviteMessageHtml', () => {
     expect(html).toContain('כניסה לגלריה');
     expect(html).toContain('✨ דינה צילום');
     expect(html).not.toContain('<img');
+  });
+
+  it('makes the code tap-to-select (user-select:all) with a copy hint, and keeps it out of the link', () => {
+    const html = buildInviteMessageHtml(base);
+    expect(html).toMatch(/user-select: all; -webkit-user-select: all;">XY12AB<\/span>/);
+    expect(html).toContain('לחיצה ארוכה על הקוד להעתקה');
+    expect(html).not.toMatch(/href="[^"]*XY12AB/);
   });
 
   it('shows the logo instead of the sparkle when logoUrl exists', () => {

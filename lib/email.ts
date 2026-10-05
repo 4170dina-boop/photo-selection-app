@@ -240,11 +240,16 @@ function wrapEmailHtml(params: { headerText: string; bodyHtml: string; ctaText?:
 
 // תג קוד גישה בעיצוב "קופון" - קריא ובולט יותר מטקסט רגיל, מתאים למה
 // שהלקוחה בפועל צריכה להעתיק כדי להיכנס.
+// במייל אי אפשר להריץ JS (אין כפתור "העתקה" אמיתי) - במקום זה user-select:all
+// על הקוד: הקשה/לחיצה ארוכה בוחרת את כל הקוד בבת אחת. בלי רווחים בתוך ה-span
+// כדי שהטקסט המועתק יהיה בדיוק הקוד. הקוד בכוונה לא בתוך הקישור (בקשת הצלמת,
+// וגם כדי שלא ידלוף ל-URL/לוגים).
 function accessCodeBadge(code: string): string {
   return `
     <div style="margin: 18px 0; padding: 12px 20px; background: #f4f1ec; border: 1px dashed #c98f89; border-radius: 8px; display: inline-block;">
       <span style="font-size: 12px; color: #9a8f7d;">קוד גישה</span><br />
-      <span style="font-size: 22px; font-weight: 700; letter-spacing: 2px; color: #a06a63; font-family: monospace;">${escapeHtml(code)}</span>
+      <span dir="ltr" style="font-size: 22px; font-weight: 700; letter-spacing: 2px; color: #a06a63; font-family: monospace; user-select: all; -webkit-user-select: all;">${escapeHtml(code)}</span><br />
+      <span style="font-size: 11px; color: #9a8f7d;">לחיצה ארוכה על הקוד להעתקה</span>
     </div>
   `;
 }

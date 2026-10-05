@@ -57,6 +57,10 @@ describe('lib/email', () => {
     const body = JSON.parse(options.body as string);
     expect(body.to).toBe('client@example.com');
     expect(body.html).toContain('ABCD1234');
+    // הקוד ניתן לסימון בהקשה אחת (user-select:all), עם רמז, ולא בתוך הקישור
+    expect(body.html).toMatch(/user-select: all; -webkit-user-select: all;">ABCD1234<\/span>/);
+    expect(body.html).toContain('לחיצה ארוכה על הקוד להעתקה');
+    expect(body.html).not.toMatch(/href="[^"]*ABCD1234/);
   });
 
   it('returns sent:false with the response text when Resend replies with a non-ok status', async () => {
