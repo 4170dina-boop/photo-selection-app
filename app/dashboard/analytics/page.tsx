@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { theme } from '@/lib/theme';
+import { formatShekels } from '@/lib/payments';
+import { galleryRevenue, sumShekels } from '@/lib/revenue';
 import { createClient } from '@/lib/supabase/client';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { giftExclusionFilter, groupGiftIdsByGallery } from '@/lib/gifts';
@@ -17,7 +19,8 @@ interface GalleryRow {
   owner_participant_id: string | null;
   view_count: number;
   clients: { full_name: string } | null;
-  packages: { included_photos: number; extra_photo_price: number } | null;
+  packages: { included_photos: number; base_price: number; extra_photo_price: number } | null;
+  amount_due_override: number | null;
   selectedCount: number;
   photoCount: number;
 }
@@ -42,7 +45,7 @@ export default function AnalyticsPage() {
     const { data: galleries } = await supabase
       .from('galleries')
       .select(
-        'id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, editing_started_at, owner_participant_id, view_count, clients(full_name), packages(included_photos, extra_photo_price)'
+        'id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, editing_started_at, owner_participant_id, view_count, amount_due_override, clients(full_name), packages(included_photos, base_price, extra_photo_price)'
       )
       .order('created_at', { ascending: false });
 
@@ -95,12 +98,13 @@ export default function AnalyticsPage() {
       : null;
 
   // אותו חישוב חריגה בדיוק כמו totalOverage ב-app/dashboard/galleries/page.tsx
+  // (lib/revenue.ts: באגורות, ו-0 לגלריה שהסכום שלה נדרס ידנית)
   const overRows = rows.filter((r) => r.selectedCount > (r.packages?.included_photos ?? 0));
-  const totalOverageRevenue = overRows.reduce((sum, row) => {
-    const included = row.packages?.included_photos ?? 0;
-    const overageCount = Math.max(0, row.selectedCount - included);
-    return sum + overageCount * (row.packages?.extra_photo_price ?? 0);
-  }, 0);
+  const totalOverageRevenue = sumShekels(
+    overRows.map(
+      (row) => galleryRevenue({ pkg: row.packages, selectedCount: row.selectedCount, amountDueOverride: row.amount_due_override }).overage
+    )
+  );
 
   const remindersSentCount = rows.filter((r) => r.last_reminder_sent_at).length;
 
@@ -136,7 +140,7 @@ export default function AnalyticsPage() {
     { emoji: '🔴', text: `${awaitingSelectionCount} גלריות מחכות לבחירה` },
     { emoji: '🟡', text: `${needsReminderCount} לקוחות עוד לא קיבלו תזכורת` },
     { emoji: '🟢', text: `${completedRows.length} גלריות סיימו בחירה` },
-    ...(totalOverageRevenue > 0 ? [{ emoji: '💰', text: `₪${totalOverageRevenue} חריגות פוטנציאליות` }] : []),
+    ...(totalOverageRevenue > 0 ? [{ emoji: '💰', text: `${formatShekels(totalOverageRevenue)} חריגות פוטנציאליות` }] : []),
     ...(expiringSoonCount > 0 ? [{ emoji: '⚠️', text: `${expiringSoonCount} גלריות עומדות לפוג` }] : []),
     ...(readyForEditingPhotoCount > 0 ? [{ emoji: '📸', text: `${readyForEditingPhotoCount} תמונות מוכנות לעיבוד` }] : []),
   ];
@@ -196,7 +200,7 @@ export default function AnalyticsPage() {
 
           {overRows.length > 0 && (
             <p style={{ color: theme.gold, fontSize: 13, marginBottom: '1.5rem' }}>
-              סה&quot;כ הכנסה מחריגות מכסה: ₪{totalOverageRevenue}
+              סה&quot;כ הכנסה מחריגות מכסה: {formatShekels(totalOverageRevenue)}
             </p>
           )}
 

@@ -5,6 +5,7 @@ import { theme } from '@/lib/theme';
 import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
 import { computePaymentSummary, formatShekels } from '@/lib/payments';
+import { galleryRevenue, israelMonthKey, sumShekels } from '@/lib/revenue';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { giftExclusionFilter, groupGiftIdsByGallery } from '@/lib/gifts';
 
@@ -33,7 +34,8 @@ interface MonthGroup {
   key: string; // "2026-08"
   label: string; // "אוגוסט 2026"
   galleryCount: number;
-  basePriceSum: number;
+  // סה"כ הסכום לתשלום של הגלריות בחודש (כולל דריסה ידנית), ומתוכו חריגות
+  totalSum: number;
   overageSum: number;
 }
 
@@ -113,23 +115,26 @@ export default function ReportsPage() {
     // יותר - כדי לא לפצל גלריה אחת בין שתי שורות בדוח.
     const groups = new Map<string, MonthGroup>();
 
+    // החודש נקבע לפי הלוח בישראל (לא אזור הזמן של הדפדפן), והסכומים לפי
+    // הסכום לתשלום של הגלריה (כולל דריסה ידנית) באגורות - ראו lib/revenue.ts.
     for (const row of rows) {
-      const date = new Date(row.created_at);
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      const label = `${HEBREW_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+      const key = israelMonthKey(row.created_at);
+      const [year, month] = key.split('-');
+      const label = `${HEBREW_MONTHS[Number(month) - 1]} ${year}`;
 
-      const included = row.packages?.included_photos ?? 0;
-      const overageCount = Math.max(0, row.selectedCount - included);
-      const overage = overageCount * (row.packages?.extra_photo_price ?? 0);
-      const basePrice = row.packages?.base_price ?? 0;
+      const { total, overage } = galleryRevenue({
+        pkg: row.packages,
+        selectedCount: row.selectedCount,
+        amountDueOverride: row.amount_due_override,
+      });
 
       const existing = groups.get(key);
       if (existing) {
         existing.galleryCount += 1;
-        existing.basePriceSum += basePrice;
-        existing.overageSum += overage;
+        existing.totalSum = sumShekels([existing.totalSum, total]);
+        existing.overageSum = sumShekels([existing.overageSum, overage]);
       } else {
-        groups.set(key, { key, label, galleryCount: 1, basePriceSum: basePrice, overageSum: overage });
+        groups.set(key, { key, label, galleryCount: 1, totalSum: total, overageSum: overage });
       }
     }
 
@@ -155,7 +160,7 @@ export default function ReportsPage() {
 
   if (loading) return <p style={{ color: theme.textMuted }}>טוען...</p>;
 
-  const grandTotal = months.reduce((sum, m) => sum + m.basePriceSum + m.overageSum, 0);
+  const grandTotal = sumShekels(months.map((m) => m.totalSum));
 
   const storageColor =
     storageUsage && storageUsage.percentUsed >= 100
@@ -242,7 +247,7 @@ export default function ReportsPage() {
           >
             <span style={{ color: theme.textMuted }}>סה&quot;כ לגבייה ({owing.length} {owing.length === 1 ? 'לקוחה' : 'לקוחות'})</span>
             <span style={{ fontSize: 18, fontWeight: 'bold', color: theme.warningText, fontFamily: theme.fontSerif }}>
-              {formatShekels(owing.reduce((sum, r) => sum + r.outstanding, 0))}
+              {formatShekels(sumShekels(owing.map((r) => r.outstanding)))}
             </span>
           </div>
         </div>
@@ -271,11 +276,11 @@ export default function ReportsPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
                 <span style={{ color: theme.textFaint, fontSize: 12 }}>{m.galleryCount} גלריות</span>
                 <span style={{ color: theme.textMuted, fontSize: 13 }}>
-                  ₪{m.basePriceSum}
-                  {m.overageSum > 0 && <span style={{ color: theme.gold }}> + ₪{m.overageSum} חריגה</span>}
+                  {formatShekels(sumShekels([m.totalSum, -m.overageSum]))}
+                  {m.overageSum > 0 && <span style={{ color: theme.gold }}> + {formatShekels(m.overageSum)} חריגה</span>}
                 </span>
                 <span style={{ fontWeight: 'bold', color: theme.gold, fontFamily: theme.fontSerif }}>
-                  ₪{m.basePriceSum + m.overageSum}
+                  {formatShekels(m.totalSum)}
                 </span>
               </div>
             </div>
@@ -288,7 +293,7 @@ export default function ReportsPage() {
             }}
           >
             <span style={{ color: theme.textMuted }}>סה&quot;כ הכנסה (כל הגלריות)</span>
-            <span style={{ fontSize: 18, fontWeight: 'bold', color: theme.gold, fontFamily: theme.fontSerif }}>₪{grandTotal}</span>
+            <span style={{ fontSize: 18, fontWeight: 'bold', color: theme.gold, fontFamily: theme.fontSerif }}>{formatShekels(grandTotal)}</span>
           </div>
         </div>
       )}

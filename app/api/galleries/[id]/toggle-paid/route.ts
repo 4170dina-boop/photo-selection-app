@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { nextToggleTimestamp, readToggleValue } from '@/lib/toggleValue';
 
 // הופכת (toggle) את סימון "שולם" - עצמאי לגמרי מ-status/delivered_at, כי
 // בדרך כלל משולם בהזמנה, הרבה לפני שהלקוחה סיימה לבחור. אין אינטגרציית
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
-  const newPaidAt = gallery.paid_at ? null : new Date().toISOString();
+  const newPaidAt = nextToggleTimestamp(gallery.paid_at, await readToggleValue(req), new Date().toISOString());
 
   const { error } = await supabase.from('galleries').update({ paid_at: newPaidAt }).eq('id', gallery.id);
 

@@ -32,6 +32,7 @@ function NewGalleryForm() {
   const [extraPhotoPrice, setExtraPhotoPrice] = useState('0');
   const [expiresAt, setExpiresAt] = useState('');
   const [duplicatedFrom, setDuplicatedFrom] = useState('');
+  const [duplicateLoadError, setDuplicateLoadError] = useState('');
   // כתובות מייל נוספות (למשל בני משפחה) שמקבלות את אותו מייל הזמנה - ראו
   // additional_invite_emails ב-supabase/schema.sql. רשימה פשוטה של שדות טקסט,
   // לא טבלה - אין כאן עוד שום מושג זהות, רק עוד נמענים לאותו מייל.
@@ -44,22 +45,34 @@ function NewGalleryForm() {
   useEffect(() => {
     (async () => {
       if (fromGalleryId) {
-        const res = await fetch(`/api/galleries/${fromGalleryId}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.packages?.included_photos != null) setIncludedPhotos(String(data.packages.included_photos));
-        if (data.packages?.base_price != null) setBasePrice(String(data.packages.base_price));
-        if (data.packages?.extra_photo_price != null) setExtraPhotoPrice(String(data.packages.extra_photo_price));
-        setDuplicatedFrom(data.clients?.full_name ?? '');
-        return;
+        try {
+          const res = await fetch(`/api/galleries/${fromGalleryId}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.packages?.included_photos != null) setIncludedPhotos(String(data.packages.included_photos));
+            if (data.packages?.base_price != null) setBasePrice(String(data.packages.base_price));
+            if (data.packages?.extra_photo_price != null) setExtraPhotoPrice(String(data.packages.extra_photo_price));
+            setDuplicatedFrom(data.clients?.full_name ?? '');
+            return;
+          }
+        } catch {
+          // נופלים לברירות המחדל למטה
+        }
+        // שכפול נכשל - לא משאירים את הטופס עם ערכים קבועים בשקט: ממלאים
+        // מברירות המחדל של הצלמת ומודיעים לה שהחבילה המקורית לא נטענה.
+        setDuplicateLoadError('לא הצלחנו לטעון את החבילה של הגלריה המקורית - מולאו ברירות המחדל מההגדרות, בדקי את הערכים לפני היצירה.');
       }
 
-      const res = await fetch('/api/photographer');
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.default_included_photos != null) setIncludedPhotos(String(data.default_included_photos));
-      if (data.default_base_price != null) setBasePrice(String(data.default_base_price));
-      if (data.default_extra_photo_price != null) setExtraPhotoPrice(String(data.default_extra_photo_price));
+      try {
+        const res = await fetch('/api/photographer');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.default_included_photos != null) setIncludedPhotos(String(data.default_included_photos));
+        if (data.default_base_price != null) setBasePrice(String(data.default_base_price));
+        if (data.default_extra_photo_price != null) setExtraPhotoPrice(String(data.default_extra_photo_price));
+      } catch {
+        // ברירות מחדל הן רק נוחות - הטופס נשאר עם הערכים ההתחלתיים
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromGalleryId]);
@@ -74,30 +87,34 @@ function NewGalleryForm() {
     setError('');
     setLoading(true);
 
-    const res = await fetch('/api/galleries', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clientName,
-        clientEmail,
-        includedPhotos: Number(includedPhotos),
-        basePrice: Number(basePrice),
-        extraPhotoPrice: Number(extraPhotoPrice),
-        expiresAt: expiresAt ? israelEndOfDayIso(expiresAt) : null,
-        additionalInviteEmails: additionalEmails.map((email) => email.trim()).filter((email) => email.length > 0),
-      }),
-    });
+    try {
+      const res = await fetch('/api/galleries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientName,
+          clientEmail,
+          includedPhotos: Number(includedPhotos),
+          basePrice: Number(basePrice),
+          extraPhotoPrice: Number(extraPhotoPrice),
+          expiresAt: expiresAt ? israelEndOfDayIso(expiresAt) : null,
+          additionalInviteEmails: additionalEmails.map((email) => email.trim()).filter((email) => email.length > 0),
+        }),
+      });
 
-    setLoading(false);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? 'יצירת הגלריה נכשלה');
+        return;
+      }
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error ?? 'יצירת הגלריה נכשלה');
-      return;
+      const data = await res.json();
+      setCreated(data);
+    } catch {
+      setError('שגיאת רשת - בדקי את החיבור ונסי שוב');
+    } finally {
+      setLoading(false);
     }
-
-    const data = await res.json();
-    setCreated(data);
   }
 
   if (created) {
@@ -152,7 +169,13 @@ function NewGalleryForm() {
 
   return (
     <div style={{ maxWidth: 420 }}>
-      <h1 style={{ fontSize: 20, marginBottom: duplicatedFrom ? '0.5rem' : '1.5rem' }}>גלריה חדשה</h1>
+      <h1 style={{ fontSize: 20, marginBottom: duplicatedFrom || duplicateLoadError ? '0.5rem' : '1.5rem' }}>גלריה חדשה</h1>
+
+      {duplicateLoadError && (
+        <p style={{ background: theme.warningBg, color: theme.warningText, padding: '0.6rem 1rem', borderRadius: 8, marginBottom: '1.5rem', fontSize: 13 }}>
+          {duplicateLoadError}
+        </p>
+      )}
 
       {duplicatedFrom && (
         <p style={{ background: theme.panel, border: `1px solid ${theme.border}`, color: theme.textMuted, padding: '0.6rem 1rem', borderRadius: 8, marginBottom: '1.5rem', fontSize: 13 }}>
@@ -231,7 +254,7 @@ function NewGalleryForm() {
           <input
             type="number"
             min={0}
-            step="10"
+            step="any"
             value={basePrice}
             onChange={(e) => setBasePrice(e.target.value)}
             style={inputStyle}
@@ -243,7 +266,7 @@ function NewGalleryForm() {
           <input
             type="number"
             min={0}
-            step="10"
+            step="any"
             value={extraPhotoPrice}
             onChange={(e) => setExtraPhotoPrice(e.target.value)}
             style={inputStyle}

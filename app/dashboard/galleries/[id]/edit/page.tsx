@@ -118,31 +118,41 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setFinalError('');
     setUploadingFinal(true);
 
+    // 'unsaved' = הקובץ כבר עלה ל-R2 אבל שורת ה-DB לא נשמרה - הלקוחה לא תראה
+    // אותו. אין כאן שורה שאפשר למחוק דרך route המחיקה (הוא מחפש לפי id של
+    // delivered_photos), אז רק מודיעים במפורש; הקובץ היתום נמחק עם הגלריה
+    // (מחיקה לפי prefix ב-app/api/galleries/[id]/route.ts).
     const results = await Promise.all(
-      files.map(async (file) => {
-        const presignRes = await fetch(`/api/galleries/${galleryId}/final-photos/presign-upload`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename: file.name }),
-        });
-        if (!presignRes.ok) return false;
-        const { path, uploadUrl } = await presignRes.json();
+      files.map(async (file): Promise<'ok' | 'failed' | 'unsaved'> => {
+        try {
+          const presignRes = await fetch(`/api/galleries/${galleryId}/final-photos/presign-upload`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: file.name }),
+          });
+          if (!presignRes.ok) return 'failed';
+          const { path, uploadUrl } = await presignRes.json();
 
-        const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
-        if (!putRes.ok) return false;
+          const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
+          if (!putRes.ok) return 'failed';
 
-        const { error: dbError } = await supabase
-          .from('delivered_photos')
-          .insert({ gallery_id: galleryId, file_path: path, original_filename: file.name });
-        return !dbError;
+          const { error: dbError } = await supabase
+            .from('delivered_photos')
+            .insert({ gallery_id: galleryId, file_path: path, original_filename: file.name });
+          return dbError ? 'unsaved' : 'ok';
+        } catch {
+          return 'failed';
+        }
       })
     );
 
     setUploadingFinal(false);
-    if (results.some((ok) => !ok)) {
+    if (results.includes('unsaved')) {
+      setFinalError('חלק מהתמונות הועלו אבל לא נשמרו בגלריה (הלקוחה לא תראה אותן) - העלי אותן שוב');
+    } else if (results.includes('failed')) {
       setFinalError('חלק מהתמונות לא הועלו בהצלחה - נסי שוב');
     }
-    await loadDeliveredPhotos();
+    await loadDeliveredPhotos().catch(() => setLoadingDelivered(false));
   }
 
   async function handleDeleteFinalPhoto(photo: DeliveredPhoto) {
@@ -215,32 +225,36 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setError('');
     setSaving(true);
 
-    const res = await fetch(`/api/galleries/${galleryId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clientName,
-        clientEmail,
-        includedPhotos: Number(includedPhotos),
-        basePrice: Number(basePrice),
-        extraPhotoPrice: Number(extraPhotoPrice),
-        expiresAt: expiresAt ? israelEndOfDayIso(expiresAt) : null,
-        photographerNotes,
-        reminderDays: reminderDays ? Number(reminderDays) : null,
-        additionalInviteEmails: additionalEmails.map((email) => email.trim()).filter((email) => email.length > 0),
-      }),
-    });
+    try {
+      const res = await fetch(`/api/galleries/${galleryId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientName,
+          clientEmail,
+          includedPhotos: Number(includedPhotos),
+          basePrice: Number(basePrice),
+          extraPhotoPrice: Number(extraPhotoPrice),
+          expiresAt: expiresAt ? israelEndOfDayIso(expiresAt) : null,
+          photographerNotes,
+          reminderDays: reminderDays ? Number(reminderDays) : null,
+          additionalInviteEmails: additionalEmails.map((email) => email.trim()).filter((email) => email.length > 0),
+        }),
+      });
 
-    setSaving(false);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? 'עדכון הגלריה נכשל');
+        return;
+      }
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error ?? 'עדכון הגלריה נכשל');
-      return;
+      router.push('/dashboard/galleries');
+      router.refresh();
+    } catch {
+      setError('שגיאת רשת - בדקי את החיבור ונסי שוב');
+    } finally {
+      setSaving(false);
     }
-
-    router.push('/dashboard/galleries');
-    router.refresh();
   }
 
   async function handleResendInvite() {
@@ -456,18 +470,24 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   async function handleDelete() {
     if (!window.confirm('למחוק את הגלריה הזו? כל התמונות, הבחירות והיסטוריית התשלומים יימחקו לצמיתות - אי אפשר לבטל את זה.')) return;
 
+    setError('');
     setDeleting(true);
-    const res = await fetch(`/api/galleries/${galleryId}`, { method: 'DELETE' });
-    setDeleting(false);
+    try {
+      const res = await fetch(`/api/galleries/${galleryId}`, { method: 'DELETE' });
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error ?? 'מחיקת הגלריה נכשלה');
-      return;
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? 'מחיקת הגלריה נכשלה');
+        return;
+      }
+
+      router.push('/dashboard/galleries');
+      router.refresh();
+    } catch {
+      setError('שגיאת רשת - בדקי את החיבור ונסי שוב');
+    } finally {
+      setDeleting(false);
     }
-
-    router.push('/dashboard/galleries');
-    router.refresh();
   }
 
   if (loading) return <p style={{ color: theme.textMuted }}>טוען...</p>;
@@ -597,7 +617,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           <input
             type="number"
             min={0}
-            step="10"
+            step="any"
             value={basePrice}
             onChange={(e) => setBasePrice(e.target.value)}
             style={inputStyle}
@@ -609,7 +629,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           <input
             type="number"
             min={0}
-            step="10"
+            step="any"
             value={extraPhotoPrice}
             onChange={(e) => setExtraPhotoPrice(e.target.value)}
             style={inputStyle}
