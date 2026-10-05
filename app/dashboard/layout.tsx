@@ -2,13 +2,22 @@
 
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { theme, outlineButtonStyle } from '@/lib/theme';
 import { UploadProvider } from './UploadProvider';
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // כפתור "ניהול צלמות" מוצג רק למנהלת (ADMIN_EMAIL) - שאר הצלמות לא רואות אותו
+  useEffect(() => {
+    fetch('/api/admin/me')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setIsAdmin(!!data?.isAdmin))
+      .catch(() => {});
+  }, []);
 
   async function handleSignOut() {
     const supabase = createClient();
@@ -53,6 +62,11 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             <Link href="/dashboard/settings" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
               הגדרות
             </Link>
+            {isAdmin && (
+              <Link href="/dashboard/admin" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block', color: theme.gold, borderColor: theme.gold }}>
+                ניהול צלמות
+              </Link>
+            )}
             <button onClick={handleSignOut} style={outlineButtonStyle}>
               התנתקות
             </button>
