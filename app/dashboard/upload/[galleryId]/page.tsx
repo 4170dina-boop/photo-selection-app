@@ -5,6 +5,13 @@ import Link from 'next/link';
 import { theme, goldButtonStyle, inputStyle, outlineButtonStyle } from '@/lib/theme';
 import { useUploadQueue, type UploadItem } from '../../UploadProvider';
 import { GIFT_MESSAGE_MAX_LENGTH } from '@/lib/gifts';
+import {
+  FREE_PHOTO_LIMIT,
+  PROCESS_RETRY_GRACE_MS,
+  indicesToUpload,
+  mapWithConcurrency,
+  photosNeedingProcessRetry,
+} from '@/lib/uploadPolicy';
 
 interface UploadPageProps {
   params: { galleryId: string };
@@ -20,12 +27,13 @@ interface ExistingPhoto {
   // תמונת מתנה (lib/gifts.ts) - בונוס ללקוחה, לא נספר במכסה/בחיוב
   isGift: boolean;
   giftMessage: string | null;
+  // אין עדיין thumbnail עם סימן מים - התמונה מוסתרת מהלקוחה עד שהעיבוד יצליח
+  needsProcessing: boolean;
+  createdAt: string | null;
 }
 
-// תואם ל-enforce_photo_limit ב-supabase/schema.sql - אין מקור אמת משותף אחד,
-// אז אם המספר שם משתנה צריך לעדכן גם כאן. זה רק לתצוגה מקדימה; האכיפה בפועל
-// היא ה-trigger ב-DB, לא זה.
-const FREE_PHOTO_LIMIT = 25;
+// כמה בקשות עיבוד חוזר (/process) רצות בו-זמנית - כל אחת כבדה בצד שרת.
+const PROCESS_RETRY_CONCURRENCY = 3;
 
 export default function UploadPage({ params }: UploadPageProps) {
   const { galleryId } = params;
@@ -175,6 +183,34 @@ export default function UploadPage({ params }: UploadPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uploading]);
 
+  // עיבוד חוזר לתמונות בלי thumbnail (העיבוד ב-UploadProvider הוא fire-and-forget,
+  // ואם הוא נכשל - למשל timeout - התמונה נשארת מוסתרת מהלקוחה). מנסים כל תמונה
+  // פעם אחת לכל טעינת דף (attemptedProcessRef), כדי שתמונה פגומה לא תיכנס
+  // ללולאה אינסופית. תמונות שהועלו ממש עכשיו מקבלות זמן חסד (העיבוד המקורי
+  // שלהן אולי עוד רץ) - בודקים אותן שוב כשזמן החסד נגמר.
+  const attemptedProcessRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (uploading || !existingPhotos) return;
+
+    const due = photosNeedingProcessRetry(existingPhotos, Date.now(), attemptedProcessRef.current);
+    if (due.length > 0) {
+      due.forEach((p) => attemptedProcessRef.current.add(p.id));
+      (async () => {
+        await mapWithConcurrency(due, PROCESS_RETRY_CONCURRENCY, (p) =>
+          fetch(`/api/galleries/${galleryId}/photos/${p.id}/process`, { method: 'POST' }).catch(() => null)
+        );
+        loadExistingPhotos();
+      })();
+      return;
+    }
+
+    const waiting = existingPhotos.some((p) => p.needsProcessing && !attemptedProcessRef.current.has(p.id));
+    if (!waiting) return;
+    const timer = setTimeout(loadExistingPhotos, PROCESS_RETRY_GRACE_MS);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingPhotos, uploading, galleryId]);
+
   // מסמנים קבצים ששמם חוזר על עצמו בתוך הבחירה הנוכחית, או שכבר קיימים
   // בגלריה (לפי original_filename) - השוואה מדויקת של השם, בלי נרמול.
   function buildItems(selected: File[]): UploadItem[] {
@@ -208,6 +244,9 @@ export default function UploadPage({ params }: UploadPageProps) {
 
   const doneCount = items.filter((it) => it.status === 'done').length;
   const errorCount = items.filter((it) => it.status === 'error').length;
+  // רק מה שעוד לא הועלה (pending/error) - זה מה ש-startUpload ישלח בפועל
+  const toUploadCount = indicesToUpload(items).length;
+  const processingCount = (existingPhotos ?? []).filter((p) => p.needsProcessing).length;
   const duplicateCount = items.filter((it) => it.isDuplicateExisting || it.isDuplicateInSelection).length;
   const allProcessed = items.length > 0 && items.every((it) => it.status === 'done' || it.status === 'error');
   // בזמן העלאה: מוסיפים doneCount לספירה החיה. אחרי סיום: loadExistingPhotos
@@ -247,6 +286,11 @@ export default function UploadPage({ params }: UploadPageProps) {
             והיא לא נספרת במכסת החבילה ולא בחיוב על תמונות נוספות.
             {existingPhotos.some((p) => p.isGift) && ` (${existingPhotos.filter((p) => p.isGift).length} מסומנות כמתנה)`}
           </p>
+          {processingCount > 0 && (
+            <p style={{ color: theme.warningText, fontSize: 12, marginBottom: '0.75rem' }}>
+              {processingCount} תמונות עדיין בעיבוד (יצירת סימן מים) ולא מוצגות ללקוחה - העיבוד ינוסה שוב אוטומטית.
+            </p>
+          )}
           <div
             style={{
               display: 'grid',
@@ -286,6 +330,18 @@ export default function UploadPage({ params }: UploadPageProps) {
                       }}
                     >
                       {statusLabel}
+                    </span>
+                  )}
+                  {photo.needsProcessing && (
+                    <span
+                      title="סימן המים עוד לא נוצר - התמונה לא מוצגת ללקוחה עד שהעיבוד יסתיים"
+                      style={{
+                        position: 'absolute', bottom: photo.note ? 22 : 6, left: 6,
+                        background: theme.warningBg, color: theme.warningText, fontSize: 10,
+                        padding: '2px 7px', borderRadius: 10,
+                      }}
+                    >
+                      בעיבוד
                     </span>
                   )}
                   <button
@@ -368,10 +424,10 @@ export default function UploadPage({ params }: UploadPageProps) {
           <span style={{ color: theme.textMuted }}>{items.length} קבצים נבחרו</span>
         )}
 
-        {items.length > 0 && (
+        {items.length > 0 && (uploading || toUploadCount > 0) && (
           <button
             onClick={startUpload}
-            disabled={uploading || items.length === 0}
+            disabled={uploading || toUploadCount === 0}
             style={{
               ...goldButtonStyle,
               background: 'transparent',
@@ -380,7 +436,11 @@ export default function UploadPage({ params }: UploadPageProps) {
               opacity: uploading ? 0.6 : 1,
             }}
           >
-            {uploading ? `מעלה... (${doneCount}/${items.length})` : 'העלה תמונות'}
+            {uploading
+              ? `מעלה... (${doneCount}/${items.length})`
+              : errorCount > 0
+                ? `נסי שוב (${errorCount} שנכשלו)`
+                : 'העלה תמונות'}
           </button>
         )}
       </div>

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { getPresignedDownloadUrl } from '@/lib/r2';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { hasWatermarkedThumbnail } from '@/lib/uploadPolicy';
 
 // מחזירה לצלמת המחוברת תצוגה לקריאה בלבד של התמונות בגלריה: thumbnail + הסטטוס
 // הרשמי (של הבעלים בלבד - שיתוף גלריה משפחתי, בדיוק כמו app/dashboard/galleries/page.tsx
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const [{ data: photosData }, { data: selectionsData }] = await Promise.all([
     supabaseAdmin
       .from('photos')
-      .select('id, thumbnail_path, file_path, original_filename')
+      .select('id, thumbnail_path, file_path, original_filename, created_at')
       .eq('gallery_id', params.id)
       .order('created_at', { ascending: true }),
     gallery.owner_participant_id
@@ -68,13 +69,19 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const photos = await Promise.all(
     (photosData ?? []).map(async (photo) => {
-      const thumbPath = photo.thumbnail_path ?? photo.file_path;
+      // זה מסך של הצלמת (לא של הלקוחה) - מותר ליפול חזרה למקור כשאין עדיין
+      // thumbnail. needsProcessing מסמן לדף ההעלאה להפעיל עיבוד מחדש, כי עד
+      // אז התמונה מוסתרת מהלקוחה (ראו app/api/gallery/[id]/route.ts).
+      const needsProcessing = !hasWatermarkedThumbnail(photo);
+      const thumbPath = needsProcessing ? photo.file_path : (photo.thumbnail_path as string);
       const thumbnailUrl = await getPresignedDownloadUrl(thumbPath, SIGNED_URL_TTL_SECONDS);
 
       const selection = selectionByPhotoId.get(photo.id);
       return {
         id: photo.id,
         thumbnailUrl,
+        needsProcessing,
+        createdAt: photo.created_at ?? null,
         original_filename: photo.original_filename,
         status: (selection?.status as 'maybe' | 'selected' | undefined) ?? null,
         note: selection?.note ?? null,

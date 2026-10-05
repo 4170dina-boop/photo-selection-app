@@ -128,12 +128,13 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           const presignRes = await fetch(`/api/galleries/${galleryId}/final-photos/presign-upload`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: file.name }),
+            // סוג וגודל נחתמים לתוך ה-URL (ראו lib/r2.ts) - השרת דוחה סוג לא נתמך או קובץ מעל 50MB
+            body: JSON.stringify({ contentType: file.type, size: file.size }),
           });
           if (!presignRes.ok) return 'failed';
-          const { path, uploadUrl } = await presignRes.json();
+          const { path, uploadUrl, contentType } = await presignRes.json();
 
-          const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
+          const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': contentType } });
           if (!putRes.ok) return 'failed';
 
           const { error: dbError } = await supabase
@@ -150,7 +151,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     if (results.includes('unsaved')) {
       setFinalError('חלק מהתמונות הועלו אבל לא נשמרו בגלריה (הלקוחה לא תראה אותן) - העלי אותן שוב');
     } else if (results.includes('failed')) {
-      setFinalError('חלק מהתמונות לא הועלו בהצלחה - נסי שוב');
+      setFinalError('חלק מהתמונות לא הועלו בהצלחה - נסי שוב (נתמכים JPEG, PNG, WebP, AVIF, TIFF עד 50MB)');
     }
     await loadDeliveredPhotos().catch(() => setLoadingDelivered(false));
   }

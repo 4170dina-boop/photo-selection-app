@@ -2,8 +2,8 @@
 
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
 import { theme } from '@/lib/theme';
+import { FREE_PHOTO_LIMIT, indicesToUpload, mapWithConcurrency } from '@/lib/uploadPolicy';
 
 // תור ההעלאה חי כאן (context גלובלי לדשבורד) ולא ב-state מקומי של דף ההעלאה,
 // כדי שהעלאה שכבר רצה תמשיך (ותוצג בפס ההתקדמות הצף) גם כשהצלמת עוברת
@@ -100,7 +100,6 @@ const BANNER_FADE_MS = 5000;
 
 export function UploadProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const [supabase] = useState(() => createClient());
   const [states, setStates] = useState<Record<string, GalleryUploadState>>({});
   const fadeTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -135,40 +134,38 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       // ל-RLS שמאפשרת לדפדפן להעלות ישירות בבטחה, אז מבקשים URL חתום מהשרת
       // (הוא גם קובע את הנתיב עצמו, לא מתקבל מהלקוח) ומעלים אליו ישירות -
       // הבייטים עצמם עדיין לא עוברים דרך שרת האפליקציה שלנו, בדיוק כמו קודם.
+      // סוג התוכן והגודל נחתמים לתוך ה-URL (ראו lib/r2.ts) - השרת מאמת אותם
+      // (רשימת סוגים מותרים + גודל מקסימלי) ובודק את מכסת התמונות לפני החתימה.
       const presignRes = await fetch(`/api/galleries/${galleryId}/photos/presign-upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.name }),
+        body: JSON.stringify({ contentType: file.type, size: file.size }),
       });
-      if (!presignRes.ok) throw new Error('בקשת URL להעלאה נכשלה');
-      const { path, uploadUrl } = await presignRes.json();
+      const presignData = await presignRes.json().catch(() => ({}));
+      if (!presignRes.ok) throw new Error(presignData.error ?? 'בקשת URL להעלאה נכשלה');
+      const { path, uploadUrl, contentType } = presignData;
 
-      const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
+      const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': contentType } });
       if (!putRes.ok) throw new Error('העלאת הקובץ נכשלה');
 
-      // ה-bucket ב-R2 פרטי - שומרים את הנתיב בתוכו, לא URL.
-      // ה-URL בפועל (signed, זמני) נוצר רק כשלקוחה צופה בגלריה - ראו
-      // app/api/gallery/[id]/route.ts. thumbnail_path מתחיל זהה ל-file_path
-      // (נופל בחזרה למקור אם העיבוד למטה נכשל), ומוחלף בגרסה עם סימן מים
-      // ברגע שה-route בצד שרת מסיים.
-      const { data: photo, error: dbError } = await supabase
-        .from('photos')
-        .insert({
-          gallery_id: galleryId,
-          file_path: path,
-          thumbnail_path: path,
-          original_filename: file.name,
-        })
-        .select('id')
-        .single();
-
-      if (dbError) throw dbError;
+      // הרישום ב-DB קורה בצד שרת (app/api/galleries/[id]/photos/route.ts) - אם
+      // הוא נכשל (למשל מגבלת התמונות), השרת גם מוחק את הקובץ מ-R2 כדי שלא
+      // יישאר יתום. thumbnail_path נשאר null עד שהעיבוד למטה מסיים - עד אז
+      // התמונה לא מוצגת ללקוחה בכלל (אף פעם לא המקור הנקי).
+      const registerRes = await fetch(`/api/galleries/${galleryId}/photos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, originalFilename: file.name }),
+      });
+      const registerData = await registerRes.json().catch(() => ({}));
+      if (!registerRes.ok) throw new Error(registerData.error ?? 'שמירת התמונה נכשלה');
+      const photo = { id: registerData.id as string };
 
       // התמונה כבר בטוחה ב-Storage וב-DB - זה מה שקובע "הועלה בהצלחה" מבחינת
-      // הלקוחה/המכסה. עיבוד סימן המים לא מחכים לו יותר (fire-and-forget) - הוא
-      // best-effort ממילא (אם נכשל, thumbnail_path נשאר המקור, ראו הערה למעלה),
-      // אז אין סיבה שהתמונה הבאה בתור תחכה לו. זה הצעד שבאמת קיצר את הזמן
-      // הכולל בהעלאה של הרבה תמונות - הורדה+שינוי גודל+הטבעה בצד שרת הם החלק
+      // הלקוחה/המכסה. עיבוד סימן המים לא מחכים לו (fire-and-forget) - אם הוא
+      // נכשל, התמונה פשוט נשארת מוסתרת מהלקוחה, ודף ההעלאה מפעיל אותו מחדש
+      // (ראו photosNeedingProcessRetry ב-lib/uploadPolicy.ts). זה הצעד שבאמת
+      // קיצר את הזמן הכולל בהעלאה של הרבה תמונות - הורדה+שינוי גודל+הטבעה בצד שרת הם החלק
       // האיטי, לא ההעלאה עצמה.
       fetch(`/api/galleries/${galleryId}/photos/${photo.id}/process`, { method: 'POST' }).catch(() => {});
 
@@ -180,7 +177,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       // מגבלת חשבון חינמי (טריגר enforce_photo_limit ב-DB) - ראו supabase/schema.sql
       const message: string = err.message ?? 'שגיאה לא ידועה';
       const displayMessage = message.includes('LIMIT_PHOTOS')
-        ? 'חשבון חינמי מוגבל ל-25 תמונות בגלריה'
+        ? `חשבון חינמי מוגבל ל-${FREE_PHOTO_LIMIT} תמונות בגלריה`
         : message;
       updateGallery(galleryId, (prev) => ({
         ...prev,
@@ -204,20 +201,16 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         }
 
         const items = current.items;
+        // רק pending/error - פריט שכבר הועלה (done) לא נשלח שוב בלחיצה חוזרת,
+        // אחרת "נסי שוב" אחרי כישלון חלקי יוצר כפילויות של כל מה שכבר הצליח.
+        const queue = indicesToUpload(items);
+        if (queue.length === 0) return prev;
 
-        // "מאגר עובדים" קטן: כל "עובד" מושך את האינדקס הבא בתור ומעלה אותו, עד
-        // שנגמרים - כך יש תמיד עד UPLOAD_CONCURRENCY העלאות פעילות בו-זמנית,
-        // בלי תזמון מסובך יותר מזה. ה-IIFE רץ בלי תלות בהמשך חיי רכיב כלשהו -
-        // זה בדיוק העניין: הוא ממשיך גם אם דף ההעלאה עצמו יתפרק.
+        // "מאגר עובדים" קטן: עד UPLOAD_CONCURRENCY העלאות פעילות בו-זמנית.
+        // ה-IIFE רץ בלי תלות בהמשך חיי רכיב כלשהו - זה בדיוק העניין: הוא ממשיך
+        // גם אם דף ההעלאה עצמו יתפרק.
         (async () => {
-          let nextIndex = 0;
-          async function worker() {
-            while (nextIndex < items.length) {
-              const i = nextIndex++;
-              await uploadOne(galleryId, i, items[i].file);
-            }
-          }
-          await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, items.length) }, worker));
+          await mapWithConcurrency(queue, UPLOAD_CONCURRENCY, (i) => uploadOne(galleryId, i, items[i].file));
 
           updateGallery(galleryId, (p) => ({ ...p, uploading: false }));
           fadeTimers.current[galleryId] = setTimeout(() => {

@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { MAX_INPUT_PIXELS } from './uploadPolicy';
 
 const MAX_DIMENSION = 2000; // px בצלע הארוכה - מספיק לצפייה מלאה, לא לאיכות הדפסה
 
@@ -35,7 +36,7 @@ const LOGO_WATERMARK_OPACITY = 0.35; // אפקט "השתקפות" עדין, לא
 // את באג רינדור הפונט העברי כי אין כאן טקסט בכלל - רק הרכבת תמונה (image compositing).
 async function buildLogoWatermarkSvg(width: number, height: number, logoBuffer: Buffer): Promise<Buffer> {
   // מקטינים את הלוגו לגודל אריח סביר ושומרים PNG (עם שקיפות) כדי שהחזרה תהיה עדינה
-  const resizedLogo = await sharp(logoBuffer)
+  const resizedLogo = await sharp(logoBuffer, { limitInputPixels: MAX_INPUT_PIXELS })
     .resize({ height: LOGO_TILE_LOGO_HEIGHT, withoutEnlargement: true })
     .png()
     .toBuffer();
@@ -70,7 +71,8 @@ export async function createWatermarkedPreview(
 ): Promise<Buffer> {
   // חייבים לסיים את שינוי הגודל לפני שקוראים metadata - אחרת מקבלים את מידות
   // התמונה המקורית (לפני resize), וסימן המים ייצא במידות הלא-נכונות.
-  const resizedBuffer = await sharp(input)
+  // limitInputPixels: הקובץ מגיע מהדפדפן - דוחים מידות ענק לפני פענוח מלא.
+  const resizedBuffer = await sharp(input, { limitInputPixels: MAX_INPUT_PIXELS })
     .rotate() // מתקן orientation לפי EXIF לפני שהמידע הזה נמחק
     .resize({ width: MAX_DIMENSION, height: MAX_DIMENSION, fit: 'inside', withoutEnlargement: true })
     .toBuffer();

@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { MAX_INPUT_PIXELS } from './uploadPolicy';
 
 // מקטינה לפני הניתוח - מהיר יותר, והתוצאה נשארת עקבית בין תמונות בגדלים שונים
 const ANALYSIS_MAX_DIMENSION = 800;
@@ -20,7 +21,7 @@ export async function computeSharpnessScore(input: Buffer): Promise<number> {
   // אחרי עיבוד), sharp מטפל בפלט כ-premultiplied ומחזיר אפסים בכל מקום, גם
   // בתמונה עם קצוות אמיתיים. גילינו את זה כי הטסט על תמונה סינתטית נכשל -
   // אחרי flatten() הוא עבר.
-  const { data } = await sharp(input)
+  const { data } = await sharp(input, { limitInputPixels: MAX_INPUT_PIXELS })
     .rotate()
     .flatten({ background: '#ffffff' })
     .resize({ width: ANALYSIS_MAX_DIMENSION, height: ANALYSIS_MAX_DIMENSION, fit: 'inside', withoutEnlargement: true })

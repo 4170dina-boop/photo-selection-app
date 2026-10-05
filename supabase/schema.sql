@@ -163,7 +163,7 @@ create table photos (
   -- לא בכל בקשה. null עד שהעיבוד רץ, או אם הוא נכשל - לא חוסם שום דבר.
   sharpness_score numeric,
   -- מתי הקובץ הזה הועבר בפועל ל-Cloudflare R2 (מעבר אחסון חד-פעמי, ראו
-  -- app/api/admin/migrate-storage/route.ts) - null = עדיין ב-Supabase Storage
+  -- קוד המיגרציה הוסר מאז) - null = עדיין ב-Supabase Storage
   -- בלבד (או שהמקור כבר נוקה ע"י ניקוי המקור האוטומטי, ראו app/api/cron/tick/route.ts,
   -- ואז אין מה להעביר בפועל, אבל עדיין מסמנים "הועבר" כדי לא לבדוק שוב).
   -- שני עמודות נפרדות (לא עמודה אחת ל"כל הקובץ") כי file_path ו-thumbnail_path
@@ -178,7 +178,13 @@ create table photos (
   -- "photographers see own photos" כבר מכסה את זה, ללקוחה אין גישה ישירה.
   is_gift boolean default false not null,
   gift_message text check (gift_message is null or char_length(gift_message) <= 200),
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  -- ה-RLS בודק רק gallery_id, ו-file_path/thumbnail_path נכתבים ע"י הצלמת -
+  -- בלי זה אפשר היה להצביע שורה על קובץ של גלריה (או צלמת) אחרת ב-R2.
+  constraint photos_paths_in_gallery check (
+    starts_with(file_path, gallery_id::text || '/')
+    and (thumbnail_path is null or starts_with(thumbnail_path, gallery_id::text || '/'))
+  )
 );
 
 create table selections (
@@ -212,11 +218,13 @@ create table delivered_photos (
   file_path text not null,
   original_filename text not null,
   -- מתי הקובץ הזה הועבר בפועל ל-Cloudflare R2 (מעבר אחסון חד-פעמי, ראו
-  -- app/api/admin/migrate-storage/route.ts) - null = עדיין ב-Supabase Storage
+  -- קוד המיגרציה הוסר מאז) - null = עדיין ב-Supabase Storage
   -- בלבד. בניגוד ל-photos למעלה, יש כאן רק עמודה אחת כי לתמונה סופית אין
   -- thumbnail נפרד - זה הקובץ הערוך המלא בעצמו.
   file_migrated_at timestamptz,
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  -- אותה הגנה כמו photos_paths_in_gallery - file_path נכתב מהדפדפן
+  constraint delivered_photos_path_in_gallery check (starts_with(file_path, gallery_id::text || '/'))
 );
 create index idx_delivered_photos_gallery on delivered_photos(gallery_id);
 alter table delivered_photos enable row level security;
@@ -1395,7 +1403,7 @@ create policy "photographers read own logo" on storage.objects
 -- alter table selections add column if not exists photographer_reply_at timestamptz;
 
 -- אם כבר הרצת גרסה קודמת בלי מעקב מעבר אחסון ל-Cloudflare R2
--- (app/api/admin/migrate-storage/route.ts), מריצים גם את זה:
+-- (קוד המיגרציה הוסר מאז), מריצים גם את זה:
 -- alter table photos add column if not exists file_migrated_at timestamptz;
 -- alter table photos add column if not exists thumbnail_migrated_at timestamptz;
 -- alter table delivered_photos add column if not exists file_migrated_at timestamptz;
@@ -1696,3 +1704,19 @@ create policy "photographers read own logo" on storage.objects
 -- grant execute on function reserve_theme_gen_quota(uuid, int) to service_role;
 -- grant execute on function reserve_ai_picks_quota(uuid, int) to service_role;
 -- ===== סוף הקשחת אבטחה ושלמות נתונים =====
+
+-- אם כבר הרצת גרסה קודמת בלי אימות נתיבי הקבצים (file_path/thumbnail_path חייבים
+-- להתחיל ב-{gallery_id}/ - ה-RLS על photos בודק רק gallery_id), מריצים גם את זה.
+-- NOT VALID: נאכף על כל insert/update מעכשיו, בלי לבדוק שורות קיימות (כדי שהמיגרציה
+-- לא תיכשל על שורה ישנה). אפשר לבדוק גם את הקיימות אחר כך עם VALIDATE CONSTRAINT.
+-- alter table photos drop constraint if exists photos_paths_in_gallery;
+-- alter table photos add constraint photos_paths_in_gallery check (
+--   starts_with(file_path, gallery_id::text || '/')
+--   and (thumbnail_path is null or starts_with(thumbnail_path, gallery_id::text || '/'))
+-- ) not valid;
+-- alter table delivered_photos drop constraint if exists delivered_photos_path_in_gallery;
+-- alter table delivered_photos add constraint delivered_photos_path_in_gallery
+--   check (starts_with(file_path, gallery_id::text || '/')) not valid;
+-- (אופציונלי, אחרי שבדקת שאין שורות חריגות:)
+-- alter table photos validate constraint photos_paths_in_gallery;
+-- alter table delivered_photos validate constraint delivered_photos_path_in_gallery;

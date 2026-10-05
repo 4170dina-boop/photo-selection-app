@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import { requireGallerySession } from '@/lib/gallerySession';
 import { checkGalleryWritable } from '@/lib/galleryAccess';
 import { downloadToBuffer } from '@/lib/r2';
+import { hasWatermarkedThumbnail } from '@/lib/uploadPolicy';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -100,8 +101,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: `הגעתם למגבלה היומית (${DAILY_LIMIT} הרצות) - נסו שוב מחר` }, { status: 429 });
   }
 
-  const { data: photos } = await supabaseAdmin.from('photos').select('id, file_path, thumbnail_path').eq('gallery_id', galleryId);
-  if (!photos || photos.length === 0) {
+  // רק תמונות שהלקוחה בפועל רואה (עם thumbnail מעובד) - ראו app/api/gallery/[id]/route.ts.
+  const { data: allPhotos } = await supabaseAdmin.from('photos').select('id, file_path, thumbnail_path').eq('gallery_id', galleryId);
+  const photos = (allPhotos ?? []).filter(hasWatermarkedThumbnail);
+  if (photos.length === 0) {
     return NextResponse.json({ error: 'אין עדיין תמונות בגלריה' }, { status: 400 });
   }
 
@@ -126,8 +129,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const prepared = await Promise.all(
     candidates.map(async (photo) => {
       try {
-        const path = photo.thumbnail_path ?? photo.file_path;
-        const buffer = await downloadToBuffer(path);
+        const buffer = await downloadToBuffer(photo.thumbnail_path as string);
         if (!buffer) return null;
         const small = await sharp(buffer)
           .rotate()

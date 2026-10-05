@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { getPresignedUploadUrl } from '@/lib/r2';
+import { buildFinalPhotoKey, validateUploadRequest } from '@/lib/uploadPolicy';
 
 // מקביל ל-.../photos/presign-upload/route.ts, אבל לתת-התיקייה final/ - מחליף
 // את ההעלאה הישירה של תמונות סופיות ב-handleUploadFinalPhotos
@@ -38,14 +39,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
-  const body = await req.json().catch(() => null);
-  const filename = typeof body?.filename === 'string' ? body.filename : '';
-  if (!filename) {
-    return NextResponse.json({ error: 'חסר שם קובץ' }, { status: 400 });
+  const validation = validateUploadRequest(await req.json().catch(() => null));
+  if (!validation.ok) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
   }
 
-  const path = `${params.id}/final/${crypto.randomUUID()}-${filename}`;
-  const uploadUrl = await getPresignedUploadUrl(path);
+  const path = buildFinalPhotoKey(gallery.id, crypto.randomUUID(), validation.ext);
+  const uploadUrl = await getPresignedUploadUrl(path, validation.contentType, validation.size);
 
-  return NextResponse.json({ path, uploadUrl });
+  return NextResponse.json({ path, uploadUrl, contentType: validation.contentType });
 }
