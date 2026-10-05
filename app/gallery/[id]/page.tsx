@@ -28,6 +28,17 @@ import {
   tapHintKey,
 } from '@/lib/galleryClient';
 import { extractAccessCode } from '@/lib/accessCodePaste';
+import {
+  computeTogetherFilters,
+  photoIdsForTogetherFilter,
+  onlyParticipantKey,
+  mergeOthersMarks,
+  newMarksByOthers,
+  newMarksToastText,
+  marksPollDelay,
+  MARKS_POLL_MS,
+  othersWhoSelected,
+} from '@/lib/choosingTogether';
 
 interface GalleryPageProps {
   params: { id: string };
@@ -277,7 +288,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
 
-  const [viewFilter, setViewFilter] = useState<'all' | 'selected' | 'maybe'>('all');
+  // 'all' | 'selected' | 'maybe', או סינון "בוחרים ביחד" (lib/choosingTogether.ts):
+  // 'together' | 'onlyMe' | 'only:<participantId>'
+  const [viewFilter, setViewFilter] = useState<string>('all');
+  // הודעה קופצת "🔔 יוסי סימן/ה 3 תמונות חדשות" מהסקר החי של הסימונים
+  const [othersToast, setOthersToast] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [compareMode, setCompareMode] = useState(false);
@@ -314,6 +329,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const flushAgainRef = useRef(false);
   // מתי נתוני הגלריה (וה-URLs החתומים, תוקף שעה) נטענו לאחרונה
   const lastFetchedAtRef = useRef<number | null>(null);
+  // הסימונים (של כולם) כפי שהשרת החזיר בפעם האחרונה - בסיס להשוואה "מה חדש"
+  // אצל האחרים בסקר החי (newMarksByOthers)
+  const othersMarksBaselineRef = useRef<Record<string, Mark[]> | null>(null);
   // רענון ברקע אחד בכל רגע + ניסיון אחד בלבד לכל תמונה שנכשלה בטעינה
   const silentRefreshRef = useRef<Promise<any> | null>(null);
   const imgErrorRetriedRef = useRef<Set<string>>(new Set());
@@ -548,6 +566,75 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myParticipant?.id]);
 
+  // "בוחרים ביחד": סקר חי של הסימונים של בני המשפחה האחרים (GET .../marks,
+  // בלי URLs של תמונות) כל ~20 שניות - רק כשהטאב גלוי, בהשהיה כשהוא מוסתר,
+  // ובהתרחקות (backoff) אחרי כשלים רצופים. הסימונים שלי לא נדרסים - נשארים
+  // מהמצב המקומי (אופטימי/תור אופליין), ראו mergeOthersMarks.
+  useEffect(() => {
+    if (!myParticipant || readOnly) return;
+    const myId = myParticipant.id;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let failures = 0;
+    let lastPollAt = Date.now(); // loadGallery בדיוק טען את הסימונים
+
+    function schedule(delay: number) {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(poll, delay);
+    }
+
+    async function poll() {
+      timer = null;
+      if (cancelled || document.visibilityState !== 'visible') return; // יתחדש ב-visibilitychange
+      lastPollAt = Date.now();
+      try {
+        const res = await fetch(`/api/gallery/${galleryId}/marks`, { cache: 'no-store' });
+        if (res.status === 401 || res.status === 410 || res.status === 428) return; // אין טעם להמשיך לסקור
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await res.json();
+        if (cancelled) return;
+        failures = 0;
+        const serverMarks = data.allMarks ?? {};
+        const fresh = newMarksByOthers(othersMarksBaselineRef.current ?? {}, serverMarks, myId);
+        othersMarksBaselineRef.current = serverMarks;
+        setAllMarks((prev) => mergeOthersMarks(prev, serverMarks, myId));
+        if (Array.isArray(data.participants)) setParticipants(data.participants);
+        const text = newMarksToastText(fresh);
+        if (text) setOthersToast(text);
+      } catch {
+        failures += 1;
+      }
+      if (!cancelled) schedule(marksPollDelay(failures));
+    }
+
+    function handleVisibility() {
+      if (document.visibilityState !== 'visible') {
+        if (timer) clearTimeout(timer);
+        timer = null;
+        return;
+      }
+      // חזרה לטאב: אם עבר מרווח מלא מאז הסקר האחרון - סוקרים מיד
+      const since = Date.now() - lastPollAt;
+      schedule(Math.max(0, marksPollDelay(failures) - since));
+    }
+
+    schedule(MARKS_POLL_MS);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myParticipant?.id, readOnly, galleryId]);
+
+  // ההודעה הקופצת נעלמת לבד אחרי כמה שניות
+  useEffect(() => {
+    if (!othersToast) return;
+    const t = setTimeout(() => setOthersToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [othersToast]);
+
   // ספירה לאחור ל"סיימתי לבחור" (ראו handleFinish/submitFinish/cancelFinish) -
   // מחושבת בכל טיק מול finishDeadline (timestamp מוחלט, ראו finishDeadlineKey
   // למעלה) ולא ע"י החסרת 1 כל שנייה, כי setInterval/setTimeout מוקפאים בדפדפני
@@ -691,6 +778,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setDeliveredPhotos(data.deliveredPhotos ?? []);
     setMyMarks(mergedMarks);
     setAllMarks(data.allMarks ?? {});
+    othersMarksBaselineRef.current = data.allMarks ?? {};
     setPackageInfo(data.package ?? null);
     setOwnerSelectedCount(Math.max(0, (data.ownerSelectedCount ?? 0) + (data.myParticipant?.isOwner ? selectedDelta : 0)));
     setExpiresAt(data.expiresAt ?? null);
@@ -1097,7 +1185,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 }}
                 style={{ ...outlineButtonStyle, width: '100%' }}
               >
-                לא, אני מישהי אחרת
+                לא, אני בן/בת משפחה או חבר/ה
               </button>
             </>
           ) : (
@@ -1110,7 +1198,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 type="text"
                 value={guestNameInput}
                 onChange={(e) => setGuestNameInput(e.target.value)}
-                placeholder="למשל: סבתא רותי"
+                placeholder="למשל: סבתא רותי / יוסי (בעלה)"
                 style={{ ...inputStyle, width: '100%', marginBottom: '0.75rem', textAlign: 'center' }}
                 maxLength={40}
                 autoFocus
@@ -1741,7 +1829,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const giftPhotos = photos.filter((p) => p.isGift);
   // סינון תצוגה בלבד ("הצג רק בחירות שלי") - לא נוגע בנתונים עצמם, רק
   // באיזה תת-קבוצה מוצגת בגריד. עוזר לסקור לפני "סיימתי לבחור" בגלריות גדולות.
-  const visiblePhotos = viewFilter === 'all' ? photos : photos.filter((p) => myStatuses[p.id] === viewFilter);
+  // "בוחרים ביחד" (lib/choosingTogether.ts) - הסינונים המשותפים מחושבים מחדש
+  // בכל רינדור, כך שהמספרים מתעדכנים מיד עם כל סימון שלי ועם כל סקר חי.
+  const together = computeTogetherFilters(photos.map((p) => p.id), myParticipant?.id, myStatuses, allMarks);
+  const togetherIds = together.show ? photoIdsForTogetherFilter(together, viewFilter) : null;
+  const visiblePhotos =
+    viewFilter === 'selected' || viewFilter === 'maybe'
+      ? photos.filter((p) => myStatuses[p.id] === viewFilter)
+      : togetherIds
+      ? photos.filter((p) => togetherIds.includes(p.id))
+      : photos;
   const owner = participants.find((p) => p.isOwner);
   const isOwner = myParticipant?.isOwner ?? false;
 
@@ -1846,7 +1943,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </span>
           {myParticipant && (
             <span style={{ color: theme.textFaint, fontSize: 12 }}>
-              מחוברת בתור {myParticipant.displayName}{isOwner ? '' : ' (אורחת)'}
+              מחובר/ת בתור {myParticipant.displayName}{isOwner ? '' : ' (משפחה)'}
             </span>
           )}
           <button
@@ -2631,6 +2728,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 )}
                 {!isOwner && myParticipant && <span>{' · '}הבחירות שלך (קלט בלבד): {mySelectedCount}</span>}
               </div>
+              {othersWhoSelected(allMarks[photo.id], myParticipant?.id).length > 0 && (
+                <div style={{ fontSize: 12, color: accent, textAlign: 'center' }}>
+                  💞 גם {othersWhoSelected(allMarks[photo.id], myParticipant?.id).join(', ')}{' '}
+                  {othersWhoSelected(allMarks[photo.id], myParticipant?.id).length === 1 ? 'בחר/ה' : 'בחרו'} בתמונה הזו
+                </div>
+              )}
 
               {canMark ? (
                 <div style={{ display: 'flex', gap: '0.75rem', width: '100%', maxWidth: 480 }}>
@@ -2919,12 +3022,21 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
       <div style={{ display: 'flex', gap: '0.5rem', padding: '0 1.5rem 0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
         {([
-          { key: 'all' as const, label: `הכל (${photos.length})` },
-          { key: 'selected' as const, label: `נבחרו (${mySelectedCount})` },
-          { key: 'maybe' as const, label: `אולי (${maybeCount})` },
+          { key: 'all', label: `הכל (${photos.length})` },
+          { key: 'selected', label: `נבחרו (${mySelectedCount})` },
+          { key: 'maybe', label: `אולי (${maybeCount})` },
+          // "בוחרים ביחד" - רק כשיש לפחות 2 משתתפים עם סימונים
+          ...(together.show
+            ? [
+                { key: 'together', label: `💞 כולם בחרו (${together.everyone.length})` },
+                ...together.onlyOthers.map((o) => ({ key: onlyParticipantKey(o.participantId), label: `רק ${o.displayName} (${o.photoIds.length})` })),
+                { key: 'onlyMe', label: `רק אני (${together.onlyMe.length})` },
+              ]
+            : []),
         ]).map((f) => (
           <button
             key={f.key}
+            aria-pressed={viewFilter === f.key}
             onClick={() => setViewFilter(f.key)}
             style={{
               ...outlineButtonStyle, padding: '0.3rem 0.9rem', fontSize: 12,
@@ -2936,6 +3048,32 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             {f.label}
           </button>
         ))}
+      </div>
+
+      {/* הודעה קופצת לא-חוסמת על סימונים חדשים של בני משפחה (הסקר החי) -
+          אזור ה-aria-live קיים תמיד כדי שקוראי מסך יכריזו על השינוי */}
+      <div
+        role="status"
+        aria-live="polite"
+        style={{
+          position: 'fixed', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 60,
+          maxWidth: 'calc(100vw - 32px)', pointerEvents: othersToast ? 'auto' : 'none',
+        }}
+      >
+        {othersToast && (
+          <button
+            type="button"
+            onClick={() => setOthersToast(null)}
+            title="סגירה"
+            style={{
+              background: 'rgba(15,22,38,0.95)', color: theme.text, border: `1px solid ${accent}`,
+              borderRadius: 20, padding: '0.45rem 1rem', fontSize: 13, cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+            }}
+          >
+            {othersToast}
+          </button>
+        )}
       </div>
 
       {visiblePhotos.length === 0 && (
@@ -3057,9 +3195,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   {othersMarks.map((m) => (
                     <span
                       key={m.participantId}
+                      role="img"
                       title={`${m.displayName}: ${m.status === 'selected' ? 'נבחר' : 'אולי'}`}
+                      aria-label={`${m.displayName}: ${m.status === 'selected' ? 'נבחר' : 'אולי'}`}
                       style={{
-                        width: 18, height: 18, borderRadius: '50%', fontSize: 10, fontWeight: 'bold',
+                        width: 22, height: 22, borderRadius: '50%', fontSize: 12, fontWeight: 'bold',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         background: m.status === 'selected' ? accent : theme.green,
                         color: m.status === 'selected' ? accentText : theme.goldText,
@@ -3076,7 +3216,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 <div
                   title="תמונת מתנה - כלולה אצלך אוטומטית, לא נספרת בחבילה ובלי תוספת תשלום"
                   style={{
-                    position: 'absolute', top: othersMarks.length > 0 ? 32 : 8, left: 8, zIndex: 1, pointerEvents: 'none',
+                    position: 'absolute', top: othersMarks.length > 0 ? 36 : 8, left: 8, zIndex: 1, pointerEvents: 'none',
                     background: accentSolid, color: accentText, fontSize: 12, fontWeight: 'bold',
                     padding: '4px 10px', borderRadius: 14, border: '1px solid rgba(255,255,255,0.45)',
                     boxShadow: '0 2px 8px rgba(0,0,0,0.35)', whiteSpace: 'nowrap',
