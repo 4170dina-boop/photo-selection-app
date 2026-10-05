@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import { israelEndOfDayIso } from '@/lib/israelTime';
+import ClientInviteMessageCopy from '@/components/ClientInviteMessageCopy';
 
 interface CreatedGallery {
   galleryId: string;
@@ -130,7 +131,7 @@ function NewGalleryForm() {
           </p>
         ) : (
           <p style={{ background: theme.warningBg, color: theme.warningText, padding: '0.6rem 1rem', borderRadius: 8, marginBottom: '1rem' }}>
-            לא הצלחנו לשלוח מייל אוטומטי (שירות המייל לא מוגדר או נכשל) - שלחי ללקוחה ידנית את הקישור והקוד:
+            המייל לא נשלח (שירות המייל לא מוגדר או נכשל) - אפשר להעתיק את ההודעה המעוצבת ולשלוח בעצמך (וואטסאפ/מייל):
           </p>
         )}
 
@@ -146,13 +147,21 @@ function NewGalleryForm() {
         </div>
 
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          {/* אותה הודעה מעוצבת כמו בדף עריכת הגלריה (טקסט לוואטסאפ + HTML לג'ימייל) */}
+          <ClientInviteMessageCopy
+            galleryId={created.galleryId}
+            accessCode={created.accessCode}
+            clientName={clientName}
+            expiresAt={expiresAt || null}
+            prominent
+          />
           <button
             onClick={async () => {
               await navigator.clipboard.writeText(`${galleryUrl}\nקוד גישה: ${created.accessCode}`);
               setCopied(true);
               setTimeout(() => setCopied(false), 2000);
             }}
-            style={goldButtonStyle}
+            style={outlineButtonStyle}
           >
             {copied ? 'הועתק!' : 'העתקת קישור וקוד'}
           </button>
