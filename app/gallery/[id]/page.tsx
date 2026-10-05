@@ -3,8 +3,25 @@
 import React, { useEffect, useRef, useState } from 'react';
 import JSZip from 'jszip';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
-import { toHebrewDateString } from '@/lib/hebrewDate';
 import { computePackageUsage } from '@/lib/gifts';
+import {
+  type PendingAction,
+  NOTE_MAX_LENGTH,
+  enqueueAction,
+  dropActionsAfterDirectSuccess,
+  reconcileQueueAfterFlush,
+  applyPendingToMarks,
+  queueHasPhoto,
+  planSwipeTap,
+  uniqueFileName,
+  normalizeAccessCode,
+  errorMessageFromBody,
+  accessCodeFallbackError,
+  hebrewDateInIsrael,
+  rtlArrowDelta,
+  isGalleryDataStale,
+  zipDownloadSummary,
+} from '@/lib/galleryClient';
 
 interface GalleryPageProps {
   params: { id: string };
@@ -102,11 +119,8 @@ function findNextUnmarkedIndex(queue: string[], fromIndex: number, isMarked: (id
 
 // תור פעולות ממתינות (localStorage) - כשהאינטרנט חלש/מנותק באירוע עצמו,
 // בחירה/הערה נשמרת מקומית ומסונכרנת אוטומטית ברגע שהחיבור חוזר, כדי שהלקוחה
-// תוכל להמשיך לדפדף ולבחור בלי לחכות לתשובת שרת על כל קליק.
-type PendingAction =
-  | { type: 'status'; photoId: string; status: 'maybe' | 'selected' | null }
-  | { type: 'note'; photoId: string; note: string };
-
+// תוכל להמשיך לדפדף ולבחור בלי לחכות לתשובת שרת על כל קליק. הלוגיקה הטהורה
+// (מיזוג/סדר/ניקוי) ב-lib/galleryClient.ts.
 function pendingQueueKey(galleryId: string, participantId: string): string {
   return `gallery_pending_${galleryId}_${participantId}`;
 }
@@ -114,14 +128,56 @@ function pendingQueueKey(galleryId: string, participantId: string): string {
 function loadPendingQueue(galleryId: string, participantId: string): PendingAction[] {
   if (typeof window === 'undefined') return [];
   try {
-    return JSON.parse(localStorage.getItem(pendingQueueKey(galleryId, participantId)) ?? '[]');
+    const parsed = JSON.parse(localStorage.getItem(pendingQueueKey(galleryId, participantId)) ?? '[]');
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
 function savePendingQueue(galleryId: string, participantId: string, queue: PendingAction[]) {
-  localStorage.setItem(pendingQueueKey(galleryId, participantId), JSON.stringify(queue));
+  try {
+    if (queue.length === 0) localStorage.removeItem(pendingQueueKey(galleryId, participantId));
+    else localStorage.setItem(pendingQueueKey(galleryId, participantId), JSON.stringify(queue));
+  } catch {
+    // אחסון חסום/מלא - אין מה לעשות מעבר לזה
+  }
+}
+
+// מעביר את הפוקוס לתוך חלון מודאלי כשהוא נפתח, ומחזיר אותו לאלמנט שהיה
+// בפוקוס לפני כן כשהוא נסגר (נגישות מקלדת/קורא מסך).
+function useModalFocus(open: boolean, ref: React.RefObject<HTMLElement>) {
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const el = ref.current;
+    if (el && !el.contains(document.activeElement)) {
+      el.focus({ preventScroll: true });
+    }
+    return () => {
+      if (previous && typeof previous.focus === 'function' && document.contains(previous)) {
+        previous.focus({ preventScroll: true });
+      }
+    };
+  }, [open, ref]);
+}
+
+// תמונה שעוד לא עובדה (אין גרסה מוקטנת/עם סימן מים) - placeholder ניטרלי,
+// אף פעם לא המקור.
+function ProcessingPlaceholder({ height }: { height?: number | string }) {
+  return (
+    <div
+      role="img"
+      aria-label="התמונה בעיבוד"
+      style={{
+        width: '100%', height: height ?? undefined, aspectRatio: height ? undefined : '4 / 3',
+        background: theme.panelInput, color: theme.textFaint, fontSize: 13,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      בעיבוד...
+    </div>
+  );
 }
 
 // יעד הספירה לאחור של "סיימתי לבחור" (ראו FINISH_UNDO_SECONDS למעלה), נשמר
@@ -158,6 +214,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [deliveredPhotos, setDeliveredPhotos] = useState<DeliveredPhoto[]>([]);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [zipMessage, setZipMessage] = useState('');
   const [myMarks, setMyMarks] = useState<Record<string, { status: 'maybe' | 'selected'; note: string | null; photographerReply: string | null }>>({});
   const [allMarks, setAllMarks] = useState<Record<string, Mark[]>>({});
   const [packageInfo, setPackageInfo] = useState<{ included: number; extraPrice: number; basePrice: number } | null>(null);
@@ -172,8 +229,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // לבדו, כי הצלמת יכולה לפתוח מחדש (reopenedForSelectionAt) בלי שהסטטוס
   // עצמו משתנה. כל המקומות למטה שבעבר בדקו galleryStatus === 'completed' כדי
   // לנעול עריכה עברו ל-isLocked/!isLocked.
-  const isLocked = galleryStatus === 'completed' && !reopenedForSelectionAt;
+  // readOnly (מה-API): תקופת הבחירה הסתיימה, אבל יש תמונות שנמסרו / הגלריה
+  // הושלמה - מציגים צפייה והורדות בלבד, בלי שום פקד בחירה.
+  const [readOnly, setReadOnly] = useState(false);
+  const isLocked = readOnly || (galleryStatus === 'completed' && !reopenedForSelectionAt);
   const [finishing, setFinishing] = useState(false);
+  // שליחת "סיימתי" נכשלה (שרת/רשת/שינויים שלא סונכרנו) - מציגים כפתור "נסי שוב"
+  const [finishFailed, setFinishFailed] = useState(false);
   const [finishCountdown, setFinishCountdown] = useState<number | null>(null);
   // ה-timestamp המוחלט שממנו finishCountdown מחושב בכל טיק (ראו finishDeadlineKey
   // למעלה, וה-useEffect שמאזין לזה למטה) - null כשאין ספירה פעילה.
@@ -212,9 +274,29 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [swipeQueue, setSwipeQueue] = useState<string[]>([]);
   const [swipeCursor, setSwipeCursor] = useState(0);
   const [swipePass, setSwipePass] = useState<1 | 2>(1);
+  // ref מקביל ל-swipeCursor - הקשות מהירות רצופות קוראות אותו לפני רינדור מחדש
+  const swipeCursorRef = useRef(0);
+  // תמונות שבקשת סימון עליהן מ"בחירה מהירה" עדיין בדרך
+  const swipeInFlightRef = useRef<Set<string>>(new Set());
   const [enlargedId, setEnlargedId] = useState<string | null>(null);
   const [zoomScale, setZoomScale] = useState(1);
   const enlargedImgRef = useRef<HTMLImageElement | null>(null);
+
+  // מניעת flush כפול במקביל (interval + online + קריאה ידנית)
+  const flushInFlightRef = useRef(false);
+  // פעולה נכנסה לתור בזמן flush - להריץ עוד סבב בסופו
+  const flushAgainRef = useRef(false);
+  // מתי נתוני הגלריה (וה-URLs החתומים, תוקף שעה) נטענו לאחרונה
+  const lastFetchedAtRef = useRef<number | null>(null);
+  // רענון ברקע אחד בכל רגע + ניסיון אחד בלבד לכל תמונה שנכשלה בטעינה
+  const silentRefreshRef = useRef<Promise<any> | null>(null);
+  const imgErrorRetriedRef = useRef<Set<string>>(new Set());
+
+  const enlargedDialogRef = useRef<HTMLDivElement>(null);
+  const slideshowDialogRef = useRef<HTMLDivElement>(null);
+  const swipeDialogRef = useRef<HTMLDivElement>(null);
+  const compareDialogRef = useRef<HTMLDivElement>(null);
+  const noteDialogRef = useRef<HTMLDivElement>(null);
 
   // מצב סקירה ברצף (סליידשואו) - עמדה נפרדת לגמרי ממצב ההגדלה (enlargedId):
   // דפדוף לפי סדר photos, לא לפי enlargedId, כדי שאפשר יהיה להשאיר את
@@ -270,12 +352,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   }, [enlargedId]);
 
   // ניווט בין תמונות עם מקשי חצים, ו-Escape לסגירה - עובד רק כשמצב ההגדלה פתוח.
+  // RTL: כפתור "הבאה" משמאל, אז חץ שמאלה = הבאה (rtlArrowDelta).
   useEffect(() => {
     if (!enlargedId) return;
 
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'ArrowRight') navigateEnlarged(1);
-      else if (e.key === 'ArrowLeft') navigateEnlarged(-1);
+      const delta = rtlArrowDelta(e.key);
+      if (delta !== 0) navigateEnlarged(delta);
       else if (e.key === 'Escape') setEnlargedId(null);
     }
 
@@ -290,8 +373,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (!slideshowActive) return;
 
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'ArrowRight') navigateSlideshow(1);
-      else if (e.key === 'ArrowLeft') navigateSlideshow(-1);
+      const delta = rtlArrowDelta(e.key);
+      if (delta !== 0) navigateSlideshow(delta);
       else if (e.key === 'Escape') setSlideshowActive(false);
     }
 
@@ -299,6 +382,24 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slideshowActive]);
+
+  // Escape סוגר את חלון ההערה / תצוגת ההשוואה
+  useEffect(() => {
+    if (!noteEditingId && !compareViewOpen) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return;
+      if (noteEditingId) setNoteEditingId(null);
+      else setCompareViewOpen(false);
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [noteEditingId, compareViewOpen]);
+
+  useModalFocus(!!enlargedId, enlargedDialogRef);
+  useModalFocus(slideshowActive, slideshowDialogRef);
+  useModalFocus(swipeMode, swipeDialogRef);
+  useModalFocus(compareViewOpen, compareDialogRef);
+  useModalFocus(!!noteEditingId, noteDialogRef);
 
   // חצים ל"בחירה מהירה" - מוסכמה מוכרת מאפליקציות סוויפ (ימינה=כן, שמאלה=לא):
   // ימינה=👍 בחרי, שמאלה=👎 דילוג, למטה/רווח=🤔 אולי. הכפתורים על המסך נשארים
@@ -312,9 +413,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         return;
       }
       if (swipeCursor >= swipeQueue.length) return; // מסך הסיכום - רק Escape רלוונטי
-      if (e.key === 'ArrowRight') handleSwipeAction('selected');
-      else if (e.key === 'ArrowLeft') handleSwipeAction(null);
-      else if (e.key === 'ArrowDown' || e.key === ' ') handleSwipeAction('maybe');
+      let choice: 'skip' | 'maybe' | 'selected' | null = null;
+      if (e.key === 'ArrowRight') choice = 'selected';
+      else if (e.key === 'ArrowLeft') choice = 'skip';
+      else if (e.key === 'ArrowDown' || e.key === ' ') choice = 'maybe';
+      if (!choice) return;
+      e.preventDefault(); // רווח על כפתור בפוקוס היה מפעיל גם את הכפתור עצמו
+      handleSwipeAction(choice);
     }
 
     window.addEventListener('keydown', handleSwipeKeyDown);
@@ -345,6 +450,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [authorized, setAuthorized] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [codeInput, setCodeInput] = useState('');
+  const [submittingCode, setSubmittingCode] = useState(false);
   const [authError, setAuthError] = useState('');
   const [actionError, setActionError] = useState('');
 
@@ -369,13 +475,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   useEffect(() => {
     if (!myParticipant) return;
     setPendingCount(loadPendingQueue(galleryId, myParticipant.id).length);
-    flushPendingQueue();
+    const flush = () => {
+      flushPendingQueue();
+    };
+    flush();
 
-    window.addEventListener('online', flushPendingQueue);
-    const interval = setInterval(flushPendingQueue, 20000);
+    window.addEventListener('online', flush);
+    const interval = setInterval(flush, 20000);
 
     return () => {
-      window.removeEventListener('online', flushPendingQueue);
+      window.removeEventListener('online', flush);
       clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -427,80 +536,186 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myParticipant?.id]);
 
+  // ה-URLs החתומים של התמונות תקפים שעה - טאב שחוזר לפוקוס אחרי זמן רב
+  // מרענן את נתוני הגלריה ברקע (בלי מסך טעינה) כדי לקבל חתימות חדשות.
+  useEffect(() => {
+    if (!authorized) return;
+    function handleVisibility() {
+      if (document.visibilityState !== 'visible') return;
+      if (isGalleryDataStale(lastFetchedAtRef.current, Date.now())) {
+        refreshGallerySilently();
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authorized]);
+
   // הטעינה עצמה היא גם בדיקת האימות: העוגייה httpOnly ולא ניתנת לקריאה
   // מ-JS, אז אי אפשר "לבדוק אם קיימת" מראש - פשוט מנסים לטעון, ו-401 אומר שצריך קוד גישה.
-  async function loadGallery() {
-    setLoading(true);
-    setCheckingAuth(true);
+  //
+  // silent: רענון ברקע (חתימות שפגו, אחרי סנכרון תור/AI) - בלי מסך טעינה,
+  // בלי לשנות מצב אימות על כשל, בלי שער פתיחה ובלי checkPendingFinish.
+  // מחזירה את הנתונים שנטענו (או null), כדי שהורדה תוכל לנסות שוב עם URL טרי.
+  async function loadGallery(options: { silent?: boolean } = {}): Promise<any | null> {
+    const silent = !!options.silent;
+    if (!silent) {
+      setLoading(true);
+      setCheckingAuth(true);
+    }
 
     let res: Response;
     try {
-      res = await fetch(`/api/gallery/${galleryId}`);
+      res = await fetch(`/api/gallery/${galleryId}`, { cache: 'no-store' });
     } catch {
-      setAuthError('אין חיבור לאינטרנט. בדקי את החיבור ונסי שוב.');
-      setCheckingAuth(false);
-      setLoading(false);
-      return;
+      if (!silent) {
+        setAuthError('אין חיבור לאינטרנט. בדקי את החיבור ונסי שוב.');
+        setCheckingAuth(false);
+        setLoading(false);
+      }
+      return null;
     }
 
     if (res.status === 401) {
       setAuthorized(false);
       setCheckingAuth(false);
       setLoading(false);
-      return;
+      return null;
     }
 
     if (!res.ok) {
-      setActionError('שגיאה בטעינת הגלריה. נסי לרענן.');
-      setCheckingAuth(false);
-      setLoading(false);
-      return;
+      if (!silent) {
+        const body = await res.json().catch(() => null);
+        setActionError(
+          res.status === 410
+            ? errorMessageFromBody(body, 'תוקף הגלריה פג')
+            : 'שגיאה בטעינת הגלריה. נסי לרענן.'
+        );
+        setCheckingAuth(false);
+        setLoading(false);
+      }
+      return null;
     }
 
-    const data = await res.json();
+    let data: any;
+    try {
+      data = await res.json();
+    } catch {
+      if (!silent) {
+        setActionError('שגיאה בטעינת הגלריה. נסי לרענן.');
+        setCheckingAuth(false);
+        setLoading(false);
+      }
+      return null;
+    }
     setAuthorized(true);
+    lastFetchedAtRef.current = Date.now();
 
     if (data.needsIdentity) {
       setNeedsIdentity(true);
       setRegisteredName(data.registeredName ?? null);
+      setDeliveredPhotos(data.deliveredPhotos ?? []);
       setCheckingAuth(false);
       setLoading(false);
-      return;
+      return data;
     }
+
+    // מעל תשובת השרת מחילים את מה שעוד ממתין בתור האופליין - אחרת רענון
+    // "מעלים" בחירות שעוד לא נשלחו (ראו applyPendingToMarks).
+    const participantId: string | undefined = data.myParticipant?.id;
+    const pending = participantId ? loadPendingQueue(galleryId, participantId) : [];
+    const giftIds = new Set<string>((data.photos ?? []).filter((p: GalleryPhoto) => p.isGift).map((p: GalleryPhoto) => p.id));
+    const { marks: mergedMarks, selectedDelta } = applyPendingToMarks(data.myMarks ?? {}, pending, (id) => giftIds.has(id));
+    const serverReadOnly = !!data.readOnly;
 
     setNeedsIdentity(false);
     setPhotos(data.photos ?? []);
     setDeliveredPhotos(data.deliveredPhotos ?? []);
-    setMyMarks(data.myMarks ?? {});
+    setMyMarks(mergedMarks);
     setAllMarks(data.allMarks ?? {});
     setPackageInfo(data.package ?? null);
-    setOwnerSelectedCount(data.ownerSelectedCount ?? 0);
+    setOwnerSelectedCount(Math.max(0, (data.ownerSelectedCount ?? 0) + (data.myParticipant?.isOwner ? selectedDelta : 0)));
     setExpiresAt(data.expiresAt ?? null);
     setGalleryStatus(data.status ?? 'sent');
     setReopenedForSelectionAt(data.reopenedForSelectionAt ?? null);
+    setReadOnly(serverReadOnly);
     setBrandColor(data.brandColor ?? null);
     setPhotographerName(data.photographerName ?? null);
     setPhotographerLogo(data.photographerLogo ?? null);
     setMyParticipant(data.myParticipant ?? null);
     setParticipants(data.participants ?? []);
+    if (participantId) setPendingCount(pending.length);
 
-    // ממשיכה/משלימה ספירת "סיימתי לבחור" שאולי נשארה תלויה מהפעלה קודמת של
-    // העמוד (טאב שנסגר/הוקפא לפני שהספירה הספיקה להסתיים) - ראו checkPendingFinish.
-    if (data.myParticipant) {
-      // נעילה בפועל (לא status לבד) - גלריה שנפתחה מחדש היא completed אבל לא
-      // נעולה, וספירה ממתינה בה צריכה להמשיך ולא להימחק.
-      checkPendingFinish(data.myParticipant.id, data.status === 'completed' && !data.reopenedForSelectionAt);
+    if (!silent) {
+      // ממשיכה/משלימה ספירת "סיימתי לבחור" שאולי נשארה תלויה מהפעלה קודמת של
+      // העמוד (טאב שנסגר/הוקפא לפני שהספירה הספיקה להסתיים) - ראו checkPendingFinish.
+      if (data.myParticipant) {
+        // נעילה בפועל (לא status לבד) - גלריה שנפתחה מחדש היא completed אבל לא
+        // נעולה, וספירה ממתינה בה צריכה להמשיך ולא להימחק. readOnly = נעולה.
+        checkPendingFinish(
+          data.myParticipant.id,
+          serverReadOnly || (data.status === 'completed' && !data.reopenedForSelectionAt)
+        );
+      }
+
+      // שער פתיחה: מוצג פעם אחת לכל משתתף/ת בכל גלריה (נשמר ב-localStorage,
+      // לא ב-DB - זו רק נוחות תצוגה, לא מידע קריטי ששווה טבלה/עמודה בשבילו).
+      // לא במצב צפייה בלבד - "הגלריה מוכנה לבחירה" כבר לא נכון.
+      if (typeof window !== 'undefined' && data.myParticipant && !serverReadOnly) {
+        const seenKey = `gallery_welcome_seen_${galleryId}_${data.myParticipant.id}`;
+        try {
+          setShowWelcome(!localStorage.getItem(seenKey));
+        } catch {
+          setShowWelcome(false);
+        }
+      } else {
+        setShowWelcome(false);
+      }
+
+      setCheckingAuth(false);
+      setLoading(false);
     }
+    return data;
+  }
 
-    // שער פתיחה: מוצג פעם אחת לכל משתתף/ת בכל גלריה (נשמר ב-localStorage,
-    // לא ב-DB - זו רק נוחות תצוגה, לא מידע קריטי ששווה טבלה/עמודה בשבילו).
-    if (typeof window !== 'undefined' && data.myParticipant) {
-      const seenKey = `gallery_welcome_seen_${galleryId}_${data.myParticipant.id}`;
-      setShowWelcome(!localStorage.getItem(seenKey));
+  // רענון ברקע אחד בכל פעם - קריאות מקבילות (כמה תמונות שנכשלו יחד) מקבלות את אותה הבטחה.
+  function refreshGallerySilently(): Promise<any | null> {
+    if (silentRefreshRef.current) return silentRefreshRef.current;
+    const p = loadGallery({ silent: true }).finally(() => {
+      silentRefreshRef.current = null;
+    });
+    silentRefreshRef.current = p;
+    return p;
+  }
+
+  // תמונה שנכשלה בטעינה (כנראה חתימה שפגה) - רענון אחד לכל תמונה, לא לולאה.
+  function handleImageError(photoId: string) {
+    if (imgErrorRetriedRef.current.has(photoId)) return;
+    imgErrorRetriedRef.current.add(photoId);
+    refreshGallerySilently();
+  }
+
+  function triggerBlobDownload(blob: Blob, filename: string) {
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // שחרור מיידי עלול לבטל את ההורדה בחלק מהדפדפנים (בעיקר Safari/Firefox)
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+  }
+
+  async function fetchBlobOk(url: string | null): Promise<Blob | null> {
+    if (!url) return null;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      return await res.blob();
+    } catch {
+      return null;
     }
-
-    setCheckingAuth(false);
-    setLoading(false);
   }
 
   // signed URL הוא cross-origin ל-Supabase (בניגוד לתמונות הבחירה, שרק נצפות
@@ -508,21 +723,21 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // לקשר אליו. fetch ל-blob + createObjectURL + קליק תכנותי, בדיוק כמו
   // handleZipDownload ב-components/MagicButton.tsx.
   async function handleDownloadDeliveredPhoto(photo: DeliveredPhoto) {
-    if (!photo.url) return;
     setDownloadingId(photo.id);
     try {
-      const res = await fetch(photo.url);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = photo.filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      setActionError('הורדת התמונה נכשלה, נסי שוב');
+      let blob = await fetchBlobOk(photo.url);
+      if (!blob) {
+        // כנראה חתימה שפגה (תוקף שעה) - מרעננים את ה-URLs ומנסים פעם אחת נוספת
+        const fresh = await refreshGallerySilently();
+        const freshUrl = (fresh?.deliveredPhotos as DeliveredPhoto[] | undefined)?.find((p) => p.id === photo.id)?.url ?? null;
+        blob = await fetchBlobOk(freshUrl);
+      }
+      if (!blob) {
+        setActionError('הורדת התמונה נכשלה, נסי שוב');
+        return;
+      }
+      setActionError('');
+      triggerBlobDownload(blob, photo.filename);
     } finally {
       setDownloadingId(null);
     }
@@ -530,24 +745,45 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   async function handleDownloadAllDelivered() {
     setDownloadingZip(true);
+    setZipMessage('');
     try {
       const zip = new JSZip();
+      const usedNames = new Set<string>();
+      const total = deliveredPhotos.length;
+      let done = 0;
+      const failed: DeliveredPhoto[] = [];
+
       for (const photo of deliveredPhotos) {
-        if (!photo.url) continue;
-        const res = await fetch(photo.url);
-        if (!res.ok) continue;
-        zip.file(photo.filename, await res.blob());
+        const blob = await fetchBlobOk(photo.url);
+        if (!blob) {
+          failed.push(photo);
+          continue;
+        }
+        zip.file(uniqueFileName(photo.filename, usedNames), blob);
+        done++;
+      }
+
+      // ניסיון חוזר אחד לכושלות, עם URLs טריים (חתימה שפגה באמצע הורדה ארוכה)
+      if (failed.length > 0) {
+        const fresh = await refreshGallerySilently();
+        const freshById = new Map(((fresh?.deliveredPhotos as DeliveredPhoto[] | undefined) ?? []).map((p) => [p.id, p.url]));
+        for (const photo of failed) {
+          const blob = await fetchBlobOk(freshById.get(photo.id) ?? null);
+          if (!blob) continue;
+          zip.file(uniqueFileName(photo.filename, usedNames), blob);
+          done++;
+        }
+      }
+
+      if (done === 0) {
+        setActionError('הכנת ה-ZIP נכשלה, נסי שוב');
+        return;
       }
 
       const blob = await zip.generateAsync({ type: 'blob' });
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = 'תמונות-סופיות.zip';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(blobUrl);
+      triggerBlobDownload(blob, 'תמונות-סופיות.zip');
+      setActionError('');
+      setZipMessage(done < total ? `${zipDownloadSummary(done, total)} - נסי שוב כדי להוריד את השאר` : zipDownloadSummary(done, total));
     } catch {
       setActionError('הכנת ה-ZIP נכשלה, נסי שוב');
     } finally {
@@ -564,19 +800,39 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   async function handleSubmitCode(e: React.FormEvent) {
     e.preventDefault();
+    if (submittingCode) return;
+    const code = normalizeAccessCode(codeInput);
+    if (!code) {
+      setAuthError('הזיני את קוד הגישה');
+      return;
+    }
     setAuthError('');
+    setSubmittingCode(true);
 
-    const res = await fetch('/api/verify-access', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ galleryId, accessCode: codeInput.trim() }),
-    });
+    try {
+      let res: Response;
+      try {
+        res = await fetch('/api/verify-access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ galleryId, accessCode: code }),
+        });
+      } catch {
+        setAuthError('אין חיבור לאינטרנט. בדקי את החיבור ונסי שוב.');
+        return;
+      }
 
-    if (res.ok) {
-      await loadGallery();
-    } else {
-      const data = await res.json();
-      setAuthError(data.error ?? 'שגיאה באימות');
+      if (res.ok) {
+        await loadGallery();
+        return;
+      }
+      // 429/503 וכו' - השרת מחזיר JSON עם error, אבל דף שגיאה של פרוקסי לא יהיה JSON
+      const body = await res.json().catch(() => null);
+      setAuthError(errorMessageFromBody(body, accessCodeFallbackError(res.status)));
+    } catch {
+      setAuthError('שגיאה באימות, נסי שוב');
+    } finally {
+      setSubmittingCode(false);
     }
   }
 
@@ -623,10 +879,22 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             onChange={(e) => setCodeInput(e.target.value)}
             style={{ ...inputStyle, width: '100%', marginBottom: '0.75rem', textAlign: 'center', fontSize: 18, letterSpacing: 1 }}
             aria-describedby={authError ? 'access-code-error' : undefined}
+            aria-invalid={authError ? true : undefined}
+            autoCapitalize="characters"
+            autoCorrect="off"
+            autoComplete="one-time-code"
+            spellCheck={false}
+            dir="ltr"
+            disabled={submittingCode}
             autoFocus
           />
-          <button type="submit" style={{ ...goldButtonStyle, width: '100%' }}>
-            כניסה לגלריה
+          <button
+            type="submit"
+            disabled={submittingCode}
+            aria-busy={submittingCode}
+            style={{ ...goldButtonStyle, width: '100%', opacity: submittingCode ? 0.6 : 1 }}
+          >
+            {submittingCode ? 'בודקת...' : 'כניסה לגלריה'}
           </button>
           {authError && (
             <p id="access-code-error" role="alert" style={{ background: theme.errorBg, color: theme.errorText, padding: '0.6rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
@@ -723,45 +991,87 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   function enqueuePendingAction(action: PendingAction) {
     if (!myParticipant) return;
-    // מחליף פעולה קודמת על אותה תמונה מאותו סוג - רק המצב האחרון חשוב,
-    // לא כל קליק ביניים כשמנתקים ומחזירים חיבור כמה פעמים
-    const queue = loadPendingQueue(galleryId, myParticipant.id).filter(
-      (a) => !(a.type === action.type && a.photoId === action.photoId)
-    );
-    queue.push(action);
+    // מחליף פעולה קודמת על אותה תמונה מאותו סוג (רק המצב האחרון חשוב), ושומר
+    // סטטוס לפני הערה של אותה תמונה - ראו enqueueAction. נקרא מחדש מהאחסון
+    // ממש לפני השמירה, כדי לא לדרוס פעולות שנוספו בינתיים.
+    const queue = enqueueAction(loadPendingQueue(galleryId, myParticipant.id), action);
     savePendingQueue(galleryId, myParticipant.id, queue);
     setPendingCount(queue.length);
   }
 
-  async function flushPendingQueue() {
+  // אחרי שליחה ישירה מוצלחת - פעולות ישנות על אותה תמונה שעדיין בתור כבר
+  // לא רלוונטיות (ואם יישלחו אחר כך ידרסו את המצב החדש).
+  function dropQueuedAfterDirectSuccess(action: PendingAction) {
     if (!myParticipant) return;
-    const queue = loadPendingQueue(galleryId, myParticipant.id);
-    if (queue.length === 0) return;
-
-    let stoppedAt = queue.length;
-    let hadServerError = false;
-    for (let i = 0; i < queue.length; i++) {
-      const result = await postAction(queue[i]);
-      if (result === 'network-error') {
-        stoppedAt = i; // עדיין בלי חיבור - עוצרים כאן, מנסים שוב בפעם הבאה
-        break;
-      }
-      if (result === 'server-error') {
-        hadServerError = true; // לא ניתוק אלא דחייה אמיתית (למשל הגלריה כבר ננעלה) - לא מנסים שוב, אבל צריך לבטל את העדכון האופטימי ולהודיע
-      }
-      // 'ok' - לא מנסים שוב את אותה פעולה
+    const stored = loadPendingQueue(galleryId, myParticipant.id);
+    const next = dropActionsAfterDirectSuccess(stored, action);
+    if (next.length !== stored.length) {
+      savePendingQueue(galleryId, myParticipant.id, next);
+      setPendingCount(next.length);
     }
-    const remaining = queue.slice(stoppedAt);
-    savePendingQueue(galleryId, myParticipant.id, remaining);
-    setPendingCount(remaining.length);
+  }
+
+  // שולחת את התור לפי הסדר. מחזירה כמה פעולות עוד ממתינות בסוף.
+  // participantIdOverride - כשנקראת מתוך loadGallery/submitFinish לפני
+  // שסטייט ה-myParticipant התעדכן.
+  async function flushPendingQueue(participantIdOverride?: string): Promise<number> {
+    const participantId = participantIdOverride ?? myParticipant?.id;
+    if (!participantId) return 0;
+    if (flushInFlightRef.current) {
+      flushAgainRef.current = true;
+      return loadPendingQueue(galleryId, participantId).length;
+    }
+    flushInFlightRef.current = true;
+
+    let hadServerError = false;
+    let anyProcessed = false;
+    let remaining: PendingAction[] = [];
+    try {
+      // כמה סבבים - פעולות שנכנסו לתור בזמן ה-flush נשלחות באותה ריצה
+      for (let pass = 0; pass < 5; pass++) {
+        flushAgainRef.current = false;
+        const snapshot = loadPendingQueue(galleryId, participantId);
+        if (snapshot.length === 0) {
+          remaining = [];
+          break;
+        }
+
+        const processed: PendingAction[] = [];
+        let networkError = false;
+        for (const action of snapshot) {
+          const result = await postAction(action);
+          if (result === 'network-error') {
+            networkError = true; // עדיין בלי חיבור - עוצרים כאן, מנסים שוב בפעם הבאה
+            break;
+          }
+          // 'server-error' - דחייה אמיתית (למשל הגלריה כבר ננעלה): לא מנסים
+          // שוב, אבל צריך לרענן את המסך ולהודיע. 'ok' - בוצע.
+          if (result === 'server-error') hadServerError = true;
+          processed.push(action);
+        }
+
+        // קוראים שוב מהאחסון וממזגים - לא דורסים פעולות שנוספו/הוחלפו בזמן השליחה
+        remaining = reconcileQueueAfterFlush(loadPendingQueue(galleryId, participantId), processed);
+        savePendingQueue(galleryId, participantId, remaining);
+        setPendingCount(remaining.length);
+        if (processed.length > 0) anyProcessed = true;
+
+        if (networkError || remaining.length === 0 || !flushAgainRef.current) break;
+      }
+    } finally {
+      flushInFlightRef.current = false;
+    }
 
     if (hadServerError) {
       // לפעולות בתור אין את המצב "לפני" (current) כמו ב-setPhotoStatus, אז אי
-      // אפשר לבטל בדיוק את אותה פעולה עם applyStatusChange - במקום זאת טוענים
-      // מחדש את כל הגלריה מהשרת, כדי שהמסך יחזור להיות אמת אחת עם מה שבאמת נשמר.
-      await loadGallery();
+      // אפשר לבטל בדיוק את אותה פעולה - טוענים מחדש מהשרת (ברקע, בלי מסך טעינה).
+      await refreshGallerySilently();
       setActionError('חלק מהבחירות שביצעת במצב אופליין לא נשמרו - ייתכן שהגלריה כבר ננעלה');
+    } else if (anyProcessed) {
+      // סנכרון הצליח - טוענים מחדש סימונים ומונים מהשרת (אמת אחת)
+      await refreshGallerySilently();
     }
+    return remaining.length;
   }
 
   // תמונת מתנה כבר כלולה אוטומטית - לא מסמנים אותה (השרת גם דוחה, ראו
@@ -825,10 +1135,21 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     applyStatusChange(photoId, next, current);
 
-    const result = await postAction({ type: 'status', photoId, status: next });
+    const action: PendingAction = { type: 'status', photoId, status: next };
+
+    // flush באמצע, או שיש כבר פעולות ממתינות לאותה תמונה - נכנסים לתור כדי
+    // לשמור על הסדר (אחרת פעולה ישנה מהתור עלולה להגיע לשרת אחרי החדשה).
+    if (flushInFlightRef.current || queueHasPhoto(loadPendingQueue(galleryId, myParticipant.id), photoId)) {
+      enqueuePendingAction(action);
+      setActionError('');
+      flushPendingQueue();
+      return;
+    }
+
+    const result = await postAction(action);
 
     if (result === 'network-error') {
-      enqueuePendingAction({ type: 'status', photoId, status: next });
+      enqueuePendingAction(action);
       setActionError('');
       return;
     }
@@ -837,6 +1158,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       setActionError('העדכון לא נשמר, נסי שוב.');
       return;
     }
+    dropQueuedAfterDirectSuccess(action);
     setActionError('');
   }
 
@@ -864,12 +1186,32 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (finishInFlightRef.current) return;
     finishInFlightRef.current = true;
     setFinishing(true);
+    setFinishFailed(false);
+
+    // לא שולחים "סיימתי" כשיש בחירות שעוד לא הגיעו לשרת - קודם מסנכרנים,
+    // ואם עדיין נשאר משהו בתור (אין חיבור) עוצרים ומציגים הודעה + "נסי שוב".
+    // הרשומה ב-localStorage נשארת, כך שהשליחה תושלם אוטומטית בחזרה לפוקוס.
+    const pendingParticipantId = participantIdForCleanup ?? myParticipant?.id;
+    if (pendingParticipantId && loadPendingQueue(galleryId, pendingParticipantId).length > 0) {
+      const stillPending = await flushPendingQueue(pendingParticipantId);
+      if (stillPending > 0) {
+        finishInFlightRef.current = false;
+        setFinishing(false);
+        setFinishCountdown(null);
+        setFinishFailed(true);
+        setActionError('יש בחירות שעוד לא נשמרו (אין חיבור) - הבחירה תישלח כשהחיבור יחזור, או נסי שוב.');
+        return;
+      }
+    }
+
     let res: Response;
     try {
       res = await fetch(`/api/gallery/${galleryId}/finish`, { method: 'POST' });
     } catch {
       finishInFlightRef.current = false;
       setFinishing(false);
+      setFinishCountdown(null);
+      setFinishFailed(true);
       setActionError('אין חיבור לאינטרנט כרגע - נסי שוב כשהחיבור יחזור.');
       // לא מנקים את ה-localStorage כאן - זו לא כשלון סופי, רק ניתוק. הרשומה
       // נשארת, וה"סיימתי לבחור" יושלם אוטומטית בפעם הבאה שהעמוד ייטען או
@@ -887,11 +1229,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
 
     if (!res.ok) {
-      setActionError('שליחת הבחירה נכשלה, נסי שוב.');
+      const body = await res.json().catch(() => null);
+      setFinishCountdown(null);
+      setFinishFailed(true);
+      setActionError(errorMessageFromBody(body, 'שליחת הבחירה נכשלה, נסי שוב.'));
       return;
     }
 
     setActionError('');
+    setFinishCountdown(null);
+    setFinishFailed(false);
     setGalleryStatus('completed');
     // סיום אחרי פתיחה מחדש: השרת מנקה את reopened_for_selection_at - מסנכרנים
     // כדי ש-isLocked יחזור להיות true מיד.
@@ -932,6 +1279,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (myParticipant) {
       saveFinishDeadline(galleryId, myParticipant.id, deadline);
     }
+    setFinishFailed(false);
     setFinishCountdown(FINISH_UNDO_SECONDS);
     setFinishDeadline(deadline);
   }
@@ -942,6 +1290,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
     setFinishDeadline(null);
     setFinishCountdown(null);
+    setFinishFailed(false);
   }
 
   async function clearAllSelections() {
@@ -979,9 +1328,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
   }
 
-  // ה-API כבר שמר את הסימונים בשרת (app/api/gallery/[id]/ai-picks) - כאן רק
-  // מעדכנים את המסך המקומי לפי מה שחזר, בלי לקרוא שוב ל-setPhotoStatus (זה
-  // היה שולח בקשת רשת נוספת לכל תמונה, מיותר כשהשרת כבר עשה את זה בבת אחת).
+  // ה-API כבר שמר את הסימונים בשרת (app/api/gallery/[id]/ai-picks) - בלי
+  // setPhotoStatus לכל תמונה (בקשת רשת מיותרת לכל אחת); אחרי הריצה טוענים
+  // מחדש מהשרת את הסימונים והמונים.
   async function handleAiPicks() {
     if (!myParticipant || isLocked || aiPicksRunning) return;
 
@@ -1005,10 +1354,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       return;
     }
 
-    const data = await res.json();
-    (data.pickedPhotoIds ?? []).forEach((photoId: string) => {
-      applyStatusChange(photoId, 'maybe', myMarks[photoId]?.status);
-    });
+    const data = await res.json().catch(() => ({}));
+    // השרת כבר שמר את הסימונים - טוענים מחדש מהשרת (סימונים + מונים) במקום
+    // לעדכן מקומית, כדי שהמסך יהיה אמת אחת עם מה שבאמת נשמר.
+    await refreshGallerySilently();
 
     setAiPicksMessage(
       data.pickedCount > 0
@@ -1020,9 +1369,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // אופטימי כמו setPhotoStatus - ההערה נשמרת מקומית מיד, ומסונכרנת מהתור אם
   // הייתה שגיאת רשת (לא שגיאת שרת אמיתית).
   async function saveNote() {
-    if (!noteEditingId) return;
+    if (!noteEditingId || !myParticipant) return;
     const photoId = noteEditingId;
-    const trimmed = noteDraft.trim();
+    const trimmed = noteDraft.trim().slice(0, NOTE_MAX_LENGTH);
     const previousNote = myMarks[photoId]?.note ?? null; // נשמר לפני העדכון האופטימי, לביטול אם השרת ידחה (כמו current ב-setPhotoStatus)
 
     setMyMarks((prev) => {
@@ -1032,10 +1381,21 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     });
     setNoteEditingId(null);
 
-    const result = await postAction({ type: 'note', photoId, note: trimmed });
+    const action: PendingAction = { type: 'note', photoId, note: trimmed };
+
+    // סימון התמונה עוד ממתין בתור (או flush באמצע) - ההערה חייבת לחכות
+    // אחריו, אחרת השרת ידחה אותה ("תמונה שלא סומנה").
+    if (flushInFlightRef.current || queueHasPhoto(loadPendingQueue(galleryId, myParticipant.id), photoId)) {
+      enqueuePendingAction(action);
+      setActionError('');
+      flushPendingQueue();
+      return;
+    }
+
+    const result = await postAction(action);
 
     if (result === 'network-error') {
-      enqueuePendingAction({ type: 'note', photoId, note: trimmed });
+      enqueuePendingAction(action);
       setActionError('');
       return;
     }
@@ -1050,6 +1410,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       setActionError('ההערה לא נשמרה, נסי שוב.');
       return;
     }
+    dropQueuedAfterDirectSuccess(action);
     setActionError('');
   }
 
@@ -1073,6 +1434,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // הדילוג ההתחלתי רץ פעם אחת כאן (רק בסבב 1), ו-swipeCursor הוא מקור
   // האמת היחיד לאורך שאר הסבב - לא מחשבים findNextUnmarkedIndex מחדש
   // בהמשך, ראו handleSwipeAction/handleSwipeKeyDown/מסך התצוגה למטה.
+  function setSwipeCursorBoth(next: number) {
+    swipeCursorRef.current = next;
+    setSwipeCursor(next);
+  }
+
   function startSwipeMode(pass: 1 | 2) {
     // תמונות מתנה לא נכנסות לבחירה המהירה - הן כבר כלולות, אין מה להכריע עליהן
     const queue = pass === 1
@@ -1080,7 +1446,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       : photos.filter((p) => !p.isGift && myMarks[p.id]?.status === 'maybe').map((p) => p.id);
     const startIndex = pass === 1 ? findNextUnmarkedIndex(queue, 0, (id) => !!myMarks[id]?.status) : 0;
     setSwipeQueue(queue);
-    setSwipeCursor(startIndex);
+    setSwipeCursorBoth(startIndex);
     setSwipePass(pass);
     setCompareMode(false); // לא לערבב שני מצבי תצוגה מלאה בו-זמנית
     setCompareIds([]);
@@ -1093,10 +1459,23 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   // מפעילה את הפעולה על התמונה המוצגת כרגע ומתקדמת - swipeCursor הוא מקור
   // האמת (ראו הערה ב-startSwipeMode למעלה), לא findNextUnmarkedIndex מחדש.
-  async function handleSwipeAction(status: 'maybe' | 'selected' | null) {
-    if (swipeCursor >= swipeQueue.length) return;
-    await setPhotoStatus(swipeQueue[swipeCursor], status);
-    setSwipeCursor((prev) => prev + 1);
+  //
+  // דילוג רק מקדם את הסמן - לא מוחק סימון קיים (למשל "אולי" בסבב השני).
+  // הסמן מתקדם לפני ההמתנה לרשת, והקשה על תמונה שבקשה עליה עדיין בדרך
+  // נדחית (planSwipeTap ב-lib/galleryClient.ts).
+  async function handleSwipeAction(choice: 'skip' | 'maybe' | 'selected') {
+    if (isLocked) return;
+    const cursor = swipeCursorRef.current;
+    const plan = planSwipeTap(cursor, swipeQueue, swipeInFlightRef.current, choice, myMarks[swipeQueue[cursor]]?.status);
+    if (!plan) return;
+    setSwipeCursorBoth(plan.nextCursor);
+    if (!plan.post) return;
+    swipeInFlightRef.current.add(plan.photoId);
+    try {
+      await setPhotoStatus(plan.photoId, plan.post);
+    } finally {
+      swipeInFlightRef.current.delete(plan.photoId);
+    }
   }
 
   // דפדוף בין תמונות במצב הגדלה - בלי לצאת ולהיכנס מחדש מהגריד. מאפסת זום
@@ -1223,7 +1602,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           <p style={{ color: theme.textMuted, fontSize: 14, marginBottom: '1.5rem', lineHeight: 1.6 }}>
             הגלריה מוכנה לבחירה
             {packageInfo ? ` - יש לך ${packageInfo.included} תמונות במסגרת החבילה` : ''}
-            {expiresAt ? `, עד ${toHebrewDateString(new Date(expiresAt))}` : ''}.
+            {expiresAt ? `, עד ${hebrewDateInIsrael(new Date(expiresAt))}` : ''}.
           </p>
           <div
             style={{
@@ -1259,7 +1638,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           background: 'rgba(15,22,38,0.92)',
         }}
       >
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', fontSize: 14 }}>
+        <div style={{ display: 'flex', gap: '0.75rem 1rem', alignItems: 'center', fontSize: 14, flexWrap: 'wrap' }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: theme.green, display: 'inline-block' }} />
             אולי ({maybeCount})
@@ -1285,6 +1664,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           >
             {compareMode ? '✕ צאי ממצב השוואה' : '⇄ השוואה'}
           </button>
+          {!readOnly && (
           <button
             onClick={() => (swipeMode ? exitSwipeMode() : startSwipeMode(1))}
             disabled={isLocked || photos.length === 0}
@@ -1296,13 +1676,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           >
             {swipeMode ? '✕ צאי מבחירה מהירה' : '⚡ בחירה מהירה'}
           </button>
+          )}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <div style={{ textAlign: 'right' }}>
             <div>
               נבחרו במסגרת החבילה{' '}
-              <b style={{ color: accent, fontFamily: theme.fontSerif }}>{packageInfo?.included ?? 0}</b> / {ownerSelectedCount}
+              <bdi dir="ltr">
+                <b style={{ color: accent, fontFamily: theme.fontSerif }}>{ownerSelectedCount}</b> / {packageInfo?.included ?? 0}
+              </bdi>
             </div>
             <div style={{ fontSize: 12, color: theme.textFaint }}>
               {isOwner ? `${maybeCount} תמונות "אולי"` : `הבחירות שלך (קלט בלבד): ${mySelectedCount} נבחרו, ${maybeCount} אולי`}
@@ -1352,9 +1735,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             )}
           </span>
         )}
-        {expiresAt && (
+        {expiresAt && !readOnly && (
           <span>
-            ניתן לבחור עד <b style={{ color: theme.text }}>{toHebrewDateString(new Date(expiresAt))}</b>
+            ניתן לבחור עד <b style={{ color: theme.text }}>{hebrewDateInIsrael(new Date(expiresAt))}</b>
           </span>
         )}
       </div>
@@ -1388,9 +1771,23 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </div>
       )}
 
+      {!isLocked && (
       <p style={{ textAlign: 'center', fontSize: 12, color: theme.textFaint, padding: '0.5rem 1.5rem 0' }}>
         לחיצה ראשונה על תמונה =<span style={{ color: theme.green }}>אולי</span> · לחיצה שנייה = <span style={{ color: accent }}>נבחר</span> · לחיצה שלישית מבטלת
       </p>
+      )}
+
+      {readOnly && (
+        <div
+          role="note"
+          style={{
+            margin: '0.75rem 1.5rem 0', padding: '0.75rem 1rem', borderRadius: 8, textAlign: 'center',
+            background: theme.panel, border: `1px solid ${theme.border}`, color: theme.textMuted, fontSize: 14,
+          }}
+        >
+          תקופת הבחירה בגלריה הסתיימה{expiresAt ? ` (${hebrewDateInIsrael(new Date(expiresAt))})` : ''} - אפשר לצפות בתמונות ולהוריד את התמונות שנמסרו.
+        </div>
+      )}
 
       {actionError && (
         <div role="alert" style={{ padding: '0.5rem 1.5rem', background: theme.errorBg, color: theme.errorText, fontSize: 14 }}>
@@ -1407,7 +1804,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       {/* מסך תודה - מוצג ברגע שהקונפטי דועך (showCelebration חוזר ל-false), כדי
           שלא יתחרה איתו על תשומת הלב. לא חוסם את הגלריה שמתחתיו - "אפשר עדיין
           לצפות בתמונות" נשאר תקף כרגיל, זה רק פאנל בזרימת העמוד. */}
-      {isLocked && !showCelebration && (
+      {isLocked && !readOnly && !showCelebration && (
         <div
           style={{
             margin: '1rem 1.5rem 0', padding: '1.75rem 1.5rem', borderRadius: 14,
@@ -1469,21 +1866,33 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             </button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '0.75rem' }}>
+          {zipMessage && (
+            <p role="status" style={{ color: theme.textMuted, fontSize: 13, marginBottom: '0.75rem' }}>{zipMessage}</p>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(130px, 40vw), 1fr))', gap: '0.75rem' }}>
             {deliveredPhotos.map((photo) => (
               <div key={photo.id} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: `1px solid ${theme.border}` }}>
                 {photo.url ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={photo.url} alt={photo.filename} style={{ width: '100%', height: 130, objectFit: 'cover', display: 'block' }} />
+                  <img
+                    src={photo.url}
+                    alt={photo.filename}
+                    loading="lazy"
+                    decoding="async"
+                    onError={() => handleImageError(`delivered:${photo.id}`)}
+                    style={{ width: '100%', height: 130, objectFit: 'cover', display: 'block' }}
+                  />
                 ) : (
                   <div style={{ width: '100%', height: 130, background: theme.panelInput }} />
                 )}
                 <button
                   onClick={() => handleDownloadDeliveredPhoto(photo)}
                   disabled={downloadingId === photo.id}
+                  aria-label={`הורדת ${photo.filename}`}
                   title="הורדת התמונה"
                   style={{
-                    position: 'absolute', bottom: 6, left: 6, right: 6, padding: '0.4rem', borderRadius: 8,
+                    position: 'absolute', bottom: 6, left: 6, right: 6, padding: '0.4rem', borderRadius: 8, minHeight: 44,
                     background: 'rgba(0,0,0,0.65)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 12,
                     opacity: downloadingId === photo.id ? 0.6 : 1,
                   }}
@@ -1569,7 +1978,32 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </div>
         )}
 
-        {!isLocked && isOwner && finishCountdown === null && (
+        {!isLocked && isOwner && finishCountdown === null && finishFailed && (
+          <div
+            role="alert"
+            style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem',
+              margin: '0.75rem auto 0', padding: '0.75rem 1rem', maxWidth: 340,
+              background: theme.errorBg, color: theme.errorText, borderRadius: 8,
+            }}
+          >
+            <span>הבחירה עוד לא נשלחה.</span>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button
+                onClick={() => submitFinish()}
+                disabled={finishing}
+                style={{ ...primaryButtonStyle, padding: '0.4rem 1rem', opacity: finishing ? 0.6 : 1 }}
+              >
+                {finishing ? 'שולחת...' : 'נסי שוב לשלוח'}
+              </button>
+              <button onClick={cancelFinish} disabled={finishing} style={{ ...outlineButtonStyle, padding: '0.4rem 1rem' }}>
+                ביטול
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!isLocked && isOwner && finishCountdown === null && !finishFailed && (
           <button
             onClick={handleFinish}
             disabled={finishing || ownerSelectedCount === 0}
@@ -1593,6 +2027,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
       {compareMode && compareViewOpen && compareIds.length >= 2 && (
         <div
+          ref={compareDialogRef}
+          tabIndex={-1}
           role="dialog"
           aria-modal="true"
           aria-label="השוואת תמונות"
@@ -1637,6 +2073,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   src={photo.fullUrl}
                   alt=""
                   draggable={false}
+                  decoding="async"
+                  onError={() => handleImageError(photo.id)}
                   onContextMenu={(e) => e.preventDefault()}
                   style={{
                     maxHeight: compareIds.length > 2 ? '45vh' : '80vh', maxWidth: '100%', objectFit: 'contain', borderRadius: 6,
@@ -1671,6 +2109,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           const isSecondPass = swipePass === 2;
           return (
             <div
+              ref={swipeDialogRef}
+              tabIndex={-1}
               role="dialog"
               aria-modal="true"
               aria-label="סיכום בחירה מהירה"
@@ -1707,6 +2147,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         const photo = photos.find((p) => p.id === swipeQueue[idx]);
         if (!photo) return null;
 
+        const currentSwipeStatus = myMarks[photo.id]?.status;
+
         const swipeActionBtn = (bg: string, border: string) => ({
           width: 68, height: 68, borderRadius: '50%', fontSize: 30, cursor: 'pointer',
           background: bg, border: `1px solid ${border}`,
@@ -1714,6 +2156,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
         return (
           <div
+            ref={swipeDialogRef}
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-label={`בחירה מהירה: תמונה ${idx + 1} מתוך ${total}`}
@@ -1725,13 +2169,25 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', maxWidth: 480 }}>
               <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13 }}>
-                {swipePass === 2 ? 'סבב שני · "אולי" · ' : 'בחירה מהירה · '}{idx + 1}/{total}
+                {swipePass === 2 ? 'סבב שני · "אולי" · ' : 'בחירה מהירה · '}<bdi dir="ltr">{idx + 1}/{total}</bdi>
+              </span>
+              <span
+                role="status"
+                aria-live="polite"
+                style={{
+                  fontSize: 12, padding: '3px 10px', borderRadius: 12,
+                  background: currentSwipeStatus === 'selected' ? accent : currentSwipeStatus === 'maybe' ? theme.green : 'rgba(255,255,255,0.12)',
+                  color: currentSwipeStatus === 'selected' ? accentText : currentSwipeStatus === 'maybe' ? theme.goldText : 'rgba(255,255,255,0.8)',
+                }}
+              >
+                {currentSwipeStatus === 'selected' ? '✓ נבחרה' : currentSwipeStatus === 'maybe' ? '🤔 מסומנת כאולי' : 'לא מסומנת'}
               </span>
               <button
                 onClick={exitSwipeMode}
                 title="סגירה"
+                aria-label="סגירת בחירה מהירה"
                 style={{
-                  width: 36, height: 36, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                  width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
                   background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 16, cursor: 'pointer',
                 }}
               >
@@ -1740,22 +2196,30 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             </div>
 
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', minHeight: 0 }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={photo.fullUrl ?? photo.thumbnailUrl ?? ''}
-                alt=""
-                draggable={false}
-                onContextMenu={(e) => e.preventDefault()}
-                style={{
-                  maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', borderRadius: 8,
-                  WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
-                }}
-              />
+              {photo.thumbnailUrl && photo.fullUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={photo.fullUrl}
+                  alt=""
+                  draggable={false}
+                  decoding="async"
+                  onError={() => handleImageError(photo.id)}
+                  onContextMenu={(e) => e.preventDefault()}
+                  style={{
+                    maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', borderRadius: 8,
+                    WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
+                  }}
+                />
+              ) : (
+                <div style={{ width: 'min(80vw, 420px)' }}>
+                  <ProcessingPlaceholder />
+                </div>
+              )}
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'center', gap: '1.5rem', paddingTop: '1rem' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <button onClick={() => handleSwipeAction(null)} aria-label="דילוג, בלי סימון" style={swipeActionBtn('rgba(255,255,255,0.08)', 'rgba(255,255,255,0.3)')}>
+                <button onClick={() => handleSwipeAction('skip')} aria-label="דילוג - בלי לשנות את הסימון" style={swipeActionBtn('rgba(255,255,255,0.08)', 'rgba(255,255,255,0.3)')}>
                   👎
                 </button>
                 <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>דילוג</span>
@@ -1785,6 +2249,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         const hasNext = currentIndex < photos.length - 1;
         return (
           <div
+            ref={enlargedDialogRef}
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-label={`תצוגה מוגדלת: ${photo.original_filename}`}
@@ -1872,6 +2338,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               src={photo.fullUrl}
               alt={photo.original_filename}
               draggable={false}
+              decoding="async"
+              onError={() => handleImageError(photo.id)}
               onClick={(e) => {
                 e.stopPropagation();
                 setZoomScale((prev) => (prev > 1 ? 1 : 2));
@@ -1899,6 +2367,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
         return (
           <div
+            ref={slideshowDialogRef}
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-label={`סקירה ברצף: תמונה ${currentIndex + 1} מתוך ${total}`}
@@ -1971,12 +2441,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               </button>
             )}
 
-            {photo.fullUrl ? (
+            {photo.fullUrl && photo.thumbnailUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={photo.fullUrl}
                 alt={photo.original_filename}
                 draggable={false}
+                decoding="async"
+                onError={() => handleImageError(photo.id)}
                 onClick={(e) => e.stopPropagation()}
                 onContextMenu={(e) => e.preventDefault()}
                 style={{
@@ -1986,11 +2458,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               />
             ) : (
               <p style={{ color: theme.textMuted }} onClick={(e) => e.stopPropagation()}>
-                אין תצוגה זמינה לתמונה הזו
+                התמונה עדיין בעיבוד
               </p>
             )}
 
-            {!isLocked && myParticipant ? (
+            {!isLocked && myParticipant && !photo.isGift ? (
               <div
                 onClick={(e) => e.stopPropagation()}
                 style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem', flexWrap: 'wrap', justifyContent: 'center' }}
@@ -2017,7 +2489,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               </div>
             ) : (
               <p style={{ color: theme.textFaint, fontSize: 13, marginTop: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
-                הבחירה כבר נשלחה - אפשר לצפות בלבד.
+                {photo.isGift && !isLocked ? '🎁 מתנה ממני - כלולה אוטומטית' : readOnly ? 'תקופת הבחירה הסתיימה - אפשר לצפות בלבד.' : 'הבחירה כבר נשלחה - אפשר לצפות בלבד.'}
               </p>
             )}
           </div>
@@ -2061,6 +2533,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           onClick={() => setNoteEditingId(null)}
         >
           <div
+            ref={noteDialogRef}
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-labelledby="note-dialog-title"
@@ -2085,12 +2559,20 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             <textarea
               id="note-text"
               value={noteDraft}
-              onChange={(e) => setNoteDraft(e.target.value)}
+              onChange={(e) => setNoteDraft(e.target.value.slice(0, NOTE_MAX_LENGTH))}
               rows={3}
+              maxLength={NOTE_MAX_LENGTH}
+              aria-describedby="note-char-count"
               style={{ ...inputStyle, width: '100%' }}
               placeholder="למשל: את זו רוצה בשחור-לבן"
               autoFocus
             />
+            <div
+              id="note-char-count"
+              style={{ fontSize: 11, color: noteDraft.length >= NOTE_MAX_LENGTH ? theme.errorText : theme.textFaint, textAlign: 'left', marginTop: 2 }}
+            >
+              <bdi dir="ltr">{noteDraft.length}/{NOTE_MAX_LENGTH}</bdi>
+            </div>
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
               <button onClick={saveNote} style={{ ...goldButtonStyle, padding: '0.5rem 1rem' }}>שמירה</button>
               <button onClick={() => setNoteEditingId(null)} style={{ ...outlineButtonStyle, padding: '0.5rem 1rem' }}>ביטול</button>
@@ -2129,7 +2611,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(min(140px, 45vw), 1fr))',
           alignItems: 'start',
           gap: '1rem',
           padding: '0 1.5rem 1.5rem',
@@ -2217,7 +2699,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 <div
                   title="הערכה אוטומטית לפי חדות - לא תמיד מדויקת, בדקי בעצמך"
                   style={{
-                    position: 'absolute', bottom: compareMode ? 8 : 32, right: 8, zIndex: 1,
+                    position: 'absolute', bottom: compareMode ? 8 : 58, right: 8, zIndex: 1,
                     background: theme.warningBg, color: theme.warningText, fontSize: 10,
                     padding: '2px 7px', borderRadius: 10,
                   }}
@@ -2234,10 +2716,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     setEnlargedId(photo.id);
                   }}
                   title="הגדלת תמונה"
+                  aria-label={`הגדלת ${photo.original_filename}`}
                   style={{
-                    position: 'absolute', bottom: 8, right: 8, zIndex: 1,
+                    position: 'absolute', bottom: 6, right: 6, zIndex: 1,
                     background: 'rgba(0,0,0,0.45)', border: 'none', color: '#fff',
-                    borderRadius: '50%', width: 26, height: 26, cursor: 'pointer',
+                    borderRadius: '50%', width: 44, height: 44, cursor: 'pointer',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13,
                   }}
                 >
@@ -2285,7 +2768,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     // zIndex 0 - מעל התמונה, אבל מתחת לכפתור ההגדלה (🔍, zIndex 1) שבפינה הימנית
                     position: 'absolute', bottom: 0, insetInline: 0, zIndex: 0, pointerEvents: 'none',
                     background: 'linear-gradient(to top, rgba(0,0,0,0.8), rgba(0,0,0,0.35) 70%, transparent)',
-                    color: '#fff', fontSize: 12, lineHeight: 1.45, padding: '1.5rem 2.75rem 0.6rem 0.75rem',
+                    color: '#fff', fontSize: 12, lineHeight: 1.45, padding: '1.5rem 3.5rem 0.6rem 0.75rem',
                   }}
                 >
                   {photo.giftMessage && (
@@ -2295,7 +2778,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 </div>
               )}
 
-              {!compareMode && !isGift && (
+              {!compareMode && !isGift && !readOnly && (
                 <div
                   role="button"
                   tabIndex={0}
@@ -2312,9 +2795,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   }}
                   title="לחיצה: מחזור בין אולי / נבחר / כלום"
                   style={{
-                    position: 'absolute', top: othersMarks.length > 0 ? 32 : 8, left: 8, zIndex: 1,
+                    position: 'absolute', top: othersMarks.length > 0 ? 30 : 6, left: 6, zIndex: 1,
                     background: heartBg, border: '1px solid rgba(255,255,255,0.3)', color: heartColor,
-                    borderRadius: '50%', width: 30, height: 30,
+                    borderRadius: '50%', width: 44, height: 44, fontSize: 18,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
                   }}
                 >
@@ -2322,25 +2805,33 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 </div>
               )}
 
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={photo.thumbnailUrl ?? ''}
-                alt={`${photo.original_filename} - ${statusLabel}`}
-                draggable={false}
-                style={{
-                  width: '100%', height: 'auto', display: 'block', pointerEvents: 'none',
-                  WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
-                }}
-              />
+              {photo.thumbnailUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={photo.thumbnailUrl}
+                  alt={`${photo.original_filename} - ${statusLabel}`}
+                  draggable={false}
+                  loading="lazy"
+                  decoding="async"
+                  onError={() => handleImageError(photo.id)}
+                  style={{
+                    width: '100%', height: 'auto', display: 'block', pointerEvents: 'none',
+                    WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
+                  }}
+                />
+              ) : (
+                <ProcessingPlaceholder />
+              )}
 
-              {status && !isGift && (
+              {status && !isGift && !readOnly && (
                 <button
                   onClick={(e) => openNoteEditor(photo.id, e)}
                   title="הוסיפי הערה"
+                  aria-label={hasNote ? 'עריכת ההערה לתמונה' : 'הוספת הערה לתמונה'}
                   style={{
-                    position: 'absolute', bottom: 8, left: 8,
+                    position: 'absolute', bottom: 6, left: 6, zIndex: 1,
                     background: hasNote ? theme.goldBright : 'rgba(255,255,255,0.85)',
-                    border: 'none', borderRadius: '50%', width: 28, height: 28, cursor: 'pointer',
+                    border: 'none', borderRadius: '50%', width: 44, height: 44, cursor: 'pointer', fontSize: 16,
                   }}
                 >
                   ✎
