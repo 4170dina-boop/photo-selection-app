@@ -71,4 +71,8 @@ export type Message = string | GenderedMessage | PluralMessage;
 
 export type MessageParams = Record<string, string | number | null | undefined>;
 
+// סעיף במילון של שפה אחרת: בדיוק אותם מפתחות כמו הסעיף העברי המקביל -
+// מפתח חסר או מיותר הוא שגיאת קומפילציה.
+export type Section<T> = { [K in keyof T]: Message };
+
 export type { ViewerGender };
