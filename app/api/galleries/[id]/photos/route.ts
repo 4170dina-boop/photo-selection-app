@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { deleteObjects, headObject } from '@/lib/r2';
-import { isFreshPhotoKey, MAX_UPLOAD_BYTES } from '@/lib/uploadPolicy';
+import { isFreshPhotoKey, MAX_UPLOAD_BYTES, parseUploadBatch } from '@/lib/uploadPolicy';
 
 // רישום תמונה שהדפדפן כבר העלה ל-R2 (דרך ה-URL החתום מ-presign-upload).
 // ה-insert עבר לכאן מהדפדפן (UploadProvider.tsx) כדי שאם הוא נכשל (למשל
@@ -42,34 +42,73 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
-  const body = await req.json().catch(() => null);
-  const path = body?.path;
-  const originalFilename = typeof body?.originalFilename === 'string' ? body.originalFilename.slice(0, 255) : '';
+  // כמה תמונות בבקשה אחת ({ files: [...] }) - הבדיקות למעלה (auth + צלמת +
+  // גלריה) רצות פעם אחת לכל הקבוצה ולא לכל תמונה. כל תמונה עדיין נבדקת
+  // ונרשמת בנפרד (insert לכל שורה, כדי ש-enforce_photo_limit ידחה רק את מה
+  // שעובר את המכסה ולא את כל הקבוצה). אובייקט בודד (הצורה הישנה) עדיין נתמך.
+  const parsed = parseUploadBatch<{ path?: unknown; originalFilename?: unknown }>(await req.json().catch(() => null));
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
+
+  // אותו key פעמיים באותה בקשה - רק הראשון נרשם (בלי זה שני ה-inserts היו
+  // עוברים יחד את בדיקת "כבר רשומה").
+  const seenPaths = new Set<string>();
+  const results = await Promise.all(
+    parsed.items.map((item) => {
+      const path = item?.path;
+      if (typeof path === 'string') {
+        if (seenPaths.has(path)) return Promise.resolve<RegisterResult>({ error: 'התמונה כבר רשומה', status: 409 });
+        seenPaths.add(path);
+      }
+      return registerOne(supabase, gallery.id, item);
+    })
+  );
+
+  if (!parsed.isBatch) {
+    const single = results[0];
+    if ('error' in single) return NextResponse.json({ error: single.error }, { status: single.status });
+    return NextResponse.json({ id: single.id });
+  }
+  return NextResponse.json({
+    results: results.map((r) => ('error' in r ? { error: r.error } : { id: r.id })),
+  });
+}
+
+type RegisterResult = { id: string } | { error: string; status: number };
+
+async function registerOne(
+  supabase: ReturnType<typeof createClient>,
+  galleryId: string,
+  item: { path?: unknown; originalFilename?: unknown }
+): Promise<RegisterResult> {
+  const path = item?.path;
+  const originalFilename = typeof item?.originalFilename === 'string' ? item.originalFilename.slice(0, 255) : '';
 
   // רק key בדיוק בתבנית ש-presign-upload יוצר ({galleryId}/{uuid}.{ext}) - לא
   // thumbs/, final/, או נתיב של גלריה אחרת.
-  if (!isFreshPhotoKey(gallery.id, path) || !originalFilename) {
-    return NextResponse.json({ error: 'בקשה לא תקינה' }, { status: 400 });
+  if (!isFreshPhotoKey(galleryId, path) || !originalFilename) {
+    return { error: 'בקשה לא תקינה', status: 400 };
   }
 
   // key שכבר רשום לתמונה אחרת - לא נוגעים בו (ובוודאי לא מוחקים אותו למטה).
   const { data: existing } = await supabase.from('photos').select('id').eq('file_path', path).maybeSingle();
   if (existing) {
-    return NextResponse.json({ error: 'התמונה כבר רשומה' }, { status: 409 });
+    return { error: 'התמונה כבר רשומה', status: 409 };
   }
 
   const head = await headObject(path).catch(() => null);
   if (!head) {
-    return NextResponse.json({ error: 'הקובץ לא נמצא באחסון' }, { status: 400 });
+    return { error: 'הקובץ לא נמצא באחסון', status: 400 };
   }
   if (head.size > MAX_UPLOAD_BYTES) {
     await cleanup(path);
-    return NextResponse.json({ error: 'הקובץ גדול מדי' }, { status: 413 });
+    return { error: 'הקובץ גדול מדי', status: 413 };
   }
 
   const { data: photo, error: insertError } = await supabase
     .from('photos')
-    .insert({ gallery_id: gallery.id, file_path: path, thumbnail_path: null, original_filename: originalFilename })
+    .insert({ gallery_id: galleryId, file_path: path, thumbnail_path: null, original_filename: originalFilename })
     .select('id')
     .single();
 
@@ -77,12 +116,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     await cleanup(path);
     const message = insertError?.message ?? '';
     if (message.includes('LIMIT_PHOTOS')) {
-      return NextResponse.json({ error: message }, { status: 403 });
+      return { error: message, status: 403 };
     }
-    return NextResponse.json({ error: 'שמירת התמונה נכשלה' }, { status: 500 });
+    return { error: 'שמירת התמונה נכשלה', status: 500 };
   }
 
-  return NextResponse.json({ id: photo.id });
+  return { id: photo.id as string };
 }
 
 async function cleanup(path: string) {

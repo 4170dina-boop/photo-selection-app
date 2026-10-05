@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapWithConcurrency } from './concurrency';
+import { createSlotLimiter, mapWithConcurrency } from './concurrency';
 
 describe('mapWithConcurrency', () => {
   it('processes every item, never more than `limit` at once', async () => {
@@ -26,5 +26,38 @@ describe('mapWithConcurrency', () => {
       seen.push(s);
     });
     expect(seen).toEqual(['a', 'b']);
+  });
+});
+
+describe('createSlotLimiter', () => {
+  it('never runs more than `limit` at once and never shares a slot', async () => {
+    const run = createSlotLimiter(2);
+    const busy = new Set<number>();
+    let maxActive = 0;
+    const results = await Promise.all(
+      [1, 2, 3, 4, 5].map((n) =>
+        run(async (slot) => {
+          expect(slot === 0 || slot === 1).toBe(true);
+          expect(busy.has(slot)).toBe(false);
+          busy.add(slot);
+          maxActive = Math.max(maxActive, busy.size);
+          await new Promise((r) => setTimeout(r, 5));
+          busy.delete(slot);
+          return n * 10;
+        })
+      )
+    );
+    expect(results).toEqual([10, 20, 30, 40, 50]);
+    expect(maxActive).toBe(2);
+  });
+
+  it('releases the slot when the task throws', async () => {
+    const run = createSlotLimiter(1);
+    await expect(
+      run(async () => {
+        throw new Error('boom');
+      })
+    ).rejects.toThrow('boom');
+    await expect(run(async (slot) => slot)).resolves.toBe(0);
   });
 });

@@ -137,6 +137,36 @@ export function indicesToUpload(items: { status: 'pending' | 'uploading' | 'done
   return result;
 }
 
+// כמה קבצים לכל היותר בבקשת presign/רישום אחת (UploadProvider מאגד בקשות
+// שמגיעות בהפרש קצר, ראו lib/microBatch.ts). חוסם בקשה ענקית שתתקע את ה-route.
+export const MAX_UPLOAD_BATCH = 20;
+
+// גוף הבקשה ל-presign-upload ולרישום: או { files: [...] } (העלאה מאוגדת), או
+// אובייקט בודד כמו פעם (תאימות לאחור לטאב שנפתח לפני העדכון). isBatch קובע
+// גם את צורת התשובה.
+export type UploadBatchParse<T> =
+  | { ok: true; isBatch: boolean; items: T[] }
+  | { ok: false; error: string };
+
+export function parseUploadBatch<T = unknown>(body: unknown): UploadBatchParse<T> {
+  const b = body as { files?: unknown } | null;
+  if (b && typeof b === 'object' && 'files' in b) {
+    if (!Array.isArray(b.files) || b.files.length === 0) return { ok: false, error: 'בקשה לא תקינה' };
+    if (b.files.length > MAX_UPLOAD_BATCH) return { ok: false, error: `לכל היותר ${MAX_UPLOAD_BATCH} קבצים בבקשה` };
+    return { ok: true, isBatch: true, items: b.files as T[] };
+  }
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return { ok: false, error: 'בקשה לא תקינה' };
+  return { ok: true, isBatch: false, items: [b as T] };
+}
+
+// מתוך `requested` קבצים בבקשה - כמה מהראשונים מקבלים URL לפי המכסה שנותרה
+// (null = ללא הגבלה). השאר נדחים עם LIMIT_PHOTOS כבר בשלב החתימה, לפני
+// שהדפדפן מעלה בייטים מיותרים. ה-trigger ב-DB נשאר האכיפה הסופית.
+export function quotaGrantCount(requested: number, remaining: number | null): number {
+  if (remaining === null) return requested;
+  return Math.max(0, Math.min(requested, remaining));
+}
+
 // מריצה fn על כל הפריטים עם לכל היותר `limit` הרצות בו-זמנית. שומרת על הסדר בתוצאות.
 export async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length);

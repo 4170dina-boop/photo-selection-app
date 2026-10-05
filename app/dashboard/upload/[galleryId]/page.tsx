@@ -36,6 +36,8 @@ interface ExistingPhoto {
 // כמה בקשות עיבוד חוזר (/process) רצות בו-זמנית - כל אחת כבדה בצד שרת.
 const PROCESS_RETRY_CONCURRENCY = 3;
 
+const FULL_RES_STORAGE_KEY = 'upload-full-resolution';
+
 export default function UploadPage({ params }: UploadPageProps) {
   const { galleryId } = params;
 
@@ -45,6 +47,26 @@ export default function UploadPage({ params }: UploadPageProps) {
   // הקיימות, בדיקת הבעלות, וזיהוי כפילויות נשארים מקומיים לדף - אלה קריאות
   // מידע ספציפיות לדף, לא חלק ממנוע ההעלאה שצריך להמשיך לרוץ ברקע.
   const { items, uploading, setItems, setClientName, startUpload } = useUploadQueue(galleryId);
+
+  // כברירת מחדל התמונות מוקטנות בדפדפן ל-3000px לפני ההעלאה (lib/uploadResize.ts)
+  // - מהיר פי כמה. "רזולוציה מלאה" מעלה את הקובץ המקורי כמו שהוא, למי שמורידה
+  // את הקבצים בחזרה לעריכה (הורדת ZIP בכפתור הקסם). נזכר לפי דפדפן בלבד.
+  const [fullResolution, setFullResolution] = useState(false);
+  useEffect(() => {
+    try {
+      setFullResolution(localStorage.getItem(FULL_RES_STORAGE_KEY) === '1');
+    } catch {
+      // אין גישה ל-localStorage (גלישה פרטית וכו') - נשארים עם ברירת המחדל
+    }
+  }, []);
+  function toggleFullResolution(value: boolean) {
+    setFullResolution(value);
+    try {
+      localStorage.setItem(FULL_RES_STORAGE_KEY, value ? '1' : '0');
+    } catch {
+      // לא קריטי - ההעדפה פשוט לא תיזכר
+    }
+  }
 
   const [existingPhotos, setExistingPhotos] = useState<ExistingPhoto[] | null>(null);
   const [checkingOwnership, setCheckingOwnership] = useState(true);
@@ -437,7 +459,7 @@ export default function UploadPage({ params }: UploadPageProps) {
 
         {items.length > 0 && (uploading || toUploadCount > 0) && (
           <button
-            onClick={startUpload}
+            onClick={() => startUpload({ fullResolution })}
             disabled={uploading || toUploadCount === 0 || !!uploadBlockReason}
             style={{
               ...goldButtonStyle,
@@ -455,6 +477,23 @@ export default function UploadPage({ params }: UploadPageProps) {
           </button>
         )}
       </div>
+
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '1.5rem', fontSize: 13, color: theme.textMuted, cursor: uploading ? 'default' : 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={fullResolution}
+          disabled={uploading}
+          onChange={(e) => toggleFullResolution(e.target.checked)}
+          style={{ marginTop: 3 }}
+        />
+        <span>
+          העלאה ברזולוציה מלאה (איטית יותר)
+          <span style={{ display: 'block', fontSize: 12, color: theme.textFaint }}>
+            בלי הסימון התמונות מוקטנות ל-3000 פיקסלים - איכות מלאה לצפייה ולבחירה של הלקוחה, וההעלאה מהירה פי כמה.
+            כדאי לסמן רק אם את מורידה את התמונות הנבחרות כ-ZIP כדי לערוך אותן (ולא עובדת עם כפתור הקסם על הקבצים המקוריים שלך).
+          </span>
+        </span>
+      </label>
 
       {duplicateCount > 0 && (
         <p style={{ background: theme.warningBg, color: theme.warningText, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem', fontSize: 13 }}>
@@ -499,6 +538,10 @@ export default function UploadPage({ params }: UploadPageProps) {
                 <img
                   src={item.previewUrl}
                   alt={item.file.name}
+                  // מאות תצוגות מקדימות של קבצי מצלמה מלאים - פענוח מחוץ
+                  // ל-main thread ורק כשנגללים אליהן, כדי לא להאט את ההקטנה/ההעלאה.
+                  loading="lazy"
+                  decoding="async"
                   style={{ width: '100%', aspectRatio: '3/4', objectFit: 'cover', display: 'block', opacity: item.status === 'error' ? 0.5 : 1 }}
                 />
 

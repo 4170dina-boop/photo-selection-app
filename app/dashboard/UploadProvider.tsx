@@ -4,6 +4,8 @@ import { createContext, useCallback, useContext, useRef, useState, type ReactNod
 import { useRouter } from 'next/navigation';
 import { theme } from '@/lib/theme';
 import { FREE_PHOTO_LIMIT, indicesToUpload, mapWithConcurrency } from '@/lib/uploadPolicy';
+import { createMicroBatcher } from '@/lib/microBatch';
+import { prepareForUpload } from './uploadCompressor';
 
 // תור ההעלאה חי כאן (context גלובלי לדשבורד) ולא ב-state מקומי של דף ההעלאה,
 // כדי שהעלאה שכבר רצה תמשיך (ותוצג בפס ההתקדמות הצף) גם כשהצלמת עוברת
@@ -38,7 +40,7 @@ interface UploadContextValue {
   states: Record<string, GalleryUploadState>;
   setGalleryItems: (galleryId: string, items: UploadItem[]) => void;
   setClientName: (galleryId: string, name: string | null) => void;
-  startUpload: (galleryId: string) => void;
+  startUpload: (galleryId: string, options?: StartUploadOptions) => void;
 }
 
 const UploadContext = createContext<UploadContextValue | null>(null);
@@ -55,42 +57,67 @@ export function useUploadQueue(galleryId: string) {
     uploading: state.uploading,
     setItems: useCallback((items: UploadItem[]) => ctx.setGalleryItems(galleryId, items), [ctx, galleryId]),
     setClientName: useCallback((name: string | null) => ctx.setClientName(galleryId, name), [ctx, galleryId]),
-    startUpload: useCallback(() => ctx.startUpload(galleryId), [ctx, galleryId]),
+    startUpload: useCallback((options?: StartUploadOptions) => ctx.startUpload(galleryId, options), [ctx, galleryId]),
   };
 }
 
 // כמה תמונות מעלים בו-זמנית. קודם זה היה אחת-אחת (תור) - עכשיו גם לא מחכים
 // יותר לעיבוד סימן המים לפני שעוברים לתמונה הבאה (ראו הערה ב-uploadOne), אז
 // שלב ההעלאה עצמו (Storage + DB) מהיר בהרבה, ואפשר להעלות יותר תמונות בו-זמנית
-// בלי לחשוש שכל "עובד" תקוע מחכה לעיבוד איטי בצד שרת.
+// בלי לחשוש שכל "עובד" תקוע מחכה לעיבוד איטי בצד שרת. 8 ולא 6 (מגבלת
+// החיבורים של דפדפן ל-host אחד ב-HTTP/1.1) בכוונה: כל "עובד" מבלה חלק מהזמן
+// בהקטנה ובבקשות presign/רישום מול השרת שלנו (host אחר), לא רק ב-PUT ל-R2,
+// ו-R2 עונה ב-HTTP/2 ממילא. יותר מזה לא עוזר - ההעלאה מוגבלת ברוחב הפס.
 const UPLOAD_CONCURRENCY = 8;
 
-// דחיסת JPEG לפני העלאה, כדי לקצר משמעותית את זמן ההעלאה בפועל (פחות בייטים
-// לשלוח, לא רק פחות המתנה לעיבוד). לא נוגעים ברזולוציה (רק באיכות ה-JPEG) -
-// אין הבדל נראה לעין במסך או בהדפסה רגילה, וממילא הקובץ הזה לא הקובץ שהצלמת
-// עורכת בפועל (היא עובדת על המקור המקומי שלה, ראו MagicButton) - הוא רק
-// לתצוגה/בחירה של הלקוחה. אם הדחיסה נכשלת או לא משפרת, מעלים את המקור כמו שהוא.
-const COMPRESSED_JPEG_QUALITY = 0.85;
+// בקשות presign/רישום מאוגדות (lib/microBatch.ts): במקום בקשה לכל תמונה (כל
+// אחת עם auth + שאילתות בעלות משלה), בקשה אחת לכמה תמונות שמגיעות ביחד.
+// ההמתנה הקצרה זניחה לעומת זמן ההעלאה עצמה.
+const BATCH_MAX_SIZE = 10;
+const BATCH_DELAY_MS = 80;
 
-async function compressForUpload(file: File): Promise<File> {
-  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return file;
+interface PresignResult {
+  path?: string;
+  uploadUrl?: string;
+  contentType?: string;
+  error?: string;
+}
 
-  try {
-    const bitmap = await createImageBitmap(file);
-    const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return file;
-    ctx.drawImage(bitmap, 0, 0);
+interface RegisterResult {
+  id?: string;
+  error?: string;
+}
 
-    const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', COMPRESSED_JPEG_QUALITY));
-    if (!blob || blob.size >= file.size) return file;
+async function postBatch<T>(url: string, files: unknown[], fallbackError: string): Promise<T[]> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ files }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? fallbackError);
+  return data.results;
+}
 
-    return new File([blob], file.name, { type: 'image/jpeg' });
-  } catch {
-    return file;
-  }
+function createGalleryBatchers(galleryId: string) {
+  return {
+    presign: createMicroBatcher<{ contentType: string; size: number }, PresignResult>({
+      maxSize: BATCH_MAX_SIZE,
+      delayMs: BATCH_DELAY_MS,
+      run: (files) => postBatch(`/api/galleries/${galleryId}/photos/presign-upload`, files, 'בקשת URL להעלאה נכשלה'),
+    }),
+    register: createMicroBatcher<{ path: string; originalFilename: string }, RegisterResult>({
+      maxSize: BATCH_MAX_SIZE,
+      delayMs: BATCH_DELAY_MS,
+      run: (files) => postBatch(`/api/galleries/${galleryId}/photos`, files, 'שמירת התמונה נכשלה'),
+    }),
+  };
+}
+
+export interface StartUploadOptions {
+  // העלאת הקובץ המקורי כמו שהוא, בלי הקטנה ל-UPLOAD_MAX_EDGE (lib/uploadResize.ts) -
+  // רק למי שצריכה את הקבצים המלאים בחזרה מהשרת (הורדת ZIP בכפתור הקסם).
+  fullResolution?: boolean;
 }
 
 // כמה זמן פס ההתקדמות הצף נשאר מוצג אחרי שההעלאה לגלריה מסתיימת, לפני שהוא
@@ -121,14 +148,23 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     [updateGallery]
   );
 
-  async function uploadOne(galleryId: string, i: number, originalFile: File) {
+  async function uploadOne(
+    galleryId: string,
+    i: number,
+    originalFile: File,
+    batchers: ReturnType<typeof createGalleryBatchers>,
+    options: StartUploadOptions
+  ) {
     updateGallery(galleryId, (prev) => ({
       ...prev,
       items: prev.items.map((it, idx) => (idx === i ? { ...it, status: 'uploading' } : it)),
     }));
 
     try {
-      const file = await compressForUpload(originalFile);
+      // הקטנה ל-3000px בצלע הארוכה (ראו lib/uploadResize.ts) ב-Web Worker -
+      // קובץ מצלמה של ~10MB הופך ל-~1-2MB, והדף לא קופא בזמן הפענוח.
+      // "עובדים" אחרים מעלים בזמן שהתמונה הזו מוקטנת.
+      const file = await prepareForUpload(originalFile, !!options.fullResolution);
 
       // אחסון עבר ל-Cloudflare R2 (ראו lib/r2.ts) - ל-R2 (כמו S3) אין מקבילה
       // ל-RLS שמאפשרת לדפדפן להעלות ישירות בבטחה, אז מבקשים URL חתום מהשרת
@@ -136,30 +172,22 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       // הבייטים עצמם עדיין לא עוברים דרך שרת האפליקציה שלנו, בדיוק כמו קודם.
       // סוג התוכן והגודל נחתמים לתוך ה-URL (ראו lib/r2.ts) - השרת מאמת אותם
       // (רשימת סוגים מותרים + גודל מקסימלי) ובודק את מכסת התמונות לפני החתימה.
-      const presignRes = await fetch(`/api/galleries/${galleryId}/photos/presign-upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contentType: file.type, size: file.size }),
-      });
-      const presignData = await presignRes.json().catch(() => ({}));
-      if (!presignRes.ok) throw new Error(presignData.error ?? 'בקשת URL להעלאה נכשלה');
+      const presignData = await batchers.presign({ contentType: file.type, size: file.size });
+      if (presignData.error || !presignData.path || !presignData.uploadUrl) {
+        throw new Error(presignData.error ?? 'בקשת URL להעלאה נכשלה');
+      }
       const { path, uploadUrl, contentType } = presignData;
 
-      const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': contentType } });
+      const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': contentType ?? file.type } });
       if (!putRes.ok) throw new Error('העלאת הקובץ נכשלה');
 
       // הרישום ב-DB קורה בצד שרת (app/api/galleries/[id]/photos/route.ts) - אם
       // הוא נכשל (למשל מגבלת התמונות), השרת גם מוחק את הקובץ מ-R2 כדי שלא
       // יישאר יתום. thumbnail_path נשאר null עד שהעיבוד למטה מסיים - עד אז
       // התמונה לא מוצגת ללקוחה בכלל (אף פעם לא המקור הנקי).
-      const registerRes = await fetch(`/api/galleries/${galleryId}/photos`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path, originalFilename: file.name }),
-      });
-      const registerData = await registerRes.json().catch(() => ({}));
-      if (!registerRes.ok) throw new Error(registerData.error ?? 'שמירת התמונה נכשלה');
-      const photo = { id: registerData.id as string };
+      const registerData = await batchers.register({ path, originalFilename: file.name });
+      if (registerData.error || !registerData.id) throw new Error(registerData.error ?? 'שמירת התמונה נכשלה');
+      const photo = { id: registerData.id };
 
       // התמונה כבר בטוחה ב-Storage וב-DB - זה מה שקובע "הועלה בהצלחה" מבחינת
       // הלקוחה/המכסה. עיבוד סימן המים לא מחכים לו (fire-and-forget) - אם הוא
@@ -187,7 +215,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
   }
 
   const startUpload = useCallback(
-    (galleryId: string) => {
+    (galleryId: string, options: StartUploadOptions = {}) => {
       // קורא את הסטייט הנוכחי ישירות (לא מה-closure של הרנדר האחרון) כדי
       // שקריאה כפולה בטעות (למשל דאבל-קליק) לא תתחיל תור שני על אותה גלריה.
       setStates((prev) => {
@@ -209,8 +237,11 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         // "מאגר עובדים" קטן: עד UPLOAD_CONCURRENCY העלאות פעילות בו-זמנית.
         // ה-IIFE רץ בלי תלות בהמשך חיי רכיב כלשהו - זה בדיוק העניין: הוא ממשיך
         // גם אם דף ההעלאה עצמו יתפרק.
+        const batchers = createGalleryBatchers(galleryId);
         (async () => {
-          await mapWithConcurrency(queue, UPLOAD_CONCURRENCY, (i) => uploadOne(galleryId, i, items[i].file));
+          await mapWithConcurrency(queue, UPLOAD_CONCURRENCY, (i) =>
+            uploadOne(galleryId, i, items[i].file, batchers, options)
+          );
 
           updateGallery(galleryId, (p) => ({ ...p, uploading: false }));
           fadeTimers.current[galleryId] = setTimeout(() => {

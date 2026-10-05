@@ -15,3 +15,25 @@ export async function mapWithConcurrency<T>(
   });
   await Promise.all(workers);
 }
+
+// מגביל כמה הרצות של משימה רצות בו-זמנית, כשהמשימות מגיעות בזמנים שונים (לא
+// רשימה מוכנה מראש כמו ב-mapWithConcurrency) - למשל הקטנת תמונות לפני העלאה
+// (app/dashboard/uploadCompressor.ts). כל הרצה מקבלת מספר "משבצת" קבוע
+// (0..limit-1) כדי שאפשר יהיה להצמיד לה משאב (Worker) בלי שתי הרצות עליו יחד.
+// סדר ההמתנה הוא FIFO.
+export function createSlotLimiter(limit: number) {
+  const size = Math.max(1, Math.floor(limit) || 1);
+  const free: number[] = Array.from({ length: size }, (_, i) => i);
+  const waiting: ((slot: number) => void)[] = [];
+
+  return async function run<R>(fn: (slot: number) => Promise<R>): Promise<R> {
+    const slot = free.length > 0 ? free.shift()! : await new Promise<number>((resolve) => waiting.push(resolve));
+    try {
+      return await fn(slot);
+    } finally {
+      const next = waiting.shift();
+      if (next) next(slot);
+      else free.push(slot);
+    }
+  };
+}

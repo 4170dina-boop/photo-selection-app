@@ -15,7 +15,47 @@ import {
   remainingPhotoQuota,
   thumbnailKey,
   validateUploadRequest,
+  MAX_UPLOAD_BATCH,
+  parseUploadBatch,
+  quotaGrantCount,
 } from './uploadPolicy';
+
+describe('parseUploadBatch', () => {
+  it('accepts a batch of files', () => {
+    expect(parseUploadBatch({ files: [{ a: 1 }, { a: 2 }] })).toEqual({ ok: true, isBatch: true, items: [{ a: 1 }, { a: 2 }] });
+  });
+
+  it('keeps the legacy single-object body working', () => {
+    expect(parseUploadBatch({ contentType: 'image/jpeg', size: 5 })).toEqual({
+      ok: true,
+      isBatch: false,
+      items: [{ contentType: 'image/jpeg', size: 5 }],
+    });
+  });
+
+  it('rejects empty, oversized and malformed bodies', () => {
+    expect(parseUploadBatch({ files: [] }).ok).toBe(false);
+    expect(parseUploadBatch({ files: 'x' }).ok).toBe(false);
+    expect(parseUploadBatch({ files: Array.from({ length: MAX_UPLOAD_BATCH + 1 }, () => ({})) }).ok).toBe(false);
+    expect(parseUploadBatch({ files: Array.from({ length: MAX_UPLOAD_BATCH }, () => ({})) }).ok).toBe(true);
+    expect(parseUploadBatch(null).ok).toBe(false);
+    expect(parseUploadBatch([{}]).ok).toBe(false);
+    expect(parseUploadBatch('str').ok).toBe(false);
+  });
+});
+
+describe('quotaGrantCount', () => {
+  it('grants everything when unlimited', () => {
+    expect(quotaGrantCount(15, null)).toBe(15);
+  });
+
+  it('grants only what is left of the free quota', () => {
+    expect(quotaGrantCount(10, 3)).toBe(3);
+    expect(quotaGrantCount(2, 3)).toBe(2);
+    expect(quotaGrantCount(5, 0)).toBe(0);
+    expect(quotaGrantCount(5, -1)).toBe(0);
+  });
+});
 
 const GID = '11111111-2222-3333-4444-555555555555';
 const UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
