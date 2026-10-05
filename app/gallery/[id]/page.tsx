@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import JSZip from 'jszip';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import { computePackageUsage } from '@/lib/gifts';
+import ExtensionCountdownBanner from '@/components/ExtensionCountdownBanner';
 import {
   type PendingAction,
   NOTE_MAX_LENGTH,
@@ -2234,6 +2235,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </span>
         )}
       </div>
+
+      {/* ספירה לאחור (3 ימים ומטה) + "לבקש הארכה" לבעלת הגלריה בלבד - ראו components/ExtensionCountdownBanner.tsx */}
+      <ExtensionCountdownBanner
+        galleryId={galleryId}
+        expiresAt={expiresAt}
+        isOwner={isOwner}
+        selectionOpen={!isLocked}
+        accent={accent}
+      />
 
       {/* מסגור חיובי/upsell ("קיבלת עוד") ולא אזהרה ("חרגת") - נשען על אותה
           אנרגיה כמו "סה״כ משוער לחבילה" בקופסה שמעל, כדי שהשתיים יקראו

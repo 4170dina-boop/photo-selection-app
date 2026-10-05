@@ -64,6 +64,8 @@ export default function GalleriesDashboard() {
   const [togglingDeliveredId, setTogglingDeliveredId] = useState<string | null>(null);
   const [togglingPaidId, setTogglingPaidId] = useState<string | null>(null);
   const [coverUrls, setCoverUrls] = useState<Record<string, string>>({});
+  // גלריות עם בקשת הארכה ממתינה מהלקוחה (gallery_extension_requests) - תג בלבד
+  const [pendingExtensionIds, setPendingExtensionIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadGalleries();
@@ -260,6 +262,15 @@ export default function GalleriesDashboard() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => data?.covers && setCoverUrls(data.covers))
       .catch(() => {});
+
+    // best-effort: טבלה חסרה (מיגרציה שלא רצה) / שגיאה = פשוט בלי תגים
+    supabase
+      .from('gallery_extension_requests')
+      .select('gallery_id')
+      .eq('status', 'pending')
+      .then(({ data, error }) => {
+        if (!error && data) setPendingExtensionIds(new Set(data.map((r: { gallery_id: string }) => r.gallery_id)));
+      }, () => {});
   }
 
   function formatActivity(row: GalleryRow): string {
@@ -622,6 +633,15 @@ export default function GalleriesDashboard() {
             >
               {statusLabel(status)}
             </span>
+
+            {pendingExtensionIds.has(row.id) && (
+              <span
+                title="הלקוחה ביקשה הארכה - לאישור או דחייה בדף עריכת הגלריה"
+                style={{ padding: '0.25rem 0.75rem', borderRadius: 16, fontSize: 12, whiteSpace: 'nowrap', border: `1px solid ${theme.gold}`, color: theme.gold }}
+              >
+                ⏳ בקשת הארכה
+              </span>
+            )}
 
             {status === 'completed' && (
               <button
