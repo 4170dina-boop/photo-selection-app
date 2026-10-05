@@ -154,3 +154,36 @@ describe('lib/email', () => {
     expect(body.html).toContain('http://localhost/dashboard/calendar');
   });
 });
+
+describe('parseAdditionalInviteEmails', () => {
+  it('treats missing values as an empty list', async () => {
+    const { parseAdditionalInviteEmails } = await import('./email');
+    expect(parseAdditionalInviteEmails(undefined)).toEqual({ ok: true, value: [] });
+    expect(parseAdditionalInviteEmails(null)).toEqual({ ok: true, value: [] });
+  });
+
+  it('trims and drops empty strings', async () => {
+    const { parseAdditionalInviteEmails } = await import('./email');
+    expect(parseAdditionalInviteEmails([' a@b.co ', '', '  '])).toEqual({ ok: true, value: ['a@b.co'] });
+  });
+
+  it('rejects non-arrays and non-string entries', async () => {
+    const { parseAdditionalInviteEmails } = await import('./email');
+    expect(parseAdditionalInviteEmails('a@b.co').ok).toBe(false);
+    expect(parseAdditionalInviteEmails({}).ok).toBe(false);
+    expect(parseAdditionalInviteEmails(['a@b.co', 5]).ok).toBe(false);
+    expect(parseAdditionalInviteEmails([null]).ok).toBe(false);
+  });
+
+  it('rejects invalid emails', async () => {
+    const { parseAdditionalInviteEmails } = await import('./email');
+    expect(parseAdditionalInviteEmails(['not-an-email']).ok).toBe(false);
+  });
+
+  it('caps the list at 10 addresses', async () => {
+    const { parseAdditionalInviteEmails } = await import('./email');
+    const ten = Array.from({ length: 10 }, (_, i) => `u${i}@x.co`);
+    expect(parseAdditionalInviteEmails(ten).ok).toBe(true);
+    expect(parseAdditionalInviteEmails([...ten, 'u10@x.co']).ok).toBe(false);
+  });
+});

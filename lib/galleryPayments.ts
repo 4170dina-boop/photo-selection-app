@@ -132,3 +132,31 @@ export async function syncPaidAtAndLoad(
     summary: { ...state.summary, outstanding: newPaidAt ? 0 : Math.max(0, state.summary.balance) },
   };
 }
+
+// לקריאה מ-routes שמשנים את הסכום לתשלום בעקיפין (בחירה של הלקוחה, סימון
+// מתנה, עריכת החבילה): מסנכרן את paid_at רק כשיש לגלריה לפחות תשלום רשום
+// אחד (בלי תשלומים nextPaidAt ממילא לא נוגע בו), ורק כשאין דריסה ידנית של
+// הסכום (אז הסכום לא השתנה בכלל). best-effort - לעולם לא זורק, רק רושם ללוג,
+// כדי לא להכשיל את הבקשה העיקרית שכבר הצליחה.
+export async function syncPaidAtAfterTotalChange(supabase: SupabaseClient, galleryId: string): Promise<void> {
+  try {
+    const { count, error: countError } = await supabase
+      .from('gallery_payments')
+      .select('id', { count: 'exact', head: true })
+      .eq('gallery_id', galleryId);
+    if (countError) throw countError;
+    if (!count) return;
+
+    const { data: gallery, error: galleryError } = await supabase
+      .from('galleries')
+      .select('id, paid_at, amount_due_override, owner_participant_id')
+      .eq('id', galleryId)
+      .single();
+    if (galleryError || !gallery) throw galleryError ?? new Error('gallery not found');
+    if (gallery.amount_due_override != null) return;
+
+    await syncPaidAtAndLoad(supabase, gallery as OwnedGallery, 'total_changed');
+  } catch (err) {
+    console.error('[payments] סנכרון paid_at אחרי שינוי בסכום נכשל:', err);
+  }
+}

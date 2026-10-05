@@ -56,13 +56,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'עדכון גלריות שפג תוקפן נכשל' }, { status: 500 });
   }
 
-  // 2. גלריות שמתקרבות לתוקף ועוד לא נשלחה עליהן תזכורת - שולחים אחת (חד-פעמית)
+  // 2. גלריות שמתקרבות לתוקף ועוד לא נשלחה עליהן תזכורת - שולחים אחת (חד-פעמית).
+  // כולל גלריות שהצלמת פתחה מחדש לבחירה (completed + reopened_for_selection_at) -
+  // הלקוחה שוב באמצע בחירה, ותוקף שפג חוסם אותה גם שם (checkGalleryWritable).
   const { data: candidates, error: candidatesError } = await supabaseAdmin
     .from('galleries')
     .select(
       'id, expires_at, reminder_days, status, clients(full_name, email, access_code), photographers(business_name, reminder_days_default, auth_user_id)'
     )
-    .in('status', ['sent', 'in_progress'])
+    .or('status.in.(sent,in_progress),and(status.eq.completed,reopened_for_selection_at.not.is.null)')
     .not('expires_at', 'is', null)
     .is('last_reminder_sent_at', null);
 

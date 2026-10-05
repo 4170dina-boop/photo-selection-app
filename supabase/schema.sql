@@ -118,10 +118,10 @@ create table galleries (
   view_count int default 0 not null,
   last_viewed_at timestamptz,
   -- מאפשרת לצלמת לפתוח מחדש בחירה ללקוחה אחרי שסימנה "סיימתי לבחור", בלי
-  -- להחזיר את status מ-completed לאחור: הפיכת status לאחור הייתה מפעילה שוב
-  -- את trg_enforce_active_gallery_limit (למטה) ונתקעת ב-LIMIT_ACTIVE_GALLERY
-  -- כי בדרך כלל הצלמת כבר השלימה את הגלריה הזו בשביל לפנות מקום לגלריה
-  -- פעילה אחרת. אז זו עמודה עצמאית לגמרי: status נשאר completed, וכאן
+  -- להחזיר את status מ-completed לאחור (status נשאר completed, והסיום החוזר
+  -- ב-app/api/gallery/[id]/finish מנקה את העמודה). גלריה שנפתחה מחדש נספרת
+  -- כפעילה במגבלת החשבון החינמי (trg_enforce_active_gallery_limit למטה) -
+  -- אחרת פתיחה מחדש הייתה עוקפת את מגבלת הגלריה הפעילה האחת. וכאן
   -- נסמן שהעריכה מותרת למרות זאת (checkGalleryWritable ב-lib/galleryAccess.ts
   -- בודקת גם אותה). null = נעולה כרגיל, לא-null = פתוחה לבחירה מחדש.
   reopened_for_selection_at timestamptz,
@@ -567,8 +567,8 @@ for each row execute function public.handle_new_photographer();
 -- המגבלה לגמרי ע"י UPDATE ישיר על גלריה completed/expired קיימת שלה בחזרה
 -- לסטטוס פעיל (draft/sent/in_progress) - קריאת update אף פעם לא מפעילה
 -- טריגר שמוגדר רק על insert. בודקים את הספירה רק כשגלריה בפועל "נפתחת" -
--- insert של גלריה לא-completed/expired, או update שהופך גלריה completed/
--- expired ללא-כזו - כדי לא להריץ את הבדיקה בכל update רגיל של גלריה שכבר
+-- insert של גלריה פעילה, או update שהופך גלריה לא-פעילה לפעילה (status
+-- חוזר מ-completed/expired, או reopened_for_selection_at הופך ללא-null) - כדי לא להריץ את הבדיקה בכל update רגיל של גלריה שכבר
 -- פעילה (למשל מעבר sent -> in_progress בכל כניסה של לקוחה, ראו
 -- app/api/gallery/[id]/route.ts).
 create or replace function enforce_active_gallery_limit()
@@ -576,14 +576,21 @@ returns trigger as $$
 declare
   active_count int;
   unlimited boolean;
+  new_active boolean;
   should_check boolean;
 begin
-  if new.status in ('completed', 'expired') then
+  -- "פעילה" = עדיין בבחירה (status לא completed/expired) או שהצלמת פתחה
+  -- אותה מחדש לבחירה (reopened_for_selection_at) - מבחינת הלקוחה זו גלריה
+  -- פעילה לכל דבר, ובלי זה פתיחה מחדש (גם ישירות מהדפדפן דרך ה-RLS) עקפה
+  -- את המגבלה.
+  new_active := new.status not in ('completed', 'expired') or new.reopened_for_selection_at is not null;
+
+  if not new_active then
     should_check := false;
   elsif tg_op = 'INSERT' then
     should_check := true;
   else
-    should_check := old.status in ('completed', 'expired');
+    should_check := not (old.status not in ('completed', 'expired') or old.reopened_for_selection_at is not null);
   end if;
 
   if not should_check then
@@ -605,7 +612,8 @@ begin
   select count(*) into active_count
   from galleries
   where photographer_id = new.photographer_id
-    and status not in ('completed', 'expired');
+    and id <> new.id
+    and (status not in ('completed', 'expired') or reopened_for_selection_at is not null);
 
   if active_count >= 1 then
     raise exception 'LIMIT_ACTIVE_GALLERY: חשבון חינמי מוגבל לגלריה פעילה אחת - השלימי או מחקי גלריה קיימת כדי ליצור חדשה';
@@ -615,6 +623,7 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists trg_enforce_active_gallery_limit on galleries;
 create trigger trg_enforce_active_gallery_limit
 before insert or update on galleries
 for each row execute function enforce_active_gallery_limit();
@@ -1304,3 +1313,63 @@ create policy "public read logos" on storage.objects
 -- alter table photos add column if not exists is_gift boolean default false not null;
 -- alter table photos add column if not exists gift_message text check (gift_message is null or char_length(gift_message) <= 200);
 -- create index if not exists idx_photos_gallery_gift on photos(gallery_id) where is_gift;
+
+
+-- אם כבר הרצת גרסה קודמת שבה גלריה שנפתחה מחדש לבחירה (reopened_for_selection_at)
+-- לא נספרה במגבלת הגלריה הפעילה של חשבון חינמי, מריצים גם את זה:
+-- create or replace function enforce_active_gallery_limit()
+-- returns trigger as $$
+-- declare
+--   active_count int;
+--   unlimited boolean;
+--   new_active boolean;
+--   should_check boolean;
+-- begin
+--   -- "פעילה" = עדיין בבחירה (status לא completed/expired) או שהצלמת פתחה
+--   -- אותה מחדש לבחירה (reopened_for_selection_at) - מבחינת הלקוחה זו גלריה
+--   -- פעילה לכל דבר, ובלי זה פתיחה מחדש (גם ישירות מהדפדפן דרך ה-RLS) עקפה
+--   -- את המגבלה.
+--   new_active := new.status not in ('completed', 'expired') or new.reopened_for_selection_at is not null;
+--
+--   if not new_active then
+--     should_check := false;
+--   elsif tg_op = 'INSERT' then
+--     should_check := true;
+--   else
+--     should_check := not (old.status not in ('completed', 'expired') or old.reopened_for_selection_at is not null);
+--   end if;
+--
+--   if not should_check then
+--     return new;
+--   end if;
+--
+--   select is_unlimited into unlimited from photographers where id = new.photographer_id;
+--   if unlimited then
+--     return new;
+--   end if;
+--
+--   -- מנעול advisory בתוך הטרנזקציה (לפי photographer_id), לפני הספירה: בלי זה
+--   -- שתי הכנסות/עדכונים מקבילים על אותה צלמת יכולים לקרוא את אותה ספירה
+--   -- "לפני" ולעבור את הבדיקה שניהם (race condition קלאסי - TOCTOU), ולחרוג
+--   -- בפועל ממגבלת גלריה פעילה אחת. המנעול משתחרר אוטומטית בסוף הטרנזקציה,
+--   -- אין row ממשי לנעול כי הספירה נגזרת (derived) ולא שורה בודדת.
+--   perform pg_advisory_xact_lock(hashtext(new.photographer_id::text));
+--
+--   select count(*) into active_count
+--   from galleries
+--   where photographer_id = new.photographer_id
+--     and id <> new.id
+--     and (status not in ('completed', 'expired') or reopened_for_selection_at is not null);
+--
+--   if active_count >= 1 then
+--     raise exception 'LIMIT_ACTIVE_GALLERY: חשבון חינמי מוגבל לגלריה פעילה אחת - השלימי או מחקי גלריה קיימת כדי ליצור חדשה';
+--   end if;
+--
+--   return new;
+-- end;
+-- $$ language plpgsql;
+--
+-- drop trigger if exists trg_enforce_active_gallery_limit on galleries;
+-- create trigger trg_enforce_active_gallery_limit
+-- before insert or update on galleries
+-- for each row execute function enforce_active_gallery_limit();
