@@ -5,7 +5,7 @@ import { BLUR_THRESHOLD } from '@/lib/sharpness';
 import { getPresignedDownloadUrl } from '@/lib/r2';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { countBillableSelected } from '@/lib/gifts';
-import { hasWatermarkedThumbnail } from '@/lib/uploadPolicy';
+import { gridThumbKey, hasWatermarkedThumbnail, isKeyInGallery } from '@/lib/uploadPolicy';
 import { resolveGalleryViewAccess } from '@/lib/galleryAccess';
 
 // service_role - נשאר בצד שרת בלבד. כל הגישה של הלקוחה לנתוני הגלריה
@@ -142,15 +142,22 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const photos = await Promise.all(
     processedPhotos.map(async (photo) => {
-      const thumbUrl = await getPresignedDownloadUrl(photo.thumbnail_path as string, SIGNED_URL_TTL_SECONDS);
+      // fullUrl = התצוגה הגדולה עם סימן המים (2000px) - לתצוגה מוגדלת/סליידשואו/השוואה.
+      // thumbnailUrl = תמונת הגריד הקטנה (480px, אותו סימן מים) לאריחים בגריד;
+      // תמונות ישנות שעוד אין להן גריד (thumbnail_path בפורמט הישן, ראו
+      // gridThumbKey) נופלות חזרה לתצוגה הגדולה. בשני המקרים file_path (המקור
+      // הנקי) לא נחשף ללקוחה בשום מקום; הוא משמש רק בצד שרת לצורך המסירה
+      // הסופית (app/api/galleries/[id]/selected-photos).
+      const gridKey = gridThumbKey(photo.thumbnail_path);
+      const [fullUrl, gridUrl] = await Promise.all([
+        getPresignedDownloadUrl(photo.thumbnail_path as string, SIGNED_URL_TTL_SECONDS),
+        gridKey && isKeyInGallery(galleryId, gridKey) ? getPresignedDownloadUrl(gridKey, SIGNED_URL_TTL_SECONDS) : null,
+      ]);
 
-      // thumbnailUrl ו-fullUrl מצביעים לאותה גרסה (המוקטנת/עם סימן המים) -
-      // file_path (המקור הנקי) לא נחשף ללקוחה בשום מקום, כולל מצב השוואה
-      // מוגדל; הוא משמש רק בצד שרת לצורך המסירה הסופית (app/api/galleries/[id]/selected-photos).
       return {
         id: photo.id,
-        thumbnailUrl: thumbUrl,
-        fullUrl: thumbUrl,
+        thumbnailUrl: gridUrl ?? fullUrl,
+        fullUrl,
         original_filename: photo.original_filename,
         possiblyBlurry: possiblyBlurryIds.has(photo.id),
         isGift: giftById.has(photo.id),

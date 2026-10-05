@@ -99,3 +99,18 @@ export async function createWatermarkedPreview(
     .jpeg({ quality: 82 })
     .toBuffer();
 }
+
+// תמונת גריד קטנה לגלריית הלקוחה - אריח של ~140-200px לא צריך 2000px (300-600KB).
+// 480px בצלע הארוכה מכסה אריח של 200px גם במסך retina (x2.4).
+export const GRID_THUMB_DIMENSION = 480;
+const GRID_THUMB_QUALITY = 72;
+
+// מקבלת את התצוגה *שכבר* עם סימן מים (הפלט של createWatermarkedPreview) ורק
+// מקטינה אותה - כך שסימן המים זהה לתצוגה הגדולה, אין צורך במקור הנקי (עובד
+// גם אחרי שה-cron מחק את המקור), והעלות היא resize קטן בלבד.
+export async function createGridThumbnail(watermarkedPreview: Buffer): Promise<Buffer> {
+  return sharp(watermarkedPreview, { limitInputPixels: MAX_INPUT_PIXELS })
+    .resize({ width: GRID_THUMB_DIMENSION, height: GRID_THUMB_DIMENSION, fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: GRID_THUMB_QUALITY, progressive: true })
+    .toBuffer();
+}

@@ -26,6 +26,7 @@ import {
   swipeNavDelta,
   enlargedShortcutStatus,
   tapHintKey,
+  neighborPrefetchUrls,
 } from '@/lib/galleryClient';
 import { extractAccessCode } from '@/lib/accessCodePaste';
 
@@ -329,6 +330,19 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // ההגדלה הרגילה בלי שינוי.
   const [slideshowActive, setSlideshowActive] = useState(false);
   const [slideshowIndex, setSlideshowIndex] = useState(0);
+
+  // טעינה מוקדמת של התצוגה הגדולה של התמונה הבאה/הקודמת בתצוגה המוגדלת
+  // ובסליידשואו - הגריד טוען רק את תמונות הגריד הקטנות, אז בלי זה כל מעבר
+  // מחכה להורדה מלאה (במיוחד ברשת סלולרית חלשה). new Image() נכנס ל-cache
+  // של הדפדפן, וה-<img> המוגדל משתמש באותו URL חתום בדיוק.
+  const prefetchCurrentId = slideshowActive ? photos[slideshowIndex]?.id ?? null : enlargedId;
+  useEffect(() => {
+    neighborPrefetchUrls(photos, prefetchCurrentId).forEach((url) => {
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = url;
+    });
+  }, [photos, prefetchCurrentId]);
 
   // React מצרף מאזיני wheel/touch כ-passive כברירת מחדל, כך ש-preventDefault
   // בתוך onWheel/onTouchMove רגילים בכלל לא עובד (ורק זורק אזהרה בקונסול) -
@@ -3140,6 +3154,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 {photo.thumbnailUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
+                    // thumbnailUrl = תמונת הגריד הקטנה (480px) מה-API, או התצוגה הגדולה
+                    // לתמונות ישנות. בלי srcset לתצוגה הגדולה: 480px כבר מכסה אריח של
+                    // ~200px ב-x2, ו-2x היה מוריד את ה-2000px כמעט בכל טלפון.
                     src={photo.thumbnailUrl}
                     alt=""
                     draggable={false}
@@ -3147,7 +3164,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     decoding="async"
                     onError={() => handleImageError(photo.id)}
                     style={{
-                      width: '100%', height: 'auto', display: 'block', pointerEvents: 'none',
+                      // aspectRatio 'auto 4 / 3': שומר מקום (ורקע) עד שהתמונה נטענת ואז
+                      // עובר ליחס האמיתי שלה - בלי זה אריחים שלא נטענו בגובה 0, כך שגם
+                      // loading="lazy" טוען כמעט את כולם בבת אחת.
+                      width: '100%', height: 'auto', aspectRatio: 'auto 4 / 3', background: theme.panelInput,
+                      display: 'block', pointerEvents: 'none',
                       WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
                     }}
                   />

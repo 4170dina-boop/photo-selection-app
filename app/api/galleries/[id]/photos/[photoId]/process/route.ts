@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { deleteObjects, downloadToBuffer, headObject, uploadBuffer } from '@/lib/r2';
-import { isAllowedLogoUrl, isKeyInGallery, MAX_UPLOAD_BYTES, thumbnailKey } from '@/lib/uploadPolicy';
-import { createWatermarkedPreview } from '@/lib/watermark';
+import {
+  gridThumbKey,
+  hasWatermarkedThumbnail,
+  isAllowedLogoUrl,
+  isKeyInGallery,
+  MAX_UPLOAD_BYTES,
+  previewKey,
+} from '@/lib/uploadPolicy';
+import { createGridThumbnail, createWatermarkedPreview } from '@/lib/watermark';
 import { computeSharpnessScore } from '@/lib/sharpness';
 
 // יוצרת thumbnail_path אמיתי: מקטינה ומטביעה סימן מים על התמונה שהועלתה.
@@ -14,6 +21,12 @@ import { computeSharpnessScore } from '@/lib/sharpness';
 // בעלות נבדקת עם session הצלם - אותו דפוס כמו שאר ה-routes תחת
 // app/api/galleries/*. גישת ה-Storage עצמה (הורדה/העלאה) עוברת דרך lib/r2.ts
 // עם מפתחות R2 סודיים, בלי קשר ל-RLS של Supabase.
+//
+// כל עיבוד שומר שני אובייקטים: התצוגה הגדולה (previewKey, 2000px) ותמונת גריד
+// קטנה (gridThumbKey, 480px) שנגזרת מהתצוגה שכבר עם סימן מים. ?mode=grid =
+// השלמה "עצלה" לתמונות ישנות שעובדו לפני שהיו תמונות גריד: מורידה רק את
+// התצוגה הקיימת (לא את המקור - שאולי כבר נמחק ע"י ה-cron), מקטינה, ומעבירה
+// את thumbnail_path לפורמט החדש. ראו gridThumbKey ב-lib/uploadPolicy.ts.
 
 // הורדה + שינוי גודל + הטבעה של תמונה גדולה לוקחים זמן - ברירת המחדל של
 // Vercel (10 שניות) קצרה מדי לקבצים של עשרות MB.
@@ -68,6 +81,75 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     return NextResponse.json({ error: 'נתיב תמונה לא תקין' }, { status: 400 });
   }
 
+  // key קבוע לכל תמונה - הרצה חוזרת דורסת את אותו אובייקט במקום להשאיר thumb יתום.
+  const thumbnailPath = previewKey(params.id, photo.id);
+  const gridPath = gridThumbKey(thumbnailPath) as string;
+
+  // שמירה משותפת לשני המצבים: קודם שני האובייקטים, ורק אחר כך thumbnail_path -
+  // כך ש-thumbnail_path בפורמט החדש תמיד מבטיח שגם תמונת הגריד קיימת.
+  async function storeAndRecord(preview: Buffer, grid: Buffer): Promise<NextResponse | null> {
+    try {
+      await Promise.all([uploadBuffer(gridPath, grid, 'image/jpeg'), uploadBuffer(thumbnailPath, preview, 'image/jpeg')]);
+    } catch (err) {
+      return NextResponse.json({ error: 'העלאת התצוגה המעובדת נכשלה' }, { status: 500 });
+    }
+
+    const { error: updateError } = await supabase
+      .from('photos')
+      .update({ thumbnail_path: thumbnailPath })
+      .eq('id', photo!.id);
+
+    if (updateError) {
+      return NextResponse.json({ error: 'עדכון רשומת התמונה נכשל' }, { status: 500 });
+    }
+
+    // thumbnail ישן (uuid אקראי / פורמט thumbs/<id>.jpg מלפני תמונות הגריד) -
+    // מוחקים אותו כדי שלא יישאר יתום. אף פעם לא את המקור עצמו (thumbnail_path
+    // == file_path בשורות ישנות). URL חתום ישן אצל לקוחה שכבר פתוחה נכשל ->
+    // handleImageError בדף הגלריה מרענן ומקבל את ה-URLs החדשים.
+    const previousThumb = photo!.thumbnail_path;
+    if (
+      previousThumb &&
+      previousThumb !== thumbnailPath &&
+      previousThumb !== gridPath &&
+      previousThumb !== photo!.file_path &&
+      previousThumb.startsWith(`${params.id}/thumbs/`)
+    ) {
+      try {
+        await deleteObjects([previousThumb]);
+      } catch (err) {
+        console.error('[process] מחיקת thumbnail קודם נכשלה:', previousThumb, err);
+      }
+    }
+    return null;
+  }
+
+  if (req.nextUrl.searchParams.get('mode') === 'grid') {
+    // השלמה בלבד - תמונה שעוד לא עובדה צריכה עיבוד מלא (בלי mode).
+    if (!hasWatermarkedThumbnail(photo) || !isKeyInGallery(params.id, photo.thumbnail_path)) {
+      return NextResponse.json({ error: 'התמונה עוד לא עובדה' }, { status: 409 });
+    }
+    if (gridThumbKey(photo.thumbnail_path)) {
+      return NextResponse.json({ success: true, skipped: true });
+    }
+
+    const existingPreview = await downloadToBuffer(photo.thumbnail_path);
+    if (!existingPreview) {
+      return NextResponse.json({ error: 'התצוגה הקיימת לא נמצאה' }, { status: 404 });
+    }
+
+    let backfillGrid: Buffer;
+    try {
+      backfillGrid = await createGridThumbnail(existingPreview);
+    } catch (err) {
+      console.error('[process] יצירת תמונת גריד נכשלה:', photo.id, err);
+      return NextResponse.json({ error: 'עיבוד התמונה נכשל' }, { status: 500 });
+    }
+
+    const backfillFailure = await storeAndRecord(existingPreview, backfillGrid);
+    return backfillFailure ?? NextResponse.json({ success: true });
+  }
+
   // בודקים גודל לפני שמורידים לזיכרון - קובץ ענק היה מפיל את ה-function.
   const head = await headObject(photo.file_path).catch(() => null);
   if (!head) {
@@ -101,9 +183,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   }
 
   let watermarked: Buffer;
+  let grid: Buffer;
   try {
     const watermarkText = photographer.watermark_text?.trim() || photographer.business_name;
     watermarked = await createWatermarkedPreview(originalBuffer, watermarkText, logoBuffer);
+    grid = await createGridThumbnail(watermarked);
   } catch (err) {
     // לא מפילים את כל ההעלאה בגלל תמונה בעייתית אחת - thumbnail_path נשאר
     // null, כך שהתמונה פשוט לא מוצגת ללקוחה (אף פעם לא המקור בלי סימן מים),
@@ -112,39 +196,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     return NextResponse.json({ error: 'עיבוד התמונה נכשל' }, { status: 500 });
   }
 
-  // key קבוע לכל תמונה - הרצה חוזרת דורסת את אותו אובייקט במקום להשאיר thumb יתום.
-  const thumbnailPath = thumbnailKey(params.id, photo.id);
-
-  try {
-    await uploadBuffer(thumbnailPath, watermarked, 'image/jpeg');
-  } catch (err) {
-    return NextResponse.json({ error: 'העלאת התצוגה המעובדת נכשלה' }, { status: 500 });
-  }
-
-  const { error: updateError } = await supabase
-    .from('photos')
-    .update({ thumbnail_path: thumbnailPath })
-    .eq('id', photo.id);
-
-  if (updateError) {
-    return NextResponse.json({ error: 'עדכון רשומת התמונה נכשל' }, { status: 500 });
-  }
-
-  // thumbnail ישן מלפני המעבר ל-key קבוע (uuid אקראי) - מוחקים אותו כדי שלא
-  // יישאר יתום. אף פעם לא את המקור עצמו (thumbnail_path == file_path בשורות ישנות).
-  const previousThumb = photo.thumbnail_path;
-  if (
-    previousThumb &&
-    previousThumb !== thumbnailPath &&
-    previousThumb !== photo.file_path &&
-    previousThumb.startsWith(`${params.id}/thumbs/`)
-  ) {
-    try {
-      await deleteObjects([previousThumb]);
-    } catch (err) {
-      console.error('[process] מחיקת thumbnail קודם נכשלה:', previousThumb, err);
-    }
-  }
+  const failure = await storeAndRecord(watermarked, grid);
+  if (failure) return failure;
 
   // best-effort ומופרד מהעדכון הראשי בכוונה: אם sharpness_score עוד לא קיימת
   // כעמודה ב-DB (דורש להריץ את המיגרציה ב-supabase/schema.sql), כישלון כאן

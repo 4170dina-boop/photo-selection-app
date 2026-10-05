@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { getPresignedDownloadUrl } from '@/lib/r2';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
-import { hasWatermarkedThumbnail } from '@/lib/uploadPolicy';
+import { gridThumbKey, hasWatermarkedThumbnail, needsGridThumbBackfill } from '@/lib/uploadPolicy';
 
 // מחזירה לצלמת המחוברת תצוגה לקריאה בלבד של התמונות בגלריה: thumbnail + הסטטוס
 // הרשמי (של הבעלים בלבד - שיתוף גלריה משפחתי, בדיוק כמו app/dashboard/galleries/page.tsx
@@ -73,7 +73,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       // thumbnail. needsProcessing מסמן לדף ההעלאה להפעיל עיבוד מחדש, כי עד
       // אז התמונה מוסתרת מהלקוחה (ראו app/api/gallery/[id]/route.ts).
       const needsProcessing = !hasWatermarkedThumbnail(photo);
-      const thumbPath = needsProcessing ? photo.file_path : (photo.thumbnail_path as string);
+      // אריח בגריד - תמונת הגריד הקטנה אם כבר קיימת (ראו gridThumbKey), אחרת התצוגה הגדולה.
+      const thumbPath = needsProcessing ? photo.file_path : (gridThumbKey(photo.thumbnail_path) ?? (photo.thumbnail_path as string));
       const thumbnailUrl = await getPresignedDownloadUrl(thumbPath, SIGNED_URL_TTL_SECONDS);
 
       const selection = selectionByPhotoId.get(photo.id);
@@ -81,6 +82,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         id: photo.id,
         thumbnailUrl,
         needsProcessing,
+        // תמונה ישנה בלי תמונת גריד קטנה - דף ההעלאה משלים אותה ברקע (/process?mode=grid)
+        needsGridThumb: needsGridThumbBackfill(photo),
         createdAt: photo.created_at ?? null,
         original_filename: photo.original_filename,
         status: (selection?.status as 'maybe' | 'selected' | undefined) ?? null,

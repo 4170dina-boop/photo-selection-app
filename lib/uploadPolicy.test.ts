@@ -5,8 +5,11 @@ import {
   PROCESS_RETRY_GRACE_MS,
   buildFinalPhotoKey,
   buildPhotoKey,
+  gridThumbKey,
   hasWatermarkedThumbnail,
   indicesToUpload,
+  needsGridThumbBackfill,
+  previewKey,
   isAllowedLogoUrl,
   isFreshPhotoKey,
   isKeyInGallery,
@@ -122,6 +125,41 @@ describe('remainingPhotoQuota', () => {
     expect(remainingPhotoQuota(FREE_PHOTO_LIMIT, false)).toBe(0);
     expect(remainingPhotoQuota(FREE_PHOTO_LIMIT + 3, false)).toBe(0);
     expect(remainingPhotoQuota(1000, true)).toBeNull();
+  });
+});
+
+describe('grid thumbnail keys', () => {
+  it('previewKey lives in the gallery thumbs folder with the .hd.jpg marker', () => {
+    expect(previewKey(GID, UUID)).toBe(`${GID}/thumbs/${UUID}.hd.jpg`);
+    expect(isKeyInGallery(GID, previewKey(GID, UUID))).toBe(true);
+    expect(isFreshPhotoKey(GID, previewKey(GID, UUID))).toBe(false);
+  });
+
+  it('gridThumbKey is derived deterministically from a new-format thumbnail_path', () => {
+    const grid = gridThumbKey(previewKey(GID, UUID));
+    expect(grid).toBe(`${GID}/thumbs/${UUID}.sm.jpg`);
+    expect(isKeyInGallery(GID, grid)).toBe(true);
+    expect(isFreshPhotoKey(GID, grid)).toBe(false);
+    expect(grid).not.toBe(previewKey(GID, UUID));
+  });
+
+  it('gridThumbKey is null for legacy / missing / original paths (fallback to the big preview)', () => {
+    expect(gridThumbKey(thumbnailKey(GID, UUID))).toBeNull();
+    expect(gridThumbKey(`${GID}/thumbs/random-uuid.jpg`)).toBeNull();
+    expect(gridThumbKey(buildPhotoKey(GID, UUID, 'jpg'))).toBeNull();
+    expect(gridThumbKey(`${GID}/${UUID}.hd.jpg`)).toBeNull(); // לא בתיקיית thumbs
+    expect(gridThumbKey(`${GID}/thumbs/.hd.jpg`)).toBeNull();
+    expect(gridThumbKey(null)).toBeNull();
+    expect(gridThumbKey(undefined)).toBeNull();
+    expect(gridThumbKey('')).toBeNull();
+  });
+
+  it('needsGridThumbBackfill only for processed photos still in the legacy format', () => {
+    const file_path = buildPhotoKey(GID, UUID, 'jpg');
+    expect(needsGridThumbBackfill({ file_path, thumbnail_path: thumbnailKey(GID, UUID) })).toBe(true);
+    expect(needsGridThumbBackfill({ file_path, thumbnail_path: previewKey(GID, UUID) })).toBe(false);
+    expect(needsGridThumbBackfill({ file_path, thumbnail_path: null })).toBe(false);
+    expect(needsGridThumbBackfill({ file_path, thumbnail_path: file_path })).toBe(false);
   });
 });
 
