@@ -16,6 +16,20 @@ import {
 } from '@/lib/shoots';
 import { toHebrewDateString } from '@/lib/hebrewDate';
 import { deleteObjects } from '@/lib/r2';
+import {
+  isCronAuthorized,
+  resolveExpiryReminderDays,
+  isExpiryReminderDue,
+  expiryReminderQueryUpperBound,
+  originalsWarningThreshold,
+  originalsCleanupThreshold,
+  originalsWarningSentQueryUpperBound,
+  isOriginalsCleanupDue,
+  originalsDeletionDate,
+  deletableOriginalPaths,
+  fetchAllPages,
+  errorMessage,
+} from '@/lib/cronTick';
 
 // Endpoint אחד שמופעל ע"י תזמון חיצוני (Vercel Cron / Supabase pg_cron / כל
 // שירות cron אחר) - ראו README.md ("תזכורות וסטטוס אוטומטי") להוראות הפעלה.
@@ -26,213 +40,326 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY as string
 );
 
-function isAuthorized(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
+// 60 שניות = המקסימום הבטוח בכל תוכניות Vercel (גם Hobby). ריצה ששולחת
+// הרבה מיילים עוצרת את השליחות לפני הזמן (RUN_BUDGET_MS) ומשאירה את השאר
+// לריצה הבאה - כל השלבים idempotent.
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
 
-  const authHeader = req.headers.get('authorization');
-  if (authHeader === `Bearer ${secret}`) return true; // כך Vercel Cron שולח את הבקשה
+const RUN_BUDGET_MS = 50 * 1000;
+// Resend מגביל כברירת מחדל ל-2 בקשות בשנייה - השהיה קטנה בין שליחות
+// (ובנוסף ניסיון חוזר יחיד על 429 בתוך lib/email.ts).
+const SEND_DELAY_MS = 600;
+const PAGE_SIZE = 500;
 
-  return req.nextUrl.searchParams.get('secret') === secret; // fallback לשירותי cron חיצוניים
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+interface RunContext {
+  now: Date;
+  siteUrl: string;
+  deadline: number;
+  getPhotographerEmail: (authUserId: string | null | undefined) => Promise<string | undefined>;
+  // כישלון של שלב שלם (שאילתה שנכשלה / חריגה) - מחזיר 500 בסוף הריצה
+  stepErrors: { step: string; error: string }[];
+  // כישלון של פריט בודד (מייל אחד שלא נשלח וכו') - מדווח, לא מכשיל את הריצה
+  itemErrors: { step: string; id: string; error: string }[];
+  stoppedEarly: boolean;
+  sendsSoFar: number;
+}
+
+// השהיה לפני כל שליחה (חוץ מהראשונה), ובדיקת תקציב הזמן. false = לעצור.
+async function beforeSend(ctx: RunContext): Promise<boolean> {
+  if (Date.now() > ctx.deadline) {
+    ctx.stoppedEarly = true;
+    return false;
+  }
+  if (ctx.sendsSoFar > 0) await sleep(SEND_DELAY_MS);
+  ctx.sendsSoFar++;
+  return true;
+}
+
+// כל שלב רץ בנפרד - שגיאה בשלב אחד לא מדלגת על השלבים שאחריו.
+async function runStep<T extends Record<string, unknown>>(ctx: RunContext, step: string, fn: () => Promise<T>): Promise<Partial<T>> {
+  try {
+    return await fn();
+  } catch (err) {
+    console.error(`[cron/tick] שלב ${step} נכשל`, err);
+    ctx.stepErrors.push({ step, error: errorMessage(err) });
+    return {};
+  }
+}
+
+function itemError(ctx: RunContext, step: string, id: string, err: unknown) {
+  console.error(`[cron/tick] ${step}: פריט ${id} נכשל`, err);
+  ctx.itemErrors.push({ step, id, error: errorMessage(err) });
 }
 
 export async function GET(req: NextRequest) {
-  if (!isAuthorized(req)) {
+  if (!isCronAuthorized(req.headers.get('authorization'), process.env.CRON_SECRET)) {
     return NextResponse.json({ error: 'לא מורשה' }, { status: 401 });
   }
 
   const now = new Date();
+  const ctx: RunContext = {
+    now,
+    siteUrl: process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin,
+    deadline: Date.now() + RUN_BUDGET_MS,
+    getPhotographerEmail: createPhotographerEmailLookup(),
+    stepErrors: [],
+    itemErrors: [],
+    stoppedEarly: false,
+    sendsSoFar: 0,
+  };
 
-  // 1. גלריות שפג תוקפן עוברות ל-expired (מלבד כאלה שכבר הושלמו)
-  const { data: expiredGalleries, error: expireError } = await supabaseAdmin
+  const expire = await runStep(ctx, 'expire', () => expireGalleries(ctx));
+  const reminders = await runStep(ctx, 'expiryReminders', () => sendExpiryReminders(ctx));
+  const warnings = await runStep(ctx, 'originalsWarnings', () => sendOriginalsWarnings(ctx));
+  const cleanup = await runStep(ctx, 'originalsCleanup', () => cleanupOriginals(ctx));
+  const shootReminders = await runStep(ctx, 'shootReminders', () => sendShootReminders(ctx));
+  const shootSummaries = await runStep(ctx, 'shootSummaries', () => sendShootSummaries(ctx));
+
+  const failed = ctx.stepErrors.length > 0;
+  return NextResponse.json(
+    {
+      ok: !failed,
+      ...expire,
+      ...reminders,
+      ...warnings,
+      ...cleanup,
+      ...shootReminders,
+      ...shootSummaries,
+      stoppedEarly: ctx.stoppedEarly,
+      ...(failed ? { stepErrors: ctx.stepErrors } : {}),
+      ...(ctx.itemErrors.length ? { itemErrors: ctx.itemErrors } : {}),
+    },
+    { status: failed ? 500 : 200 }
+  );
+}
+
+// 1. גלריות שפג תוקפן עוברות ל-expired (מלבד כאלה שכבר הושלמו)
+async function expireGalleries(ctx: RunContext) {
+  const { data, error } = await supabaseAdmin
     .from('galleries')
     .update({ status: 'expired' })
     .not('expires_at', 'is', null)
-    .lt('expires_at', now.toISOString())
+    .lt('expires_at', ctx.now.toISOString())
     .in('status', ['draft', 'sent', 'in_progress'])
     .select('id');
+  if (error) throw new Error(`עדכון גלריות שפג תוקפן נכשל: ${error.message}`);
+  return { expiredCount: data?.length ?? 0 };
+}
 
-  if (expireError) {
-    return NextResponse.json({ error: 'עדכון גלריות שפג תוקפן נכשל' }, { status: 500 });
-  }
+// 2. גלריות שמתקרבות לתוקף ועוד לא נשלחה עליהן תזכורת - שולחים אחת (חד-פעמית).
+// כולל גלריות 'completed' שהצלמת פתחה מחדש לבחירה (reopened_for_selection_at) -
+// הלקוחה שוב בוחרת בהן, אז התזכורת רלוונטית.
+async function sendExpiryReminders(ctx: RunContext) {
+  const { now, siteUrl } = ctx;
+  const { rows: candidates, error } = await fetchAllPages((from, to) =>
+    supabaseAdmin
+      .from('galleries')
+      .select(
+        'id, expires_at, reminder_days, status, clients(full_name, email, access_code), photographers(business_name, reminder_days_default, auth_user_id)'
+      )
+      .or('status.in.(sent,in_progress),and(status.eq.completed,reopened_for_selection_at.not.is.null)')
+      .not('expires_at', 'is', null)
+      .gte('expires_at', now.toISOString())
+      .lte('expires_at', expiryReminderQueryUpperBound(now))
+      .is('last_reminder_sent_at', null)
+      .order('expires_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to)
+  , PAGE_SIZE);
+  if (error) throw new Error(`שליפת מועמדות לתזכורת נכשלה: ${errorMessage(error)}`);
 
-  // 2. גלריות שמתקרבות לתוקף ועוד לא נשלחה עליהן תזכורת - שולחים אחת (חד-פעמית)
-  const { data: candidates, error: candidatesError } = await supabaseAdmin
-    .from('galleries')
-    .select(
-      'id, expires_at, reminder_days, status, clients(full_name, email, access_code), photographers(business_name, reminder_days_default, auth_user_id)'
-    )
-    .in('status', ['sent', 'in_progress'])
-    .not('expires_at', 'is', null)
-    .is('last_reminder_sent_at', null);
-
-  if (candidatesError) {
-    return NextResponse.json({ error: 'שליפת מועמדות לתזכורת נכשלה' }, { status: 500 });
-  }
-
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
   let remindersSent = 0;
 
-  for (const gallery of candidates ?? []) {
-    const client = (gallery as any).clients;
-    const photographer = (gallery as any).photographers;
-    if (!client?.email || !photographer || !gallery.expires_at) continue;
+  for (const gallery of candidates) {
+    try {
+      const client = (gallery as any).clients;
+      const photographer = (gallery as any).photographers;
+      if (!client?.email || !photographer || !gallery.expires_at) continue;
 
-    const reminderDays = gallery.reminder_days ?? photographer.reminder_days_default ?? 5;
-    const expiresAt = new Date(gallery.expires_at);
+      const reminderDays = resolveExpiryReminderDays(gallery.reminder_days, photographer.reminder_days_default);
+      if (!isExpiryReminderDue(gallery.expires_at, reminderDays, now)) continue;
 
-    // משווים תאריכים אזרחיים בזמן ישראל (לא הפרש מדויק במילישניות) - expires_at
-    // נשמר בערך כ-23:59:59 (או 21:59:59 בשעון חורף) בזמן ישראל, אז השוואת
-    // timestamp מדויק מול "עכשיו" הייתה תלויה בשעה שבה ה-cron היומי רץ (ראו
-    // vercel.json - 08:00 UTC) וגורמת לתזכורת להישלח יום אחרי המיועד.
-    const daysUntilExpiry = daysBetweenDateStrings(israelDateString(now), israelDateString(expiresAt));
+      if (!(await beforeSend(ctx))) break;
 
-    if (daysUntilExpiry > reminderDays) continue; // עוד לא הגיע הזמן להזכיר
+      // "תופסים" את הגלריה לפני השליחה (כמו בשלב 5) - שתי ריצות מקבילות לא
+      // ישלחו פעמיים. אם השליחה נכשלת, משחררים כדי שהריצה הבאה תנסה שוב.
+      const claimedAt = now.toISOString();
+      const { data: claimed, error: claimError } = await supabaseAdmin
+        .from('galleries')
+        .update({ last_reminder_sent_at: claimedAt })
+        .eq('id', gallery.id)
+        .is('last_reminder_sent_at', null)
+        .select('id');
+      if (claimError) throw claimError;
+      if (!claimed?.length) continue;
 
-    // best-effort - כדי שתשובה של הלקוחה תגיע ישירות לצלמת. אם השליפה נכשלת
-    // (למשל המשתמש כבר לא קיים), פשוט שולחים בלי reply-to במקום להפיל את כל הריצה.
-    let photographerEmail: string | undefined;
-    if (photographer.auth_user_id) {
-      try {
-        const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(photographer.auth_user_id);
-        photographerEmail = authUser?.user?.email;
-      } catch {
-        // בכוונה שקט - ראו הערה למעלה
+      const result = await sendExpiryReminderEmail({
+        to: client.email,
+        clientName: client.full_name,
+        businessName: photographer.business_name,
+        galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
+        accessCode: client.access_code,
+        expiresAt: gallery.expires_at,
+        replyTo: await ctx.getPhotographerEmail(photographer.auth_user_id),
+      });
+
+      if (result.sent) {
+        remindersSent++;
+      } else {
+        await supabaseAdmin
+          .from('galleries')
+          .update({ last_reminder_sent_at: null })
+          .eq('id', gallery.id)
+          .eq('last_reminder_sent_at', claimedAt);
+        itemError(ctx, 'expiryReminders', gallery.id, result.error ?? 'send failed');
       }
-    }
-
-    const result = await sendExpiryReminderEmail({
-      to: client.email,
-      clientName: client.full_name,
-      businessName: photographer.business_name,
-      galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
-      accessCode: client.access_code,
-      expiresAt: gallery.expires_at,
-      replyTo: photographerEmail,
-    });
-
-    if (result.sent) {
-      await supabaseAdmin.from('galleries').update({ last_reminder_sent_at: now.toISOString() }).eq('id', gallery.id);
-      remindersSent++;
+    } catch (err) {
+      itemError(ctx, 'expiryReminders', gallery.id, err);
     }
   }
 
-  // 3. גלריות שיעברו 30 יום ממסירה בעוד 5 ימים או פחות (25+ יום שכבר עברו) -
-  // התראת מייל חד-פעמית לצלמת, כדי שתספיק להוריד את המקור בעצמה אם היא
-  // עוד לא עשתה את זה, לפני שהמחיקה הבלתי-הפיכה בשלב 4 למטה קורית.
-  const ORIGINALS_WARNING_DAYS_BEFORE = 5;
-  const ORIGINALS_GRACE_DAYS = 30;
-  const warningThreshold = new Date(now.getTime() - (ORIGINALS_GRACE_DAYS - ORIGINALS_WARNING_DAYS_BEFORE) * 24 * 60 * 60 * 1000);
+  return { candidatesChecked: candidates.length, remindersSent };
+}
 
-  const { data: warningCandidates, error: warningError } = await supabaseAdmin
-    .from('galleries')
-    .select('id, delivered_at, clients(full_name), photographers(auth_user_id)')
-    .not('delivered_at', 'is', null)
-    .lt('delivered_at', warningThreshold.toISOString())
-    .is('originals_cleaned_up_at', null)
-    .is('originals_deletion_warning_sent_at', null);
-
-  if (warningError) {
-    return NextResponse.json({ error: 'שליפת מועמדות להתראת מחיקת מקור נכשלה' }, { status: 500 });
-  }
+// 3. גלריות שיעברו 30 יום ממסירה בעוד 5 ימים או פחות - התראת מייל חד-פעמית
+// לצלמת, כדי שתספיק להוריד את המקור לפני המחיקה הבלתי-הפיכה בשלב 4.
+async function sendOriginalsWarnings(ctx: RunContext) {
+  const { now, siteUrl } = ctx;
+  const { rows: candidates, error } = await fetchAllPages((from, to) =>
+    supabaseAdmin
+      .from('galleries')
+      .select('id, delivered_at, clients(full_name), photographers(auth_user_id)')
+      .not('delivered_at', 'is', null)
+      .lt('delivered_at', originalsWarningThreshold(now))
+      .is('originals_cleaned_up_at', null)
+      .is('originals_deletion_warning_sent_at', null)
+      .order('delivered_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to)
+  , PAGE_SIZE);
+  if (error) throw new Error(`שליפת מועמדות להתראת מחיקת מקור נכשלה: ${errorMessage(error)}`);
 
   let originalsWarningsSent = 0;
 
-  for (const gallery of warningCandidates ?? []) {
-    const client = (gallery as any).clients;
-    const photographer = (gallery as any).photographers;
-    if (!client?.full_name || !photographer?.auth_user_id || !gallery.delivered_at) continue;
-
-    let photographerEmail: string | undefined;
+  for (const gallery of candidates) {
     try {
-      const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(photographer.auth_user_id);
-      photographerEmail = authUser?.user?.email;
-    } catch {
-      // בכוונה שקט - ראו הערה דומה בשלב 2 למעלה
-    }
-    if (!photographerEmail) continue;
+      const client = (gallery as any).clients;
+      const photographer = (gallery as any).photographers;
+      if (!client?.full_name || !photographer?.auth_user_id || !gallery.delivered_at) continue;
 
-    const deletionDate = new Date(new Date(gallery.delivered_at).getTime() + ORIGINALS_GRACE_DAYS * 24 * 60 * 60 * 1000);
+      const photographerEmail = await ctx.getPhotographerEmail(photographer.auth_user_id);
+      if (!photographerEmail) continue;
 
-    const result = await sendOriginalsDeletionWarningEmail({
-      to: photographerEmail,
-      clientName: client.full_name,
-      deletionDate: toHebrewDateString(deletionDate),
-      dashboardUrl: `${siteUrl}/dashboard/galleries/${gallery.id}/edit`,
-    });
+      if (!(await beforeSend(ctx))) break;
 
-    if (result.sent) {
-      await supabaseAdmin.from('galleries').update({ originals_deletion_warning_sent_at: now.toISOString() }).eq('id', gallery.id);
-      originalsWarningsSent++;
+      const claimedAt = now.toISOString();
+      const { data: claimed, error: claimError } = await supabaseAdmin
+        .from('galleries')
+        .update({ originals_deletion_warning_sent_at: claimedAt })
+        .eq('id', gallery.id)
+        .is('originals_deletion_warning_sent_at', null)
+        .select('id');
+      if (claimError) throw claimError;
+      if (!claimed?.length) continue;
+
+      const result = await sendOriginalsDeletionWarningEmail({
+        to: photographerEmail,
+        clientName: client.full_name,
+        deletionDate: toHebrewDateString(originalsDeletionDate(gallery.delivered_at, now)),
+        dashboardUrl: `${siteUrl}/dashboard/galleries/${gallery.id}/edit`,
+      });
+
+      if (result.sent) {
+        originalsWarningsSent++;
+      } else {
+        await supabaseAdmin
+          .from('galleries')
+          .update({ originals_deletion_warning_sent_at: null })
+          .eq('id', gallery.id)
+          .eq('originals_deletion_warning_sent_at', claimedAt);
+        itemError(ctx, 'originalsWarnings', gallery.id, result.error ?? 'send failed');
+      }
+    } catch (err) {
+      itemError(ctx, 'originalsWarnings', gallery.id, err);
     }
   }
 
-  // 4. גלריות שנמסרו לפני 30+ יום - מוחקות את קבצי המקור (לא הערוכים!) כדי
-  // לפנות מקום באחסון (R2, ראו lib/r2.ts). בשלב הזה הלקוחה כבר בחרה והצלמת
-  // כבר הורידה/ערכה את המקור אצלה, אז אין עוד סיבה שהעותק הזה יתפוס מקום.
-  const cleanupThreshold = new Date(now.getTime() - ORIGINALS_GRACE_DAYS * 24 * 60 * 60 * 1000);
+  return { originalsWarningsSent };
+}
 
-  const { data: deliveredGalleries, error: deliveredError } = await supabaseAdmin
-    .from('galleries')
-    .select('id')
-    .not('delivered_at', 'is', null)
-    .lt('delivered_at', cleanupThreshold.toISOString())
-    .is('originals_cleaned_up_at', null);
-
-  if (deliveredError) {
-    return NextResponse.json({ error: 'שליפת גלריות לניקוי מקור נכשלה' }, { status: 500 });
-  }
+// 4. גלריות שנמסרו לפני 30+ יום *וגם* שהצלמת קיבלה עליהן התראה לפני 5+ ימים -
+// מוחקות את קבצי המקור (לא הערוכים!) כדי לפנות מקום באחסון (R2, ראו lib/r2.ts).
+// מסמנים originals_cleaned_up_at רק אם כל השליפות והמחיקות הצליחו - אחרת
+// הריצה הבאה תנסה שוב (מחיקה ב-R2 היא idempotent).
+async function cleanupOriginals(ctx: RunContext) {
+  const { now } = ctx;
+  const { rows: galleries, error } = await fetchAllPages((from, to) =>
+    supabaseAdmin
+      .from('galleries')
+      .select('id, delivered_at, originals_cleaned_up_at, originals_deletion_warning_sent_at')
+      .not('delivered_at', 'is', null)
+      .lt('delivered_at', originalsCleanupThreshold(now))
+      .is('originals_cleaned_up_at', null)
+      .not('originals_deletion_warning_sent_at', 'is', null)
+      .lte('originals_deletion_warning_sent_at', originalsWarningSentQueryUpperBound(now))
+      .order('id', { ascending: true })
+      .range(from, to)
+  , PAGE_SIZE);
+  if (error) throw new Error(`שליפת גלריות לניקוי מקור נכשלה: ${errorMessage(error)}`);
 
   let originalsCleanedGalleries = 0;
   let originalFilesDeleted = 0;
 
-  for (const gallery of deliveredGalleries ?? []) {
-    const { data: photos } = await supabaseAdmin
-      .from('photos')
-      .select('file_path, thumbnail_path')
-      .eq('gallery_id', gallery.id);
-
-    // מוחקים רק תמונות שבהן יש עותק שני עצמאי (thumbnail בנתיב אחר מהמקור) -
-    // אם עיבוד סימן המים נכשל בזמנו (thumbnail_path == file_path, ראו
-    // .../photos/[photoId]/process/route.ts), זה העותק היחיד של התמונה
-    // ואסור למחוק אותו.
-    const paths = (photos ?? [])
-      .filter((p) => p.thumbnail_path && p.thumbnail_path !== p.file_path)
-      .map((p) => p.file_path);
-
-    if (paths.length > 0) {
-      try {
-        await deleteObjects(paths);
-        originalFilesDeleted += paths.length;
-      } catch (err) {
-        console.error('[cron/tick] מחיקת קבצי מקור נכשלה עבור גלריה', gallery.id, err);
-      }
+  for (const gallery of galleries) {
+    if (!isOriginalsCleanupDue(gallery, now)) continue;
+    if (Date.now() > ctx.deadline) {
+      ctx.stoppedEarly = true;
+      break;
     }
 
-    // מסמנים "נוקה" גם אם לא היה מה למחוק (כל התמונות בגלריה נכשלו בעיבוד) -
-    // כדי שלא נבדוק את אותה גלריה שוב בכל ריצה יומית.
-    await supabaseAdmin.from('galleries').update({ originals_cleaned_up_at: now.toISOString() }).eq('id', gallery.id);
-    originalsCleanedGalleries++;
+    try {
+      const { rows: photos, error: photosError } = await fetchAllPages((from, to) =>
+        supabaseAdmin
+          .from('photos')
+          .select('id, file_path, thumbnail_path')
+          .eq('gallery_id', gallery.id)
+          .order('id', { ascending: true })
+          .range(from, to)
+      , 1000);
+      if (photosError) throw new Error(`שליפת תמונות נכשלה: ${errorMessage(photosError)}`);
+
+      const paths = deletableOriginalPaths(photos);
+      if (paths.length > 0) {
+        const result = await deleteObjects(paths);
+        originalFilesDeleted += result.deletedCount;
+        if (result.failed.length > 0) {
+          const sample = result.failed.slice(0, 3).map((f) => `${f.key}: ${f.code ?? ''} ${f.message ?? ''}`.trim());
+          throw new Error(`מחיקת ${result.failed.length} קבצים נכשלה (${sample.join('; ')})`);
+        }
+      }
+
+      // מסמנים "נוקה" גם אם לא היה מה למחוק (כל התמונות נכשלו בעיבוד) - כדי
+      // שלא נבדוק את אותה גלריה שוב בכל ריצה יומית.
+      const { error: markError } = await supabaseAdmin
+        .from('galleries')
+        .update({ originals_cleaned_up_at: now.toISOString() })
+        .eq('id', gallery.id);
+      if (markError) throw markError;
+      originalsCleanedGalleries++;
+    } catch (err) {
+      itemError(ctx, 'originalsCleanup', gallery.id, err);
+    }
   }
 
-  // 5+6: יומן צילומים (טבלת shoots). בכוונה לא מחזירים 500 על שגיאת שליפה כאן
-  // (בניגוד לשלבים 1-4): השלבים הקודמים כבר רצו ונכתבו, ושגיאה כאן (למשל אם
-  // המיגרציה של shoots עוד לא הורצה) לא אמורה להיראות כמו כישלון של כל הריצה.
-  const shootResults = await runShootJobs(now, siteUrl);
-
-  return NextResponse.json({
-    expiredCount: expiredGalleries?.length ?? 0,
-    candidatesChecked: candidates?.length ?? 0,
-    remindersSent,
-    originalsWarningsSent,
-    originalsCleanedGalleries,
-    originalFilesDeleted,
-    ...shootResults,
-  });
+  return { originalsCleanedGalleries, originalFilesDeleted };
 }
 
-// מייל הצלמת (מ-auth.users) עם cache לריצה הנוכחית - צלמת עם כמה צילומים לא
-// צריכה כמה קריאות auth admin. best-effort כמו בשלב 2: כישלון = undefined.
+// מייל הצלמת (מ-auth.users) עם cache לריצה הנוכחית - צלמת עם כמה גלריות/צילומים
+// לא צריכה כמה קריאות auth admin. best-effort: כישלון = undefined (שולחים בלי
+// reply-to במקום להפיל את הריצה).
 function createPhotographerEmailLookup() {
   const cache = new Map<string, string | undefined>();
   return async (authUserId: string | null | undefined): Promise<string | undefined> => {
@@ -243,148 +370,159 @@ function createPhotographerEmailLookup() {
       const { data } = await supabaseAdmin.auth.admin.getUserById(authUserId);
       email = data?.user?.email;
     } catch {
-      // בכוונה שקט - ראו הערה דומה בשלב 2
+      // בכוונה שקט - ראו הערה למעלה
     }
     cache.set(authUserId, email);
     return email;
   };
 }
 
-async function runShootJobs(now: Date, siteUrl: string) {
-  const getPhotographerEmail = createPhotographerEmailLookup();
+// 5. תזכורת ללקוחה N ימים לפני הצילום (photographers.shoot_reminder_days,
+// ברירת מחדל 1). ההחלטה "האם עכשיו" היא לוגיקה טהורה ב-lib/shoots.ts.
+async function sendShootReminders(ctx: RunContext) {
+  const { now } = ctx;
   const todayIsrael = israelDateString(now);
 
-  // 5. תזכורת ללקוחה N ימים לפני הצילום (photographers.shoot_reminder_days,
-  // ברירת מחדל 1). ההחלטה "האם עכשיו" היא לוגיקה טהורה ב-lib/shoots.ts
-  // (selectShootsNeedingReminder, עם טסטים), כאן רק שליפה ושליחה.
+  const { rows: shootCandidates, error } = await fetchAllPages((from, to) =>
+    supabaseAdmin
+      .from('shoots')
+      .select(
+        'id, shoot_date, start_time, location, reminder_sent_at, clients(full_name, email), photographers(business_name, shoot_reminder_days, auth_user_id)'
+      )
+      .is('reminder_sent_at', null)
+      .gte('shoot_date', todayIsrael)
+      .lte('shoot_date', addDaysToDateString(todayIsrael, MAX_SHOOT_REMINDER_DAYS))
+      .order('shoot_date', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to)
+  , PAGE_SIZE);
+  if (error) throw new Error(`שליפת צילומים לתזכורת נכשלה: ${errorMessage(error)}`);
+
+  const dueShoots = selectShootsNeedingReminder(shootCandidates, (shoot) => (shoot as any).photographers?.shoot_reminder_days, now);
   let shootRemindersSent = 0;
-  let shootRemindersError: string | undefined;
-
-  const { data: shootCandidates, error: shootCandidatesError } = await supabaseAdmin
-    .from('shoots')
-    .select(
-      'id, shoot_date, start_time, location, reminder_sent_at, clients(full_name, email), photographers(business_name, shoot_reminder_days, auth_user_id)'
-    )
-    .is('reminder_sent_at', null)
-    .gte('shoot_date', todayIsrael)
-    .lte('shoot_date', addDaysToDateString(todayIsrael, MAX_SHOOT_REMINDER_DAYS));
-
-  if (shootCandidatesError) {
-    console.error('[cron/tick] שליפת צילומים לתזכורת נכשלה', shootCandidatesError);
-    shootRemindersError = 'שליפת צילומים לתזכורת נכשלה';
-  }
-
-  const dueShoots = selectShootsNeedingReminder(
-    shootCandidates ?? [],
-    (shoot) => (shoot as any).photographers?.shoot_reminder_days,
-    now
-  );
 
   for (const shoot of dueShoots) {
-    const client = (shoot as any).clients;
-    const photographer = (shoot as any).photographers;
-    if (!client?.email || !photographer) continue;
+    try {
+      const client = (shoot as any).clients;
+      const photographer = (shoot as any).photographers;
+      if (!client?.email || !photographer) continue;
 
-    // "תופסים" את הצילום לפני השליחה (update מותנה ב-reminder_sent_at is null) -
-    // כך שתי ריצות cron מקבילות לא ישלחו את אותה תזכורת פעמיים. אם השליחה
-    // נכשלת, משחררים חזרה כדי שהריצה הבאה תנסה שוב.
-    const { data: claimed } = await supabaseAdmin
-      .from('shoots')
-      .update({ reminder_sent_at: now.toISOString() })
-      .eq('id', shoot.id)
-      .is('reminder_sent_at', null)
-      .select('id');
-    if (!claimed?.length) continue;
+      if (!(await beforeSend(ctx))) break;
 
-    const result = await sendShootReminderEmail({
-      to: client.email,
-      clientName: client.full_name,
-      businessName: photographer.business_name,
-      shootDate: shoot.shoot_date,
-      startTime: shoot.start_time,
-      location: shoot.location,
-      whenLabel: daysUntilLabel(daysBetweenDateStrings(todayIsrael, shoot.shoot_date)),
-      replyTo: await getPhotographerEmail(photographer.auth_user_id),
-    });
+      // "תופסים" את הצילום לפני השליחה (update מותנה ב-reminder_sent_at is null) -
+      // כך שתי ריצות cron מקבילות לא ישלחו את אותה תזכורת פעמיים. אם השליחה
+      // נכשלת, משחררים חזרה כדי שהריצה הבאה תנסה שוב.
+      const claimedAt = now.toISOString();
+      const { data: claimed, error: claimError } = await supabaseAdmin
+        .from('shoots')
+        .update({ reminder_sent_at: claimedAt })
+        .eq('id', shoot.id)
+        .is('reminder_sent_at', null)
+        .select('id');
+      if (claimError) throw claimError;
+      if (!claimed?.length) continue;
 
-    if (result.sent) {
-      shootRemindersSent++;
-    } else {
-      await supabaseAdmin.from('shoots').update({ reminder_sent_at: null }).eq('id', shoot.id);
+      const result = await sendShootReminderEmail({
+        to: client.email,
+        clientName: client.full_name,
+        businessName: photographer.business_name,
+        shootDate: shoot.shoot_date,
+        startTime: shoot.start_time,
+        location: shoot.location,
+        whenLabel: daysUntilLabel(daysBetweenDateStrings(todayIsrael, shoot.shoot_date)),
+        replyTo: await ctx.getPhotographerEmail(photographer.auth_user_id),
+      });
+
+      if (result.sent) {
+        shootRemindersSent++;
+      } else {
+        await supabaseAdmin.from('shoots').update({ reminder_sent_at: null }).eq('id', shoot.id).eq('reminder_sent_at', claimedAt);
+        itemError(ctx, 'shootReminders', shoot.id, result.error ?? 'send failed');
+      }
+    } catch (err) {
+      itemError(ctx, 'shootReminders', shoot.id, err);
     }
   }
 
-  // 6. סיכום יומי לצלמת עם הצילומים של מחר - רק לצלמות שלא כיבו את זה
-  // (shoot_daily_summary_enabled) ורק פעם אחת ליום (shoot_summary_sent_on).
-  let shootSummariesSent = 0;
-  let shootSummariesError: string | undefined;
+  return { shootReminderCandidates: shootCandidates.length, shootRemindersSent };
+}
+
+// 6. סיכום יומי לצלמת עם הצילומים של מחר - רק לצלמות שלא כיבו את זה
+// (shoot_daily_summary_enabled) ורק פעם אחת ליום (shoot_summary_sent_on).
+async function sendShootSummaries(ctx: RunContext) {
+  const { now, siteUrl } = ctx;
+  const todayIsrael = israelDateString(now);
   const tomorrowIsrael = israelTomorrowDateString(now);
 
-  const { data: tomorrowShoots, error: tomorrowError } = await supabaseAdmin
-    .from('shoots')
-    .select(
-      'photographer_id, start_time, location, notes, clients(full_name), photographers(auth_user_id, shoot_daily_summary_enabled, shoot_summary_sent_on)'
-    )
-    .eq('shoot_date', tomorrowIsrael)
-    .order('start_time', { ascending: true });
+  const { rows: tomorrowShoots, error } = await fetchAllPages((from, to) =>
+    supabaseAdmin
+      .from('shoots')
+      .select(
+        'id, photographer_id, start_time, location, notes, clients(full_name), photographers(auth_user_id, shoot_daily_summary_enabled, shoot_summary_sent_on)'
+      )
+      .eq('shoot_date', tomorrowIsrael)
+      .order('start_time', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to)
+  , PAGE_SIZE);
+  if (error) throw new Error(`שליפת צילומי מחר נכשלה: ${errorMessage(error)}`);
 
-  if (tomorrowError) {
-    console.error('[cron/tick] שליפת צילומי מחר נכשלה', tomorrowError);
-    shootSummariesError = 'שליפת צילומי מחר נכשלה';
-  }
-
-  const byPhotographer = new Map<string, NonNullable<typeof tomorrowShoots>>();
-  for (const shoot of tomorrowShoots ?? []) {
+  const byPhotographer = new Map<string, typeof tomorrowShoots>();
+  for (const shoot of tomorrowShoots) {
     const list = byPhotographer.get(shoot.photographer_id) ?? [];
     list.push(shoot);
     byPhotographer.set(shoot.photographer_id, list);
   }
 
+  let shootSummariesSent = 0;
+
   for (const [photographerId, shoots] of Array.from(byPhotographer.entries())) {
-    const photographer = (shoots[0] as any).photographers;
-    if (!photographer || !shouldSendDailySummary(photographer.shoot_daily_summary_enabled, photographer.shoot_summary_sent_on, now)) {
-      continue;
-    }
+    try {
+      const photographer = (shoots[0] as any).photographers;
+      if (!photographer || !shouldSendDailySummary(photographer.shoot_daily_summary_enabled, photographer.shoot_summary_sent_on, now)) {
+        continue;
+      }
 
-    const photographerEmail = await getPhotographerEmail(photographer.auth_user_id);
-    if (!photographerEmail) continue;
+      const photographerEmail = await ctx.getPhotographerEmail(photographer.auth_user_id);
+      if (!photographerEmail) continue;
 
-    // אותו "תפיסה" מותנית כמו בשלב 5, כאן ליום: רק אם עוד לא סומן היום.
-    const { data: claimed } = await supabaseAdmin
-      .from('photographers')
-      .update({ shoot_summary_sent_on: todayIsrael })
-      .eq('id', photographerId)
-      .or(`shoot_summary_sent_on.is.null,shoot_summary_sent_on.neq.${todayIsrael}`)
-      .select('id');
-    if (!claimed?.length) continue;
+      if (!(await beforeSend(ctx))) break;
 
-    const result = await sendShootsDailySummaryEmail({
-      to: photographerEmail,
-      shootDate: tomorrowIsrael,
-      shoots: shoots.map((s) => ({
-        clientName: (s as any).clients?.full_name ?? '',
-        startTime: s.start_time,
-        location: s.location,
-        notes: s.notes,
-      })),
-      dashboardUrl: `${siteUrl}/dashboard/calendar`,
-    });
-
-    if (result.sent) {
-      shootSummariesSent++;
-    } else {
-      await supabaseAdmin
+      // אותה "תפיסה" מותנית כמו בשלב 5, כאן ליום: רק אם עוד לא סומן היום.
+      const { data: claimed, error: claimError } = await supabaseAdmin
         .from('photographers')
-        .update({ shoot_summary_sent_on: photographer.shoot_summary_sent_on ?? null })
-        .eq('id', photographerId);
+        .update({ shoot_summary_sent_on: todayIsrael })
+        .eq('id', photographerId)
+        .or(`shoot_summary_sent_on.is.null,shoot_summary_sent_on.neq.${todayIsrael}`)
+        .select('id');
+      if (claimError) throw claimError;
+      if (!claimed?.length) continue;
+
+      const result = await sendShootsDailySummaryEmail({
+        to: photographerEmail,
+        shootDate: tomorrowIsrael,
+        shoots: shoots.map((s) => ({
+          clientName: (s as any).clients?.full_name ?? '',
+          startTime: s.start_time,
+          location: s.location,
+          notes: s.notes,
+        })),
+        dashboardUrl: `${siteUrl}/dashboard/calendar`,
+      });
+
+      if (result.sent) {
+        shootSummariesSent++;
+      } else {
+        await supabaseAdmin
+          .from('photographers')
+          .update({ shoot_summary_sent_on: photographer.shoot_summary_sent_on ?? null })
+          .eq('id', photographerId);
+        itemError(ctx, 'shootSummaries', photographerId, result.error ?? 'send failed');
+      }
+    } catch (err) {
+      itemError(ctx, 'shootSummaries', photographerId, err);
     }
   }
 
-  return {
-    shootReminderCandidates: shootCandidates?.length ?? 0,
-    shootRemindersSent,
-    shootSummariesSent,
-    ...(shootRemindersError ? { shootRemindersError } : {}),
-    ...(shootSummariesError ? { shootSummariesError } : {}),
-  };
+  return { shootSummariesSent };
 }

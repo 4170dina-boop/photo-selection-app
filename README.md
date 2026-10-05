@@ -467,13 +467,19 @@ npm test
 ב-`lib/shoots.ts` (תאריכים לוחיים בזמן ישראל, לא תלוי בשעת הריצה).
 
 **הפעלת ה-cron בפועל** - `app/api/cron/tick` מוגן ב-`CRON_SECRET`, ומצפה לו כ-
-`Authorization: Bearer <secret>` או כ-`?secret=<secret>` ב-query. יש כמה אופציות:
+`Authorization: Bearer <secret>` בלבד (לא ב-query string - כתובות URL נשמרות בלוגים). יש כמה אופציות:
 - **Vercel Cron** (אם מפרסמים ב-Vercel): הוגדר כבר ב-`vercel.json` (פעם ביום, 08:00 UTC).
   צריך רק להגדיר `CRON_SECRET` במשתני הסביבה של הפרויקט ב-Vercel - Vercel שולח אותו
   אוטומטית כ-Authorization header.
 - **שירות cron חיצוני** (cron-job.org וכו') או **Supabase pg_cron + pg_net**: קוראים
-  ל-`GET https://<domain>/api/cron/tick?secret=<CRON_SECRET>` בתדירות הרצויה.
-- **בדיקה מקומית**: `curl "http://localhost:3000/api/cron/tick?secret=$CRON_SECRET"`
+  ל-`GET https://<domain>/api/cron/tick` עם header `Authorization: Bearer <CRON_SECRET>`
+  (ב-cron-job.org: "Headers" בהגדרות ה-job; ב-pg_net: הפרמטר `headers` של `net.http_get`).
+- **בדיקה מקומית**: `curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/tick`
+
+כל שלב בריצה רץ בנפרד: שגיאה בשלב אחד לא מדלגת על השאר. התשובה מפרטת `stepErrors`
+(ואז סטטוס 500) ו-`itemErrors` (פריט בודד שנכשל, למשל מייל אחד - סטטוס נשאר 200).
+מחיקת קבצי מקור (30 יום אחרי מסירה) קורית רק אם ההתראה לצלמת נשלחה לפחות 5 ימים
+קודם, ורק כשכל הקבצים נמחקו בהצלחה מסומן `originals_cleaned_up_at`.
 
 ## עיצוב אחיד (כהה-זהב) בכל המסכים
 

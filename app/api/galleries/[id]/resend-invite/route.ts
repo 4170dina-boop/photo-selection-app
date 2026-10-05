@@ -42,30 +42,28 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
-  const { sent: emailSent } = await sendGalleryInviteEmail({
-    to: client.email,
-    clientName: client.full_name,
-    businessName: photographer.business_name,
-    galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
-    accessCode: client.access_code,
-    replyTo: user.email,
-  });
 
-  // אותו מייל נשלח שוב גם לכתובות הנוספות (additional_invite_emails) - לא רק
-  // ללקוחה הראשית, בדיוק כמו ביצירה (app/api/galleries/route.ts).
+  // הלקוחה הראשית ואז הכתובות הנוספות (additional_invite_emails), בדיוק כמו
+  // ביצירה (app/api/galleries/route.ts). ברצף ולא במקביל - כדי לא לחרוג
+  // ממגבלת הקצב של Resend - ועם תוצאה לכל נמען, כדי שהצלמת תדע למי לא הגיע.
   const additionalInviteEmails: string[] = (gallery as any).additional_invite_emails ?? [];
-  await Promise.all(
-    additionalInviteEmails.map((to) =>
-      sendGalleryInviteEmail({
-        to,
-        clientName: client.full_name,
-        businessName: photographer.business_name,
-        galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
-        accessCode: client.access_code,
-        replyTo: user.email,
-      })
-    )
-  );
+  const recipients = [client.email as string, ...additionalInviteEmails];
+  const results: { to: string; sent: boolean; error?: string }[] = [];
 
-  return NextResponse.json({ emailSent });
+  for (const to of recipients) {
+    const result = await sendGalleryInviteEmail({
+      to,
+      clientName: client.full_name,
+      businessName: photographer.business_name,
+      galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
+      accessCode: client.access_code,
+      replyTo: user.email,
+    });
+    results.push({ to, sent: result.sent, ...(result.error ? { error: result.error } : {}) });
+  }
+
+  const emailSent = results[0]?.sent ?? false;
+  const failedAdditional = results.slice(1).filter((r) => !r.sent).map((r) => r.to);
+
+  return NextResponse.json({ emailSent, results, failedAdditional });
 }

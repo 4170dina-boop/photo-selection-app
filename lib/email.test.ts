@@ -128,6 +128,108 @@ describe('lib/email', () => {
     expect(body.html).toContain('פארק &lt;הירקון&gt;');
   });
 
+  it('never throws when fetch rejects - returns sent:false with the error', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    vi.resetModules();
+    global.fetch = vi.fn().mockRejectedValue(new Error('network down')) as unknown as typeof fetch;
+
+    const { sendGalleryInviteEmail } = await import('./email');
+    const result = await sendGalleryInviteEmail({
+      to: 'client@example.com',
+      clientName: 'לקוחה',
+      businessName: 'סטודיו',
+      galleryUrl: 'http://localhost/gallery/1',
+      accessCode: 'ABCD1234',
+    });
+    expect(result).toEqual({ sent: false, error: 'network down' });
+  });
+
+  it('does not throw when reading the error body fails', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    vi.resetModules();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => {
+        throw new Error('stream broken');
+      },
+    }) as unknown as typeof fetch;
+
+    const { sendGalleryInviteEmail } = await import('./email');
+    const result = await sendGalleryInviteEmail({
+      to: 'client@example.com',
+      clientName: 'לקוחה',
+      businessName: 'סטודיו',
+      galleryUrl: 'http://localhost/gallery/1',
+      accessCode: 'ABCD1234',
+    });
+    expect(result).toEqual({ sent: false, error: 'HTTP 500' });
+  });
+
+  it('retries once on HTTP 429', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    vi.resetModules();
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, headers: new Headers({ 'retry-after': '0' }), text: async () => 'slow down' })
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    const { sendGalleryInviteEmail } = await import('./email');
+    const result = await sendGalleryInviteEmail({
+      to: 'client@example.com',
+      clientName: 'לקוחה',
+      businessName: 'סטודיו',
+      galleryUrl: 'http://localhost/gallery/1',
+      accessCode: 'ABCD1234',
+    });
+    expect(result.sent).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('escapes every interpolated value and drops non-http(s) links', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    const { sendReviewRequestEmail, sendClientSelectionSummaryEmail } = await import('./email');
+    await sendReviewRequestEmail({
+      to: 'client@example.com',
+      clientName: '<script>x</script>',
+      businessName: 'Dina "Studio" <b>',
+      reviewLink: 'javascript:alert(1)',
+    });
+    let body = JSON.parse((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.html).not.toContain('<script>');
+    expect(body.html).toContain('&lt;script&gt;');
+    expect(body.html).not.toContain('<b>"');
+    expect(body.html).not.toContain('javascript:');
+    expect(body.from).toBe('"Dina Studio b" <onboarding@resend.dev>');
+
+    await sendClientSelectionSummaryEmail({
+      to: 'client@example.com',
+      clientName: 'לקוחה',
+      businessName: 'סטודיו',
+      filenames: ['<img src=x onerror=alert(1)>.jpg'],
+    });
+    body = JSON.parse((fetchSpy.mock.calls[1] as [string, RequestInit])[1].body as string);
+    expect(body.html).not.toContain('<img');
+    expect(body.html).toContain('&lt;img src=x onerror=alert(1)&gt;.jpg');
+  });
+
+  it('attribute-escapes http(s) CTA links', async () => {
+    const { safeHref, escapeHtml, sanitizeDisplayName, retryDelayMs } = await import('./email');
+    expect(safeHref('https://example.com/a?x="1"&y=2')).toBe('https://example.com/a?x=%221%22&amp;y=2');
+    expect(safeHref('data:text/html,hi')).toBeNull();
+    expect(safeHref('not a url')).toBeNull();
+    expect(escapeHtml(`a'b"c`)).toBe('a&#39;b&quot;c');
+    expect(sanitizeDisplayName('A "B"\r\nBcc: x@y <z>\\')).toBe('A B Bcc: x@y z');
+    expect(retryDelayMs('2')).toBe(2000);
+    expect(retryDelayMs('999')).toBe(5000);
+    expect(retryDelayMs(null)).toBe(1000);
+  });
+
   it('sends the photographer a daily summary listing tomorrow\'s shoots', async () => {
     process.env.RESEND_API_KEY = 're_test_key';
     vi.resetModules();

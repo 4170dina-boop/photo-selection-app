@@ -10,25 +10,34 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 
 // כתובת השליחה: קודם app_settings בדאטהבייס (ניתנת לעריכה מ-/dashboard/admin
 // אחרי שיש דומיין מאומת ב-Resend, בלי לגעת ב-Vercel), ואז נופלים חזרה
-// למשתנה הסביבה, ואז לכתובת ה-sandbox הקבועה של Resend. נפח השליחה נמוך
-// מאוד (מייל בודד לפעולה), אז שאילתה נוספת בכל שליחה לא מצריכה caching.
+// למשתנה הסביבה, ואז לכתובת ה-sandbox הקבועה של Resend. נשמר ב-cache קצר
+// (דקה) ברמת המודול - ריצת cron ששולחת עשרות מיילים לא צריכה שאילתה לכל
+// מייל, ושינוי מ-/dashboard/admin עדיין נקלט תוך דקה לכל היותר.
+const FROM_ADDRESS_CACHE_MS = 60 * 1000;
+let fromAddressCache: { value: string; expiresAt: number } | null = null;
+
 async function getFromAddress(): Promise<string> {
+  if (fromAddressCache && fromAddressCache.expiresAt > Date.now()) return fromAddressCache.value;
+
   const fallback = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
 
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return fallback;
   }
 
+  let value = fallback;
   try {
     const supabaseAdmin = createAdminClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL as string,
       process.env.SUPABASE_SERVICE_ROLE_KEY as string
     );
     const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', 'resend_from_email').single();
-    return data?.value || fallback;
+    value = data?.value || fallback;
   } catch {
-    return fallback; // בכוונה שקט - עדיף לשלוח מהכתובת הישנה מאשר לא לשלוח בכלל
+    // בכוונה שקט - עדיף לשלוח מהכתובת הישנה מאשר לא לשלוח בכלל
   }
+  fromAddressCache = { value, expiresAt: Date.now() + FROM_ADDRESS_CACHE_MS };
+  return value;
 }
 
 interface SendResult {
@@ -54,34 +63,108 @@ interface SendOptions {
   replyTo?: string;
 }
 
+// שם התצוגה נכנס לכותרת From בתוך מרכאות - מרכאות/לוכסן הפוך/סוגריים
+// משולשים/ירידות שורה בשם העסק (טקסט חופשי של הצלמת) היו שוברים את הכותרת
+// או מאפשרים להזריק כתובת אחרת, אז מסירים אותם לגמרי.
+export function sanitizeDisplayName(name: string): string {
+  return name.replace(/[\r\n]+/g, ' ').replace(/["\\<>]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+export function buildFromHeader(fromAddress: string, fromName?: string): string {
+  const name = fromName ? sanitizeDisplayName(fromName) : '';
+  return name ? `"${name}" <${fromAddress}>` : fromAddress;
+}
+
+// כמה לחכות לפני ניסיון חוזר יחיד אחרי 429 (rate limit של Resend) - לפי
+// Retry-After אם קיים, עם תקרה כדי לא לתקוע בקשה/ריצת cron.
+const MAX_RETRY_WAIT_MS = 5000;
+export function retryDelayMs(retryAfterHeader: string | null | undefined): number {
+  if (retryAfterHeader == null || retryAfterHeader.trim() === '') return 1000;
+  const seconds = Number(retryAfterHeader);
+  if (!Number.isFinite(seconds) || seconds < 0) return 1000;
+  return Math.min(seconds * 1000, MAX_RETRY_WAIT_MS);
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function postToResend(payload: string): Promise<Response> {
+  return fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: payload,
+  });
+}
+
+// לעולם לא זורקת - כל כישלון (רשת, timeout, תשובה לא תקינה) חוזר כ-
+// { sent: false, error }. קריטי ל-cron: חריגה כאן הייתה משאירה שורות "תפוסות"
+// (reminder_sent_at וכו') ומפילה את כל השלבים שאחריה.
 async function sendEmail(to: string, subject: string, html: string, options: SendOptions = {}): Promise<SendResult> {
   if (!RESEND_API_KEY) {
     console.warn(`[email] RESEND_API_KEY לא מוגדר - מדלג על שליחת מייל ל-${to}`);
     return { sent: false, error: 'RESEND_API_KEY not configured' };
   }
 
-  const fromAddress = await getFromAddress();
-  const from = options.fromName ? `"${options.fromName}" <${fromAddress}>` : fromAddress;
+  try {
+    const fromAddress = await getFromAddress();
+    const from = buildFromHeader(fromAddress, options.fromName);
 
-  const body: Record<string, unknown> = { from, to, subject, html };
-  if (options.replyTo) body.reply_to = options.replyTo;
+    const body: Record<string, unknown> = { from, to, subject, html };
+    if (options.replyTo) body.reply_to = options.replyTo;
+    const payload = JSON.stringify(body);
 
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+    let res = await postToResend(payload);
+    if (res.status === 429) {
+      await sleep(retryDelayMs(res.headers?.get?.('retry-after')));
+      res = await postToResend(payload);
+    }
 
-  if (!res.ok) {
-    const text = await res.text();
-    console.error(`[email] שליחת מייל ל-${to} נכשלה: ${text}`);
-    return { sent: false, error: text };
+    if (!res.ok) {
+      let text = `HTTP ${res.status}`;
+      try {
+        text = (await res.text()) || text;
+      } catch {
+        // גוף התשובה לא קריא - נשארים עם קוד הסטטוס
+      }
+      console.error(`[email] שליחת מייל ל-${to} נכשלה: ${text}`);
+      return { sent: false, error: text };
+    }
+
+    return { sent: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[email] שליחת מייל ל-${to} נכשלה (חריגה): ${message}`);
+    return { sent: false, error: message };
   }
+}
 
-  return { sent: true };
+// ---------- נטרול ערכים בתוך HTML ----------
+
+// כל ערך שמוכנס לתבנית HTML (שם לקוחה, שם עסק, קוד גישה, שמות קבצים, מיקום,
+// הערות) הוא טקסט חופשי - מנטרלים תווים מיוחדים כדי שלא ישברו את המייל או
+// יזריקו HTML/קישורים.
+export function escapeHtml(value: string | number | null | undefined): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// כתובת לשימוש בתוך href: רק http/https (לא javascript:, data: וכו'), ומנוטרלת
+// לתוך attribute. null = כתובת לא תקינה - הכפתור פשוט לא יוצג.
+export function safeHref(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return escapeHtml(parsed.toString());
+  } catch {
+    return null;
+  }
 }
 
 // עטיפת HTML אחידה לכל המיילים - כרטיס לבן ממורכז על רקע בהיר (לא הרקע הכהה
@@ -90,15 +173,18 @@ async function sendEmail(to: string, subject: string, html: string, options: Sen
 // שממותג כמו הכותרת העליונה באתר (theme.ts: theme.bg + theme.gold),
 // וכפתור קריאה-לפעולה בגרדיאנט הזהב של goldButtonStyle - כדי שהמייל ירגיש
 // כהמשך ישיר של חוויית האתר, לא כמו מייל אוטומטי גנרי.
+// headerText/ctaText הם טקסט רגיל (מנוטרלים כאן), bodyHtml הוא HTML שכל
+// ערך דינמי בו כבר עבר escapeHtml אצל הקורא.
 function wrapEmailHtml(params: { headerText: string; bodyHtml: string; ctaText?: string; ctaUrl?: string }): string {
+  const href = safeHref(params.ctaUrl);
   const cta =
-    params.ctaText && params.ctaUrl
+    params.ctaText && href
       ? `
         <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 24px auto 0;">
           <tr>
             <td style="border-radius: 8px; background: linear-gradient(135deg, #e3b3ac, #c98f89);">
-              <a href="${params.ctaUrl}" style="display: inline-block; padding: 14px 32px; font-family: sans-serif; font-size: 15px; font-weight: 700; color: #20120f; text-decoration: none;">
-                ${params.ctaText}
+              <a href="${href}" style="display: inline-block; padding: 14px 32px; font-family: sans-serif; font-size: 15px; font-weight: 700; color: #20120f; text-decoration: none;">
+                ${escapeHtml(params.ctaText)}
               </a>
             </td>
           </tr>
@@ -111,7 +197,7 @@ function wrapEmailHtml(params: { headerText: string; bodyHtml: string; ctaText?:
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e7e0d5;">
         <tr>
           <td style="background: #0f1626; padding: 20px 28px; text-align: center;">
-            <span style="font-family: sans-serif; font-size: 18px; font-weight: 700; color: #e3b3ac;">✨ ${params.headerText}</span>
+            <span style="font-family: sans-serif; font-size: 18px; font-weight: 700; color: #e3b3ac;">✨ ${escapeHtml(params.headerText)}</span>
           </td>
         </tr>
         <tr>
@@ -136,7 +222,7 @@ function accessCodeBadge(code: string): string {
   return `
     <div style="margin: 18px 0; padding: 12px 20px; background: #f4f1ec; border: 1px dashed #c98f89; border-radius: 8px; display: inline-block;">
       <span style="font-size: 12px; color: #9a8f7d;">קוד גישה</span><br />
-      <span style="font-size: 22px; font-weight: 700; letter-spacing: 2px; color: #a06a63; font-family: monospace;">${code}</span>
+      <span style="font-size: 22px; font-weight: 700; letter-spacing: 2px; color: #a06a63; font-family: monospace;">${escapeHtml(code)}</span>
     </div>
   `;
 }
@@ -157,8 +243,8 @@ export async function sendExpiryReminderEmail(params: ExpiryReminderParams): Pro
   const html = wrapEmailHtml({
     headerText: params.businessName,
     bodyHtml: `
-      <p style="margin: 0 0 8px;">היי ${params.clientName},</p>
-      <p style="margin: 0 0 8px;">הגלריה שלך אצל <b>${params.businessName}</b> עומדת לפוג בתאריך <b>${expiresDate}</b>.</p>
+      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
+      <p style="margin: 0 0 8px;">הגלריה שלך אצל <b>${escapeHtml(params.businessName)}</b> עומדת לפוג בתאריך <b>${escapeHtml(expiresDate)}</b>.</p>
       <p style="margin: 0;">אם עוד לא סיימת לבחור תמונות, זה הזמן 💛</p>
       ${accessCodeBadge(params.accessCode)}
     `,
@@ -185,8 +271,8 @@ export async function sendGalleryInviteEmail(params: GalleryInviteParams): Promi
   const html = wrapEmailHtml({
     headerText: params.businessName,
     bodyHtml: `
-      <p style="margin: 0 0 8px;">היי ${params.clientName},</p>
-      <p style="margin: 0 0 8px;">הגלריה שלך אצל <b>${params.businessName}</b> מוכנה לבחירת תמונות! ✨</p>
+      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
+      <p style="margin: 0 0 8px;">הגלריה שלך אצל <b>${escapeHtml(params.businessName)}</b> מוכנה לבחירת תמונות! ✨</p>
       ${accessCodeBadge(params.accessCode)}
       <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">
         אפשר לסמן "אולי"/"נבחר" על כל תמונה, ולהוסיף הערות. בסיום, ללחוץ "סיימתי לבחור" כדי לשלוח את הבחירה.
@@ -218,7 +304,7 @@ export async function sendSelectionCompleteEmail(params: SelectionCompleteParams
     headerText: 'אזור צלמים',
     bodyHtml: `
       <p style="margin: 0 0 8px;">היי,</p>
-      <p style="margin: 0;"><b>${params.clientName}</b> סיימה לבחור תמונות בגלריה - נבחרו <b>${params.selectedCount}</b> תמונות.</p>
+      <p style="margin: 0;"><b>${escapeHtml(params.clientName)}</b> סיימה לבחור תמונות בגלריה - נבחרו <b>${escapeHtml(params.selectedCount)}</b> תמונות.</p>
     `,
     ctaText: 'צפייה בבחירה ובהורדת התמונות',
     ctaUrl: params.dashboardUrl,
@@ -243,7 +329,7 @@ export async function sendQuotaReachedEmail(params: QuotaReachedParams): Promise
     headerText: 'אזור צלמים',
     bodyHtml: `
       <p style="margin: 0 0 8px;">היי,</p>
-      <p style="margin: 0 0 8px;"><b>${params.clientName}</b> בחרה ${params.includedPhotos} תמונות - בדיוק המכסה שכלולה בחבילה שלה.</p>
+      <p style="margin: 0 0 8px;"><b>${escapeHtml(params.clientName)}</b> בחרה ${escapeHtml(params.includedPhotos)} תמונות - בדיוק המכסה שכלולה בחבילה שלה.</p>
       <p style="margin: 0; font-size: 13px; color: #6b6156;">היא עדיין יכולה להמשיך לבחור (עם חיוב על חריגה), או שהיא כבר עומדת לסיים.</p>
     `,
     ctaText: 'צפייה בגלריה',
@@ -270,9 +356,9 @@ export async function sendFinalPhotosReadyEmail(params: FinalPhotosReadyParams):
   const html = wrapEmailHtml({
     headerText: params.businessName,
     bodyHtml: `
-      <p style="margin: 0 0 8px;">היי ${params.clientName},</p>
-      <p style="margin: 0 0 8px;">התמונות הערוכות הסופיות שלך אצל <b>${params.businessName}</b> מוכנות! ✨</p>
-      <p style="margin: 0; font-size: 13px; color: #6b6156;">${params.count} תמונות מחכות לך לצפייה ולהורדה, באותו קישור וקוד גישה שכבר יש לך.</p>
+      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
+      <p style="margin: 0 0 8px;">התמונות הערוכות הסופיות שלך אצל <b>${escapeHtml(params.businessName)}</b> מוכנות! ✨</p>
+      <p style="margin: 0; font-size: 13px; color: #6b6156;">${escapeHtml(params.count)} תמונות מחכות לך לצפייה ולהורדה, באותו קישור וקוד גישה שכבר יש לך.</p>
     `,
     ctaText: 'כניסה לגלריה',
     ctaUrl: params.galleryUrl,
@@ -301,7 +387,7 @@ export async function sendOriginalsDeletionWarningEmail(params: OriginalsDeletio
     headerText: 'אזור צלמים',
     bodyHtml: `
       <p style="margin: 0 0 8px;">היי,</p>
-      <p style="margin: 0 0 8px;">תמונות המקור (הלא-ערוכות) בגלריה של <b>${params.clientName}</b> יימחקו אוטומטית לצמיתות בתאריך <b>${params.deletionDate}</b>, כדי לפנות מקום באחסון.</p>
+      <p style="margin: 0 0 8px;">תמונות המקור (הלא-ערוכות) בגלריה של <b>${escapeHtml(params.clientName)}</b> יימחקו אוטומטית לצמיתות בתאריך <b>${escapeHtml(params.deletionDate)}</b>, כדי לפנות מקום באחסון.</p>
       <p style="margin: 0; font-size: 13px; color: #6b6156;">התמונות הערוכות הסופיות שהעלית ללקוחה לא נמחקות - זה רק על קבצי המקור המקוריים. אם את עדיין צריכה אותן, זה הזמן להוריד.</p>
     `,
     ctaText: 'צפייה בגלריה',
@@ -324,14 +410,14 @@ interface ClientSelectionSummaryParams {
 // ללקוחה עצמה (הבעלים) - לא לבני משפחה אחרים שרק תרמו קלט.
 export async function sendClientSelectionSummaryEmail(params: ClientSelectionSummaryParams): Promise<SendResult> {
   const list = params.filenames
-    .map((name) => `<li style="text-align: right; margin: 2px 0;">${name}</li>`)
+    .map((name) => `<li style="text-align: right; margin: 2px 0;">${escapeHtml(name)}</li>`)
     .join('');
 
   const html = wrapEmailHtml({
     headerText: params.businessName,
     bodyHtml: `
-      <p style="margin: 0 0 8px;">היי ${params.clientName},</p>
-      <p style="margin: 0 0 8px;">הבחירה שלך אצל <b>${params.businessName}</b> נשלחה בהצלחה ✓ - ${params.filenames.length} תמונות:</p>
+      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
+      <p style="margin: 0 0 8px;">הבחירה שלך אצל <b>${escapeHtml(params.businessName)}</b> נשלחה בהצלחה ✓ - ${params.filenames.length} תמונות:</p>
       <ul style="margin: 12px auto; padding-right: 20px; text-align: right; display: inline-block; font-size: 13px; color: #4a4238;">${list}</ul>
       <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">אין צורך לעשות עוד כלום, הצלמת תיצור איתך קשר להמשך.</p>
     `,
@@ -359,7 +445,7 @@ export async function sendReviewRequestEmail(params: ReviewRequestParams): Promi
   const html = wrapEmailHtml({
     headerText: params.businessName,
     bodyHtml: `
-      <p style="margin: 0 0 8px;">היי ${params.clientName},</p>
+      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
       <p style="margin: 0 0 8px;">מקווה שאת נהנית מהתמונות! 💛</p>
       <p style="margin: 0; font-size: 13px; color: #6b6156;">
         אם יש לך רגע, ביקורת קצרה ממך תעזור לי המון להמשיך לצלם עוד אירועים כמו שלך.
@@ -377,12 +463,6 @@ export async function sendReviewRequestEmail(params: ReviewRequestParams): Promi
 
 // ---------- יומן צילומים (טבלת shoots, ראו lib/shoots.ts) ----------
 
-// מיקום והערות הם טקסט חופשי שהצלמת מקלידה - מוצגים בתוך HTML, אז מנטרלים
-// תווים מיוחדים כדי שתו "<" במיקום לא ישבור את תבנית המייל.
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 // "יום ראשון, 11.10.2026 · י״ט בתשרי תשפ״ז" - תאריך לועזי (מה שהצלמת הזינה)
 // לצד התאריך העברי, כמו שאר המיילים ללקוחה (toHebrewDateString). צהריים UTC
 // כדי שאזור הזמן של השרת לא יזיז את היום.
@@ -394,8 +474,8 @@ function shootDateText(shootDate: string): string {
 function shootDetailsCard(params: { shootDate: string; startTime: string; location: string }): string {
   return `
     <div style="margin: 18px 0; padding: 14px 20px; background: #f4f1ec; border: 1px dashed #c98f89; border-radius: 8px; display: inline-block; text-align: right;">
-      <div style="margin: 2px 0;">📅 <b>${shootDateText(params.shootDate)}</b></div>
-      <div style="margin: 2px 0;">🕐 בשעה <b dir="ltr">${formatShootTime(params.startTime)}</b></div>
+      <div style="margin: 2px 0;">📅 <b>${escapeHtml(shootDateText(params.shootDate))}</b></div>
+      <div style="margin: 2px 0;">🕐 בשעה <b dir="ltr">${escapeHtml(formatShootTime(params.startTime))}</b></div>
       <div style="margin: 2px 0;">📍 ${escapeHtml(params.location)}</div>
     </div>
   `;
@@ -418,8 +498,8 @@ export async function sendShootConfirmationEmail(params: ShootClientEmailParams)
   const html = wrapEmailHtml({
     headerText: params.businessName,
     bodyHtml: `
-      <p style="margin: 0 0 8px;">היי ${params.clientName},</p>
-      <p style="margin: 0 0 8px;">הצילום שלך אצל <b>${params.businessName}</b> נקבע! ✨</p>
+      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
+      <p style="margin: 0 0 8px;">הצילום שלך אצל <b>${escapeHtml(params.businessName)}</b> נקבע! ✨</p>
       ${shootDetailsCard(params)}
       <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">
         נשלח לך תזכורת לפני הצילום. אם משהו משתנה, אפשר פשוט להשיב למייל הזה.
@@ -439,8 +519,8 @@ export async function sendShootReminderEmail(params: ShootClientEmailParams & { 
   const html = wrapEmailHtml({
     headerText: params.businessName,
     bodyHtml: `
-      <p style="margin: 0 0 8px;">היי ${params.clientName},</p>
-      <p style="margin: 0 0 8px;">רק מזכירה - הצילום שלך אצל <b>${params.businessName}</b> ${params.whenLabel} 💛</p>
+      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
+      <p style="margin: 0 0 8px;">רק מזכירה - הצילום שלך אצל <b>${escapeHtml(params.businessName)}</b> ${escapeHtml(params.whenLabel)} 💛</p>
       ${shootDetailsCard(params)}
       <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">
         מחכה לראות אותך! אם משהו השתנה, אפשר פשוט להשיב למייל הזה.
@@ -470,7 +550,7 @@ export async function sendShootsDailySummaryEmail(params: ShootsDailySummaryPara
     .map(
       (s) => `
         <tr>
-          <td style="padding: 8px 10px; border-bottom: 1px solid #eee6d8; font-weight: 700; white-space: nowrap; vertical-align: top;" dir="ltr">${formatShootTime(s.startTime)}</td>
+          <td style="padding: 8px 10px; border-bottom: 1px solid #eee6d8; font-weight: 700; white-space: nowrap; vertical-align: top;" dir="ltr">${escapeHtml(formatShootTime(s.startTime))}</td>
           <td style="padding: 8px 10px; border-bottom: 1px solid #eee6d8; text-align: right;">
             <b>${escapeHtml(s.clientName)}</b><br />
             <span style="font-size: 13px; color: #6b6156;">📍 ${escapeHtml(s.location)}</span>
@@ -487,7 +567,7 @@ export async function sendShootsDailySummaryEmail(params: ShootsDailySummaryPara
     headerText: 'אזור צלמים',
     bodyHtml: `
       <p style="margin: 0 0 8px;">היי,</p>
-      <p style="margin: 0 0 8px;">מחר (${formatShootDateLabel(params.shootDate)}) יש לך ${countText}:</p>
+      <p style="margin: 0 0 8px;">מחר (${escapeHtml(formatShootDateLabel(params.shootDate))}) יש לך ${countText}:</p>
       <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 12px auto 0; border-collapse: collapse; font-size: 14px;">${rows}</table>
     `,
     ctaText: 'פתיחת היומן',

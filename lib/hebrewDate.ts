@@ -33,8 +33,16 @@ function numberToHebrewLetters(num: number): string {
   return letters.slice(0, -1) + '״' + letters.slice(-1);
 }
 
+// היום האזרחי נקבע תמיד לפי שעון ישראל (Asia/Jerusalem) - לא לפי אזור הזמן של
+// השרת (UTC ב-Vercel): רגע כמו 22:30 UTC הוא כבר היום הבא בישראל, ובלי זה
+// מייל שנשלח מה-cron היה מציג תאריך של יום קודם.
 export function toHebrewDateString(date: Date): string {
-  const parts = new Intl.DateTimeFormat('he-IL-u-ca-hebrew', { day: 'numeric', month: 'long', year: 'numeric' }).formatToParts(date);
+  const parts = new Intl.DateTimeFormat('he-IL-u-ca-hebrew', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Asia/Jerusalem',
+  }).formatToParts(date);
   const day = Number(parts.find((p) => p.type === 'day')?.value);
   const month = parts.find((p) => p.type === 'month')?.value ?? '';
   const year = Number(parts.find((p) => p.type === 'year')?.value);
