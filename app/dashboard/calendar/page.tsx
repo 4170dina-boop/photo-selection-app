@@ -107,7 +107,7 @@ export default function CalendarPage() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   useEffect(() => {
-    loadOptions();
+    loadOptions(true);
     loadUpcoming();
   }, []);
 
@@ -115,13 +115,31 @@ export default function CalendarPage() {
     loadMonth(year, month);
   }, [year, month]);
 
-  async function loadOptions() {
+  async function loadOptions(prefillFromUrl = false) {
     const res = await fetch('/api/shoots/options');
     if (res.ok) {
       const data = await res.json();
-      setClients(data.clients ?? []);
+      const options: ClientOption[] = data.clients ?? [];
+      setClients(options);
       setGalleries(data.galleries ?? []);
+      if (prefillFromUrl) openPrefilledFromUrl(options);
     }
+  }
+
+  // ?name=&email= - "צילום חדש" מדף הלקוחה (app/dashboard/clients/[key]):
+  // פותחים טופס צילום חדש עם הלקוחה הקיימת (לפי מייל), או כלקוחה חדשה ממולאת.
+  function openPrefilledFromUrl(options: ClientOption[]) {
+    const params = new URLSearchParams(window.location.search);
+    const name = params.get('name')?.trim() ?? '';
+    const email = params.get('email')?.trim() ?? '';
+    if (!name && !email) return;
+    const existing = email ? options.find((c) => c.email.trim().toLowerCase() === email.toLowerCase()) : undefined;
+    const base = emptyForm(today, options);
+    setForm(
+      existing
+        ? { ...base, clientMode: 'existing', clientId: existing.id }
+        : { ...base, clientMode: 'new', clientName: name, clientEmail: email }
+    );
   }
 
   async function loadUpcoming() {

@@ -24,8 +24,9 @@ function NewGalleryForm() {
   const searchParams = useSearchParams();
   const fromGalleryId = searchParams.get('fromGallery');
 
-  const [clientName, setClientName] = useState('');
-  const [clientEmail, setClientEmail] = useState('');
+  // ?name=&email= - מילוי מראש מדף הלקוחה (app/dashboard/clients/[key])
+  const [clientName, setClientName] = useState(() => searchParams.get('name') ?? '');
+  const [clientEmail, setClientEmail] = useState(() => searchParams.get('email') ?? '');
   const [includedPhotos, setIncludedPhotos] = useState('30');
   const [basePrice, setBasePrice] = useState('0');
   const [extraPhotoPrice, setExtraPhotoPrice] = useState('0');
