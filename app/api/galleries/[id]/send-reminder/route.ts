@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { sendExpiryReminderEmail } from '@/lib/email';
+import { getManualEmailCooldown, recordManualEmailSend, cooldownResponse } from '@/lib/manualEmailLog';
 
 // service_role - חובה כאן כדי לעדכן last_reminder_sent_at, אחרי אימות הבעלות
 // עם ה-session של הצלם. אותו דגם כמו app/api/admin/photographers/[id]/route.ts:
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id, status, expires_at, reopened_for_selection_at, clients(full_name, email, access_code)')
+    .select('id, status, expires_at, reopened_for_selection_at, last_reminder_sent_at, clients(full_name, email, access_code)')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
@@ -65,6 +66,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'חסרים פרטי לקוחה' }, { status: 500 });
   }
 
+  // מגבלת קצב לשליחה ידנית. fallback (אם טבלת היומן עוד לא קיימת):
+  // last_reminder_sent_at - כך שלפחות ה-60 שניות חלות גם לפני המיגרציה.
+  const cooldown = await getManualEmailCooldown(supabase, { galleryId: gallery.id }, 'reminder', [
+    (gallery as any).last_reminder_sent_at,
+  ]);
+  if (!cooldown.allowed) return cooldownResponse(cooldown);
+
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
   const { sent: emailSent } = await sendExpiryReminderEmail({
     to: client.email,
@@ -78,6 +86,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   if (emailSent) {
     await supabaseAdmin.from('galleries').update({ last_reminder_sent_at: new Date().toISOString() }).eq('id', gallery.id);
+    await recordManualEmailSend(supabase, photographer.id, { galleryId: gallery.id }, 'reminder');
   }
 
   return NextResponse.json({ emailSent });

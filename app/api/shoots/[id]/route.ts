@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sendShootConfirmationEmail } from '@/lib/email';
+import { getManualEmailCooldown, recordManualEmailSend } from '@/lib/manualEmailLog';
 import { validateShootFields, formatShootTime } from '@/lib/shoots';
 
 // עריכה/מחיקה של צילום קיים - אותו דפוס כמו app/api/galleries/[id]/route.ts:
@@ -17,7 +18,7 @@ async function loadOwnedShoot(supabase: ReturnType<typeof createClient>, shootId
 
   const { data: shoot } = await supabase
     .from('shoots')
-    .select('id, client_id, shoot_date, start_time, location')
+    .select('id, client_id, shoot_date, start_time, location, confirmation_sent_at')
     .eq('id', shootId)
     .eq('photographer_id', photographer.id)
     .single();
@@ -106,8 +107,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   // שליחת הפרטים המעודכנים ללקוחה - רק אם הצלמת ביקשה במפורש (לא כל תיקון
   // הערה פרטית צריך לשלוח מייל ללקוחה).
+  //
+  // מגבלת קצב (lib/manualEmailCooldown.ts) נבדקת רק על המייל: השינויים עצמם
+  // כבר נשמרו למעלה, אז לא מחזירות 429 על כל הבקשה - רק מדלגות על המייל
+  // ומחזירות emailCooldown עם ההודעה. fallback לפני המיגרציה: confirmation_sent_at.
   let emailSent = false;
+  let emailCooldown: { message: string; retryAfterSeconds: number } | undefined;
   if (body.sendUpdate) {
+    const cooldown = await getManualEmailCooldown(supabase, { shootId: shoot.id }, 'shoot_update', [
+      (shoot as any).confirmation_sent_at,
+    ]);
+    if (!cooldown.allowed) {
+      emailCooldown = { message: cooldown.message, retryAfterSeconds: cooldown.retryAfterSeconds };
+    }
+  }
+  if (body.sendUpdate && !emailCooldown) {
     const result = await sendShootConfirmationEmail({
       to: client.email,
       clientName: client.full_name,
@@ -120,10 +134,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     emailSent = result.sent;
     if (emailSent) {
       await supabase.from('shoots').update({ confirmation_sent_at: new Date().toISOString() }).eq('id', shoot.id);
+      await recordManualEmailSend(supabase, photographer.id, { shootId: shoot.id }, 'shoot_update');
     }
   }
 
-  return NextResponse.json({ success: true, emailSent });
+  return NextResponse.json({ success: true, emailSent, ...(emailCooldown ? { emailCooldown } : {}) });
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {

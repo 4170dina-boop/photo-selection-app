@@ -13,6 +13,10 @@ import MagicButton from '@/components/MagicButton';
 import GalleryPaymentsSection from '@/components/GalleryPaymentsSection';
 import EmailInput from '@/components/EmailInput';
 import ClientInviteMessageCopy from '@/components/ClientInviteMessageCopy';
+import { MANUAL_EMAIL_COOLDOWN_SECONDS, formatCooldownLeft } from '@/lib/manualEmailCooldown';
+
+// סוגי המיילים הידניים בדף הזה - לכל אחד מגבלת קצב נפרדת בשרת (429)
+type ManualEmailKind = 'invite' | 'reminder' | 'review' | 'delivery';
 
 interface DeliveredPhoto {
   id: string;
@@ -75,6 +79,42 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [notifying, setNotifying] = useState(false);
   const [notifyMessage, setNotifyMessage] = useState('');
   const [deliveryMessageCopied, setDeliveryMessageCopied] = useState(false);
+  // עד מתי (ms) כל כפתור שליחה מושבת - נקבע אחרי שליחה מוצלחת (60 שניות)
+  // או לפי retryAfterSeconds מתשובת 429 של השרת. השרת הוא האוכף האמיתי;
+  // זה רק כדי שהצלמת תראה למה הכפתור לא זמין ומתי יחזור.
+  const [cooldownUntil, setCooldownUntil] = useState<Partial<Record<ManualEmailKind, number>>>({});
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  const hasActiveCooldown = Object.values(cooldownUntil).some((until) => (until ?? 0) > nowMs);
+  useEffect(() => {
+    if (!hasActiveCooldown) return;
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [hasActiveCooldown]);
+
+  function cooldownLeft(kind: ManualEmailKind): number {
+    const until = cooldownUntil[kind] ?? 0;
+    return until > nowMs ? Math.ceil((until - nowMs) / 1000) : 0;
+  }
+
+  function startCooldown(kind: ManualEmailKind, seconds: number) {
+    const now = Date.now();
+    setNowMs(now);
+    setCooldownUntil((prev) => ({ ...prev, [kind]: now + seconds * 1000 }));
+  }
+
+  // 429 מהשרת = מגבלת קצב; מחזירה true אם טופל (ההודעה עצמה מוצגת ע"י הקורא)
+  function handleCooldownResponse(kind: ManualEmailKind, res: Response, data: any): boolean {
+    if (res.status !== 429) return false;
+    startCooldown(kind, Number(data?.retryAfterSeconds) || MANUAL_EMAIL_COOLDOWN_SECONDS);
+    return true;
+  }
+
+  function sendButtonLabel(kind: ManualEmailKind, busy: boolean, label: string) {
+    if (busy) return 'שולחת...';
+    const left = cooldownLeft(kind);
+    return left > 0 ? `${label} (שוב בעוד ${formatCooldownLeft(left)})` : label;
+  }
 
   useEffect(() => {
     loadGallery();
@@ -187,10 +227,12 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setNotifying(false);
 
     if (!res.ok) {
+      handleCooldownResponse('delivery', res, data);
       setFinalError(data.error ?? 'שליחת ההתראה נכשלה');
       return;
     }
 
+    if (data.emailSent) startCooldown('delivery', MANUAL_EMAIL_COOLDOWN_SECONDS);
     setNotifyMessage(data.emailSent ? 'ההתראה נשלחה בהצלחה' : 'שליחת המייל נכשלה - ודאו ששירות המייל מוגדר');
   }
 
@@ -271,9 +313,13 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setResending(false);
 
     if (!res.ok) {
+      handleCooldownResponse('invite', res, data);
       setError(data.error ?? 'שליחת ההזמנה נכשלה');
       return;
     }
+
+    const anySent = Array.isArray(data.results) ? data.results.some((r: { sent?: boolean }) => r.sent) : data.emailSent;
+    if (anySent) startCooldown('invite', MANUAL_EMAIL_COOLDOWN_SECONDS);
 
     const failedAdditional: string[] = Array.isArray(data.failedAdditional) ? data.failedAdditional : [];
     const additionalNote = failedAdditional.length > 0 ? ` (לא נשלח לכתובות הנוספות: ${failedAdditional.join(', ')})` : '';
@@ -354,10 +400,12 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setSendingReminder(false);
 
     if (!res.ok) {
+      handleCooldownResponse('reminder', res, data);
       setError(data.error ?? 'שליחת התזכורת נכשלה');
       return;
     }
 
+    if (data.emailSent) startCooldown('reminder', MANUAL_EMAIL_COOLDOWN_SECONDS);
     setReminderMessage(data.emailSent ? 'התזכורת נשלחה בהצלחה' : 'שליחת המייל נכשלה - ודאו ששירות המייל מוגדר');
   }
 
@@ -371,10 +419,12 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setSendingReview(false);
 
     if (!res.ok) {
+      handleCooldownResponse('review', res, data);
       setError(data.error ?? 'שליחת בקשת הביקורת נכשלה');
       return;
     }
 
+    if (data.emailSent) startCooldown('review', MANUAL_EMAIL_COOLDOWN_SECONDS);
     setReviewMessage(data.emailSent ? 'בקשת הביקורת נשלחה בהצלחה' : 'שליחת המייל נכשלה - ודאו ששירות המייל מוגדר');
   }
 
@@ -602,31 +652,31 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           <button
             type="button"
             onClick={handleResendInvite}
-            disabled={resending}
-            style={{ ...outlineButtonStyle, opacity: resending ? 0.6 : 1 }}
+            disabled={resending || cooldownLeft('invite') > 0}
+            style={{ ...outlineButtonStyle, opacity: resending || cooldownLeft('invite') > 0 ? 0.6 : 1 }}
           >
-            {resending ? 'שולחת...' : 'שליחת הזמנה מחדש'}
+            {sendButtonLabel('invite', resending, 'שליחת הזמנה מחדש')}
           </button>
           {expiresAt && (
             <button
               type="button"
               onClick={handleSendReminder}
-              disabled={sendingReminder}
+              disabled={sendingReminder || cooldownLeft('reminder') > 0}
               title="שולחת עכשיו את אותה תזכורת תפוגה שנשלחת אוטומטית, בלי לחכות לתזמון היומי"
-              style={{ ...outlineButtonStyle, opacity: sendingReminder ? 0.6 : 1 }}
+              style={{ ...outlineButtonStyle, opacity: sendingReminder || cooldownLeft('reminder') > 0 ? 0.6 : 1 }}
             >
-              {sendingReminder ? 'שולחת...' : '🔔 שליחת תזכורת עכשיו'}
+              {sendButtonLabel('reminder', sendingReminder, '🔔 שליחת תזכורת עכשיו')}
             </button>
           )}
           {deliveredAt && reviewLink && (
             <button
               type="button"
               onClick={handleSendReviewRequest}
-              disabled={sendingReview}
+              disabled={sendingReview || cooldownLeft('review') > 0}
               title="שולחת ללקוחה מייל עם בקשה חמה לביקורת, כולל הקישור שהגדרת בהגדרות"
-              style={{ ...outlineButtonStyle, borderColor: theme.gold, color: theme.gold, opacity: sendingReview ? 0.6 : 1 }}
+              style={{ ...outlineButtonStyle, borderColor: theme.gold, color: theme.gold, opacity: sendingReview || cooldownLeft('review') > 0 ? 0.6 : 1 }}
             >
-              {sendingReview ? 'שולחת...' : '📝 בקשת ביקורת'}
+              {sendButtonLabel('review', sendingReview, '📝 בקשת ביקורת')}
 
             </button>
           )}
@@ -827,10 +877,10 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
             <button
               type="button"
               onClick={handleSendDeliveryNotification}
-              disabled={notifying}
-              style={{ ...outlineButtonStyle, opacity: notifying ? 0.6 : 1, borderColor: theme.gold, color: theme.gold }}
+              disabled={notifying || cooldownLeft('delivery') > 0}
+              style={{ ...outlineButtonStyle, opacity: notifying || cooldownLeft('delivery') > 0 ? 0.6 : 1, borderColor: theme.gold, color: theme.gold }}
             >
-              {notifying ? 'שולחת...' : '🔔 שליחת התראה - התמונות מוכנות'}
+              {sendButtonLabel('delivery', notifying, '🔔 שליחת התראה - התמונות מוכנות')}
             </button>
             <button
               type="button"

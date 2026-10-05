@@ -186,19 +186,25 @@ export default function GalleriesDashboard() {
     setBulkWorking(true);
     setBulkMessage('');
     let sent = 0;
+    // 429 = מגבלת הקצב של שליחה ידנית (lib/manualEmailCooldown.ts) - תזכורת
+    // נשלחה לגלריה הזו ממש עכשיו או יותר מדי פעמים היום; נספרות בנפרד.
+    let rateLimited = 0;
 
     for (const row of eligible) {
       const res = await fetch(`/api/galleries/${row.id}/send-reminder`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
         if (data.emailSent) sent++;
+      } else if (res.status === 429) {
+        rateLimited++;
       }
     }
 
     setBulkWorking(false);
     setBulkMessage(
       `נשלחו ${sent} מתוך ${eligible.length} תזכורות` +
-        (skipped > 0 ? ` (דולגו ${skipped} גלריות שהושלמו, שפג תוקפן או שאין להן תוקף)` : '')
+        (skipped > 0 ? ` (דולגו ${skipped} גלריות שהושלמו, שפג תוקפן או שאין להן תוקף)` : '') +
+        (rateLimited > 0 ? ` (${rateLimited} דולגו כי תזכורת נשלחה אליהן לפני רגע או יותר מדי פעמים היום)` : '')
     );
     setSelectedIds(new Set());
   }

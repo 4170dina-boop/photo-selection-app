@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { sendReviewRequestEmail } from '@/lib/email';
+import { getManualEmailCooldown, recordManualEmailSend, cooldownResponse } from '@/lib/manualEmailLog';
 
 // שליחת בקשת ביקורת - זמינה רק אחרי שהצלמת סימנה את הגלריה כ"נמסרה"
 // (delivered_at, ראו app/api/galleries/[id]/toggle-delivered) וגם הגדירה
@@ -50,6 +51,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'חסרים פרטי לקוחה' }, { status: 500 });
   }
 
+  const cooldown = await getManualEmailCooldown(supabase, { galleryId: gallery.id }, 'review');
+  if (!cooldown.allowed) return cooldownResponse(cooldown);
+
   const { sent: emailSent } = await sendReviewRequestEmail({
     to: client.email,
     clientName: client.full_name,
@@ -57,6 +61,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     reviewLink: photographer.review_link,
     replyTo: user.email,
   });
+
+  if (emailSent) {
+    await recordManualEmailSend(supabase, photographer.id, { galleryId: gallery.id }, 'review');
+  }
 
   return NextResponse.json({ emailSent });
 }

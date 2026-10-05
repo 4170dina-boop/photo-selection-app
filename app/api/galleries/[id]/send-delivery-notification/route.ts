@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { sendFinalPhotosReadyEmail } from '@/lib/email';
+import { getManualEmailCooldown, recordManualEmailSend, cooldownResponse } from '@/lib/manualEmailLog';
 
 // שליחה ידנית של התראה ללקוחה שהתמונות הסופיות מוכנות - בדיוק כמו
 // send-reminder/route.ts (אימות בעלות עם session הצלם, שליחה עם lib/email.ts),
-// רק בלי עדכון DB אחרי השליחה: אין כאן "פעם אחת ביום" אוטומטי שצריך למנוע
-// כפילות מולו (בניגוד ל-last_reminder_sent_at) - הצלמת יכולה ללחוץ שוב בכל
-// פעם שהיא מוסיפה עוד תמונות סופיות.
+// בלי "פעם אחת ביום" אוטומטי (בניגוד ל-last_reminder_sent_at) - הצלמת יכולה
+// ללחוץ שוב כשהיא מוסיפה עוד תמונות סופיות, בכפוף למגבלת הקצב הידנית
+// (lib/manualEmailCooldown.ts: 60 שניות בין שליחות, עד 10 ב-24 שעות).
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createServerClient();
   const {
@@ -52,6 +53,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'עדיין לא הועלו תמונות סופיות' }, { status: 400 });
   }
 
+  const cooldown = await getManualEmailCooldown(supabase, { galleryId: gallery.id }, 'delivery');
+  if (!cooldown.allowed) return cooldownResponse(cooldown);
+
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
   const { sent: emailSent } = await sendFinalPhotosReadyEmail({
     to: client.email,
@@ -61,6 +65,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
     replyTo: user.email,
   });
+
+  if (emailSent) {
+    await recordManualEmailSend(supabase, photographer.id, { galleryId: gallery.id }, 'delivery');
+  }
 
   return NextResponse.json({ emailSent });
 }
