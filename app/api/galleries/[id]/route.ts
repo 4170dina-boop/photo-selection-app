@@ -4,7 +4,13 @@ import { listAllKeys, deleteObjects } from '@/lib/r2';
 import { parseAdditionalInviteEmails, isValidEmail } from '@/lib/email';
 import { syncPaidAtAfterTotalChange } from '@/lib/galleryPayments';
 import { parseGalleryNumbers } from '@/lib/galleryValidation';
-import { expiresAtChanged, statusAfterExpiryChange } from '@/lib/galleryLifecycle';
+import {
+  expiresAtChanged,
+  statusAfterExpiryChange,
+  statusGuard,
+  STATUS_GUARDED_UPDATE_MAX_ATTEMPTS,
+} from '@/lib/galleryLifecycle';
+import { applyRowGuard } from '@/lib/rowGuard';
 
 // עריכה/מחיקה של גלריה קיימת, בדיוק כמו app/api/galleries/route.ts (יצירה) -
 // רץ עם session הצלם (לא service key), כך שה-RLS הקיים כבר דואג שאי אפשר
@@ -111,41 +117,73 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // מותר ל-session הצלמת (guard_gallery_status_transitions חוסם רק מעבר *אל*
   // completed/expired), ו-enforce_active_gallery_limit אוכף את מגבלת החשבון
   // החינמי - מטופל למטה כ-402.
-  let ownerHasSelections = false;
-  if (gallery.status === 'expired' && gallery.owner_participant_id) {
-    const { count, error: countError } = await supabase
-      .from('selections')
-      .select('id', { count: 'exact', head: true })
-      .eq('gallery_id', gallery.id)
-      .eq('participant_id', gallery.owner_participant_id);
-    if (countError) {
-      return NextResponse.json({ error: 'בדיקת הבחירות של הלקוחה נכשלה' }, { status: 500 });
+  //
+  // העדכון מותנה בסטטוס שנקרא (statusGuard): ה-cron (expireGalleries) יכול
+  // לסמן expired בין הקריאה לכתיבה, ואז הארכת תוקף הייתה נשמרת בלי להחזיר את
+  // הסטטוס - גלריה עם תוקף עתידי שנשארת expired. 0 שורות = הסטטוס השתנה -
+  // קוראים מחדש ומחשבים שוב.
+  let current: { status: string | null; expires_at: string | null; owner_participant_id: string | null } = gallery;
+  let reactivatedStatus: ReturnType<typeof statusAfterExpiryChange> = null;
+  let galleryError: { message?: string } | null = null;
+  let galleryUpdated = false;
+  for (let attempt = 0; attempt < STATUS_GUARDED_UPDATE_MAX_ATTEMPTS; attempt++) {
+    let ownerHasSelections = false;
+    if (current.status === 'expired' && current.owner_participant_id) {
+      const { count, error: countError } = await supabase
+        .from('selections')
+        .select('id', { count: 'exact', head: true })
+        .eq('gallery_id', gallery.id)
+        .eq('participant_id', current.owner_participant_id);
+      if (countError) {
+        return NextResponse.json({ error: 'בדיקת הבחירות של הלקוחה נכשלה' }, { status: 500 });
+      }
+      ownerHasSelections = (count ?? 0) > 0;
     }
-    ownerHasSelections = (count ?? 0) > 0;
-  }
-  const reactivatedStatus = statusAfterExpiryChange({
-    status: gallery.status,
-    oldExpiresAt: gallery.expires_at,
-    newExpiresAt: expiresAt,
-    ownerHasSelections,
-    now: new Date(),
-  });
+    reactivatedStatus = statusAfterExpiryChange({
+      status: current.status,
+      oldExpiresAt: current.expires_at,
+      newExpiresAt: expiresAt,
+      ownerHasSelections,
+      now: new Date(),
+    });
 
-  // הגלריה נכתבת ראשונה (לפני clients/packages): היא זו שיכולה להיחסם ע"י
-  // מגבלת הגלריה הפעילה, וכך חסימה כזו לא משאירה שמירה חלקית של פרטי הלקוחה.
-  const { error: galleryError } = await supabase
-    .from('galleries')
-    .update({
-      expires_at: expiresAt,
-      photographer_notes: photographerNotes?.trim() || null,
-      reminder_days: reminderDays,
-      additional_invite_emails: additionalInviteEmails.length > 0 ? additionalInviteEmails : null,
-      // תאריך תוקף חדש = תזכורת התפוגה החד-פעמית (cron/tick) צריכה לצאת שוב
-      // לפי התאריך החדש, ולא להיחשב "כבר נשלחה" על התאריך הקודם.
-      ...(expiresAtChanged(gallery.expires_at, expiresAt) ? { last_reminder_sent_at: null } : {}),
-      ...(reactivatedStatus ? { status: reactivatedStatus } : {}),
-    })
-    .eq('id', gallery.id);
+    // הגלריה נכתבת ראשונה (לפני clients/packages): היא זו שיכולה להיחסם ע"י
+    // מגבלת הגלריה הפעילה, וכך חסימה כזו לא משאירה שמירה חלקית של פרטי הלקוחה.
+    const { data: updatedRows, error } = await applyRowGuard(
+      supabase
+        .from('galleries')
+        .update({
+          expires_at: expiresAt,
+          photographer_notes: photographerNotes?.trim() || null,
+          reminder_days: reminderDays,
+          additional_invite_emails: additionalInviteEmails.length > 0 ? additionalInviteEmails : null,
+          // תאריך תוקף חדש = תזכורת התפוגה החד-פעמית (cron/tick) צריכה לצאת שוב
+          // לפי התאריך החדש, ולא להיחשב "כבר נשלחה" על התאריך הקודם.
+          ...(expiresAtChanged(current.expires_at, expiresAt) ? { last_reminder_sent_at: null } : {}),
+          ...(reactivatedStatus ? { status: reactivatedStatus } : {}),
+        })
+        .eq('id', gallery.id),
+      statusGuard(current.status)
+    ).select('id');
+    if (error) {
+      galleryError = error;
+      break;
+    }
+    if (updatedRows?.length) {
+      galleryUpdated = true;
+      break;
+    }
+
+    const { data: fresh } = await supabase
+      .from('galleries')
+      .select('status, expires_at, owner_participant_id')
+      .eq('id', gallery.id)
+      .single();
+    if (!fresh) {
+      return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
+    }
+    current = fresh;
+  }
 
   if (galleryError?.message?.includes('LIMIT_ACTIVE_GALLERY')) {
     return NextResponse.json(
@@ -158,6 +196,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
   if (galleryError) {
     return NextResponse.json({ error: 'עדכון הגלריה נכשל' }, { status: 500 });
+  }
+  if (!galleryUpdated) {
+    return NextResponse.json({ error: 'הגלריה השתנתה בזמן השמירה - רענני את הדף ונסי שוב' }, { status: 409 });
   }
 
   const { error: clientError } = await supabase
@@ -185,7 +226,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // מחיר/מכסת החבילה אולי השתנו - paid_at נגזר מהיתרה כשיש תשלומים (best-effort)
   await syncPaidAtAfterTotalChange(supabase, gallery.id);
 
-  return NextResponse.json({ success: true, status: reactivatedStatus ?? gallery.status });
+  return NextResponse.json({ success: true, status: reactivatedStatus ?? current.status });
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {

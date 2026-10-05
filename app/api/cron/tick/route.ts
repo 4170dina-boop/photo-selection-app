@@ -16,6 +16,7 @@ import {
 } from '@/lib/shoots';
 import { toHebrewDateString } from '@/lib/hebrewDate';
 import { deleteObjects } from '@/lib/r2';
+import { applyRowGuard } from '@/lib/rowGuard';
 import {
   isCronAuthorized,
   resolveExpiryReminderDays,
@@ -27,6 +28,8 @@ import {
   isOriginalsCleanupDue,
   originalsDeletionDate,
   deletableOriginalPaths,
+  originalsCleanupClaimGuard,
+  shouldReleaseCleanupClaim,
   fetchAllPages,
   errorMessage,
 } from '@/lib/cronTick';
@@ -295,8 +298,10 @@ async function sendOriginalsWarnings(ctx: RunContext) {
 
 // 4. גלריות שנמסרו לפני 30+ יום *וגם* שהצלמת קיבלה עליהן התראה לפני 5+ ימים -
 // מוחקות את קבצי המקור (לא הערוכים!) כדי לפנות מקום באחסון (R2, ראו lib/r2.ts).
-// מסמנים originals_cleaned_up_at רק אם כל השליפות והמחיקות הצליחו - אחרת
-// הריצה הבאה תנסה שוב (מחיקה ב-R2 היא idempotent).
+// originals_cleaned_up_at מסומן *לפני* המחיקה, כתפיסה מותנית (ראו
+// originalsCleanupClaimGuard) - כך פתיחה מחדש של הבחירה באמצע לא יכולה להיגמר
+// במחיקת המקור של גלריה פעילה. אם הניקוי נכשל לפני שנמחק קובץ כלשהו, התפיסה
+// משתחררת והריצה הבאה תנסה שוב (מחיקה ב-R2 היא idempotent).
 async function cleanupOriginals(ctx: RunContext) {
   const { now } = ctx;
   const { rows: galleries, error } = await fetchAllPages((from, to) =>
@@ -318,6 +323,8 @@ async function cleanupOriginals(ctx: RunContext) {
 
   let originalsCleanedGalleries = 0;
   let originalFilesDeleted = 0;
+  // גלריות שהיו זכאיות בשליפה אבל השתנו לפני התפיסה (למשל נפתחו מחדש לבחירה)
+  let originalsCleanupSkipped = 0;
 
   for (const gallery of galleries) {
     if (!isOriginalsCleanupDue(gallery, now)) continue;
@@ -326,7 +333,25 @@ async function cleanupOriginals(ctx: RunContext) {
       break;
     }
 
+    // קודם "תופסים" (UPDATE מותנה במצב שנקרא - originalsCleanupClaimGuard), ורק
+    // אז מוחקים: אם הצלמת פתחה מחדש את הבחירה / ביטלה מסירה מאז השליפה, ה-UPDATE
+    // לא תואם אף שורה ולא נוגעים בקבצים. מסמנים "נוקה" גם אם לא היה מה למחוק
+    // (כל התמונות נכשלו בעיבוד) - כדי שלא נבדוק את אותה גלריה שוב בכל ריצה יומית.
+    const claimedAt = now.toISOString();
+    let claimed = false;
+    let deletedForGallery = 0;
     try {
+      const { data: claimedRows, error: claimError } = await applyRowGuard(
+        supabaseAdmin.from('galleries').update({ originals_cleaned_up_at: claimedAt }).eq('id', gallery.id),
+        originalsCleanupClaimGuard(gallery)
+      ).select('id');
+      if (claimError) throw claimError;
+      if (!claimedRows?.length) {
+        originalsCleanupSkipped++;
+        continue;
+      }
+      claimed = true;
+
       const { rows: photos, error: photosError } = await fetchAllPages((from, to) =>
         supabaseAdmin
           .from('photos')
@@ -340,27 +365,29 @@ async function cleanupOriginals(ctx: RunContext) {
       const paths = deletableOriginalPaths(photos);
       if (paths.length > 0) {
         const result = await deleteObjects(paths);
+        deletedForGallery = result.deletedCount;
         originalFilesDeleted += result.deletedCount;
         if (result.failed.length > 0) {
           const sample = result.failed.slice(0, 3).map((f) => `${f.key}: ${f.code ?? ''} ${f.message ?? ''}`.trim());
           throw new Error(`מחיקת ${result.failed.length} קבצים נכשלה (${sample.join('; ')})`);
         }
       }
-
-      // מסמנים "נוקה" גם אם לא היה מה למחוק (כל התמונות נכשלו בעיבוד) - כדי
-      // שלא נבדוק את אותה גלריה שוב בכל ריצה יומית.
-      const { error: markError } = await supabaseAdmin
-        .from('galleries')
-        .update({ originals_cleaned_up_at: now.toISOString() })
-        .eq('id', gallery.id);
-      if (markError) throw markError;
       originalsCleanedGalleries++;
     } catch (err) {
       itemError(ctx, 'originalsCleanup', gallery.id, err);
+      // ראו shouldReleaseCleanupClaim: משחררים רק אם המקור עדיין שלם
+      if (claimed && shouldReleaseCleanupClaim(deletedForGallery)) {
+        const { error: releaseError } = await supabaseAdmin
+          .from('galleries')
+          .update({ originals_cleaned_up_at: null })
+          .eq('id', gallery.id)
+          .eq('originals_cleaned_up_at', claimedAt);
+        if (releaseError) itemError(ctx, 'originalsCleanup', gallery.id, releaseError);
+      }
     }
   }
 
-  return { originalsCleanedGalleries, originalFilesDeleted };
+  return { originalsCleanedGalleries, originalFilesDeleted, originalsCleanupSkipped };
 }
 
 // מייל הצלמת (מ-auth.users) עם cache לריצה הנוכחית - צלמת עם כמה גלריות/צילומים

@@ -2,6 +2,8 @@
 // מחיקת מקור) - בלי DB, כדי שההחלטות "מה מותר עכשיו" ייבדקו ב-vitest וישותפו
 // בין ה-API (אכיפה) לבין הדשבורד (הסתרה/הסבר).
 
+import type { RowGuard } from '@/lib/rowGuard';
+
 export interface GalleryLifecycleState {
   status: string | null | undefined;
   reopened_for_selection_at?: string | null;
@@ -78,6 +80,67 @@ export function isReminderEligible(gallery: ReminderCandidate, now: Date): boole
   if (!inSelection) return false;
   const expires = timeOf(gallery.expires_at);
   return expires !== null && expires > now.getTime();
+}
+
+// ---------- פתיחה מחדש / נעילה של הבחירה (reopen-selection) ----------
+
+export interface ReopenToggleState extends GalleryLifecycleState {
+  originals_cleaned_up_at?: string | null;
+}
+
+export type ReopenToggleDecision =
+  | {
+      ok: true;
+      newReopenedForSelectionAt: string | null;
+      // תנאי ה-UPDATE המותנה: רק אם השורה עדיין במצב שעליו התקבלה ההחלטה.
+      // בפתיחה - כולל originals_cleaned_up_at is null, הצד השני של התפיסה
+      // המותנית של ה-cron (originalsCleanupClaimGuard ב-lib/cronTick.ts):
+      // רק אחד מהשניים יכול להצליח על אותה שורה.
+      guard: RowGuard;
+    }
+  | { ok: false; httpStatus: 400 | 409; error: string };
+
+export const REOPEN_NOT_COMPLETED_MESSAGE = 'אפשר לפתוח מחדש רק גלריה שהבחירה בה כבר הושלמה';
+export const REOPEN_ORIGINALS_DELETED_MESSAGE = 'אי אפשר לפתוח מחדש את הבחירה - תמונות המקור של הגלריה כבר נמחקו';
+export const REOPEN_CONFLICT_MESSAGE = 'הגלריה השתנתה בינתיים - רענני את הדף ונסי שוב';
+
+export function decideReopenToggle(gallery: ReopenToggleState, now: Date): ReopenToggleDecision {
+  // נעילה בחזרה (reopened_for_selection_at -> null) תמיד מותרת - זו רק חזרה
+  // למצב "הושלם" הרגיל. מותנית רק בכך שהסימון לא השתנה בינתיים.
+  if (gallery.reopened_for_selection_at) {
+    return {
+      ok: true,
+      newReopenedForSelectionAt: null,
+      guard: { reopened_for_selection_at: gallery.reopened_for_selection_at },
+    };
+  }
+  // פתיחה מחדש רלוונטית רק כשהבחירה באמת הושלמה - גלריה שעדיין בבחירה
+  // (sent/in_progress) כבר פתוחה לעריכה כרגיל.
+  if (gallery.status !== 'completed') {
+    return { ok: false, httpStatus: 400, error: REOPEN_NOT_COMPLETED_MESSAGE };
+  }
+  // תמונות המקור נמחקות 30 יום אחרי המסירה (cron, originals_cleaned_up_at) -
+  // אין יותר מה לבחור מתוכו.
+  if (gallery.originals_cleaned_up_at) {
+    return { ok: false, httpStatus: 409, error: REOPEN_ORIGINALS_DELETED_MESSAGE };
+  }
+  return {
+    ok: true,
+    newReopenedForSelectionAt: now.toISOString(),
+    guard: { status: 'completed', reopened_for_selection_at: null, originals_cleaned_up_at: null },
+  };
+}
+
+// ---------- עדכון מותנה בסטטוס (עריכת גלריה מול ה-cron) ----------
+
+// שמירת עריכת גלריה מחשבת את הסטטוס החדש (statusAfterExpiryChange) לפי הסטטוס
+// שנקרא. ה-cron יכול לסמן expired בין הקריאה לכתיבה - ואז הארכת התוקף הייתה
+// נשמרת בלי להחזיר את הסטטוס, וגלריה עם תוקף עתידי נשארת expired. לכן העדכון
+// מותנה בסטטוס שנקרא, ואם השתנה - קוראים מחדש ומחשבים שוב (מספר ניסיונות מוגבל).
+export const STATUS_GUARDED_UPDATE_MAX_ATTEMPTS = 3;
+
+export function statusGuard(status: string | null | undefined): RowGuard {
+  return { status: status ?? null };
 }
 
 // ---------- העלאת תמונות מקור ----------
