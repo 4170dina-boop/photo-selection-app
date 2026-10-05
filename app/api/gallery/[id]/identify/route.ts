@@ -10,6 +10,7 @@ import {
   loadGalleryViewAccess,
   MAX_PARTICIPANTS_PER_GALLERY,
 } from '@/lib/galleryAccess';
+import { isMissingColumnError, parseGenderInput } from '@/lib/gender';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'לא מאומת' }, { status: 401 });
   }
 
-  let body: { asOwner?: boolean; displayName?: string; ownerEmail?: string };
+  let body: { asOwner?: boolean; displayName?: string; ownerEmail?: string; gender?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -128,6 +129,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (trimmed.length > DISPLAY_NAME_MAX_LENGTH) {
       return NextResponse.json({ error: `השם ארוך מדי (מקסימום ${DISPLAY_NAME_MAX_LENGTH} תווים)` }, { status: 400 });
     }
+    // לשון פנייה לאורח/ת (lib/gender.ts). המסך מחייב בחירה, אבל השרת מקבל גם
+    // בקשה בלי השדה (דף ישן שנשמר בדפדפן) - אז נשמר null = "לא ידוע".
+    const parsedGender = parseGenderInput(body.gender);
+    if (!parsedGender.ok) {
+      return NextResponse.json({ error: parsedGender.error }, { status: 400 });
+    }
+    const guestGender = parsedGender.value;
 
     // יצירת משתתף/ת חדש/ה היא כתיבה - רק בגלריה שעדיין פתוחה לבחירה
     // (לא אחרי תפוגה ולא אחרי "סיימתי לבחור").
@@ -152,11 +160,23 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       );
     }
 
-    const { data: guest, error } = await supabaseAdmin
-      .from('gallery_participants')
-      .insert({ gallery_id: galleryId, display_name: trimmed, is_owner: false })
-      .select('id, display_name')
-      .single();
+    const insertGuest = (withGender: boolean) =>
+      supabaseAdmin
+        .from('gallery_participants')
+        .insert({
+          gallery_id: galleryId,
+          display_name: trimmed,
+          is_owner: false,
+          ...(withGender && guestGender ? { gender: guestGender } : {}),
+        })
+        .select('id, display_name')
+        .single();
+
+    let { data: guest, error } = await insertGuest(true);
+    // מיגרציית gallery_participants.gender עוד לא רצה - מצטרפים בלי לשמור את הפנייה
+    if (error && guestGender && isMissingColumnError(error)) {
+      ({ data: guest, error } = await insertGuest(false));
+    }
 
     if (error || !guest) {
       return NextResponse.json({ error: 'ההצטרפות נכשלה' }, { status: 500 });

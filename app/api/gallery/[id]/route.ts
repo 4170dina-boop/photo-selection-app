@@ -7,6 +7,7 @@ import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { countBillableSelected } from '@/lib/gifts';
 import { gridThumbKey, hasWatermarkedThumbnail, isKeyInGallery } from '@/lib/uploadPolicy';
 import { resolveGalleryViewAccess } from '@/lib/galleryAccess';
+import { fetchClientGender, fetchParticipantGenders, resolveViewerGender } from '@/lib/gender';
 
 // service_role - נשאר בצד שרת בלבד. כל הגישה של הלקוחה לנתוני הגלריה
 // עוברת דרך ה-API הזה (ולא דרך anon key ישירות מהדפדפן), כי אין policy
@@ -100,17 +101,29 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // שיתוף גלריה משפחתי: קוד הגישה כבר אומת, אבל עדיין לא ידוע מי בפועל
   // נכנס/ת (הבעלים הרשומה, או בן משפחה אחר) - ראו app/api/gallery/[id]/identify/route.ts.
   // מחזירים את שם הבעלים הרשום כדי שהמסך יוכל להציע "זאת [שם]?" ישירות.
+  // לשון הפנייה ללקוח/ה הראשי/ת (galleries.client_gender, lib/gender.ts) -
+  // שאילתה נפרדת ו-best-effort, כדי שעמודה חסרה לא תפיל את הטעינה.
+  const clientGender = await fetchClientGender(supabaseAdmin, galleryId);
+
   if (!session.participantId) {
     return NextResponse.json({
       needsIdentity: true,
       readOnly,
       registeredName: (gallery as any).clients?.full_name ?? null,
+      registeredGender: clientGender,
       deliveredPhotos,
     });
   }
 
   const [{ data: photosData }, { data: selectionsData }, { data: packageData }, { data: participantsData }] = await Promise.all([
-    supabaseAdmin.from('photos').select('id, file_path, thumbnail_path, original_filename').eq('gallery_id', galleryId),
+    // סדר קבוע (סדר ההעלאה) - המספר הרץ שהלקוחה רואה על כל כרטיס ("תמונה N")
+    // הוא המיקום ברשימה הזו, אז הוא חייב להיות יציב בין טעינות.
+    supabaseAdmin
+      .from('photos')
+      .select('id, file_path, thumbnail_path, original_filename')
+      .eq('gallery_id', galleryId)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true }),
     supabaseAdmin.from('selections').select('photo_id, participant_id, note, status, photographer_reply').eq('gallery_id', galleryId),
     supabaseAdmin.from('packages').select('included_photos, extra_photo_price, base_price').eq('gallery_id', galleryId).single(),
     supabaseAdmin.from('gallery_participants').select('id, display_name, is_owner').eq('gallery_id', galleryId),
@@ -180,6 +193,19 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }));
   const myParticipant = participants.find((p) => p.id === session.participantId) ?? null;
 
+  // מי הצופה: בעלים -> client_gender, אורח/ת -> gallery_participants.gender
+  // (null = לא ידוע -> פנייה ניטרלית בצד הלקוח). best-effort כמו למעלה.
+  const participantGenders = myParticipant && !myParticipant.isOwner
+    ? await fetchParticipantGenders(supabaseAdmin, galleryId)
+    : new Map();
+  const viewerGender = myParticipant
+    ? resolveViewerGender({
+        isOwner: myParticipant.isOwner,
+        clientGender,
+        participantGender: participantGenders.get(myParticipant.id) ?? null,
+      })
+    : null;
+
   // myMarks: רק הסימונים שלי (עורכים דרכם). allMarks: כל הסימונים של כולם,
   // לתגי "מי בחר מה" על כל תמונה - כדי שאפשר יהיה לראות מה בני המשפחה
   // האחרים סימנו, בלי לערבב עם הסימון האישי שלי.
@@ -212,6 +238,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     deliveredPhotos,
     myParticipant,
     participants,
+    viewerGender,
+    // לטקסטים בגוף שלישי על הבעלים ("רק X יכולה לסיים")
+    ownerGender: clientGender,
     myMarks,
     allMarks,
     ownerSelectedCount,

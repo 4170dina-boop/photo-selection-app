@@ -1,4 +1,5 @@
 import { toHebrewDateString } from './hebrewDate';
+import { DEFAULT_CLIENT_GENDER, gt, type Gender } from './gender';
 
 // "הודעה מוכנה לשליחה" ללקוחה (קישור + קוד גישה) - הגיבוי הידני כשמייל
 // ההזמנה האוטומטי לא נשלח/הגיע. הוצא מ-app/dashboard/galleries/[id]/edit
@@ -18,12 +19,18 @@ export function buildGalleryUrl(siteUrl: string, galleryId: string): string {
 
 export interface InviteMessageParams {
   clientName?: string | null;
+  // לשון פנייה (galleries.client_gender) - חסר = נקבה, כמו ברירת המחדל בגלריה
+  clientGender?: Gender | null;
   galleryUrl: string;
   accessCode: string;
   // expires_at כמו שהוא בטופס (YYYY-MM-DD) או ISO - אופציונלי
   expiresAt?: string | null;
   businessName?: string | null;
   logoUrl?: string | null;
+}
+
+function waitingLine(gender: Gender | null | undefined): string {
+  return `מחכה לראות מה ${gt(gender ?? DEFAULT_CLIENT_GENDER, 'תבחרי', 'תבחר')}! ✨`;
 }
 
 function expiryDateText(expiresAt: string | null | undefined): string | null {
@@ -38,7 +45,7 @@ function expiryDateText(expiresAt: string | null | undefined): string | null {
 export function buildInviteMessageText(params: InviteMessageParams): string {
   const expiry = expiryDateText(params.expiresAt);
   const expiryLine = expiry ? `\n\nהגלריה פתוחה לבחירה עד ${expiry}.` : '';
-  return `היי ${params.clientName || ''}! 📸\n\nהגלריה שלך עם התמונות מוכנה לבחירה.\n\nקישור: ${params.galleryUrl}\n\n🔑 קוד גישה:\n${params.accessCode}${expiryLine}\n\nמחכה לראות מה תבחרי! ✨`;
+  return `היי ${params.clientName || ''}! 📸\n\nהגלריה שלך עם התמונות מוכנה לבחירה.\n\nקישור: ${params.galleryUrl}\n\n🔑 קוד גישה:\n${params.accessCode}${expiryLine}\n\n${waitingLine(params.clientGender)}`;
 }
 
 export function buildInviteMessageHtml(params: InviteMessageParams): string {
@@ -67,7 +74,7 @@ export function buildInviteMessageHtml(params: InviteMessageParams): string {
                 <span dir="ltr" style="font-size: 22px; font-weight: 700; letter-spacing: 2px; color: #a06a63; font-family: monospace; user-select: all; -webkit-user-select: all;">${accessCode}</span><br />
                 <span style="font-size: 11px; color: #9a8f7d;">לחיצה ארוכה על הקוד להעתקה</span>
               </div>
-              <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">מחכה לראות מה תבחרי! ✨</p>
+              <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">${waitingLine(params.clientGender)}</p>
               <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 24px auto 0;">
                 <tr>
                   <td style="border-radius: 8px; background: linear-gradient(135deg, #e3b3ac, #c98f89);">

@@ -69,3 +69,12 @@ describe('buildInviteMessageHtml', () => {
     expect(html).toContain(`<br />הגלריה פתוחה לבחירה עד ${toHebrewDateString(new Date('2026-10-20'))}.`);
   });
 });
+
+describe('invite message - לשון פנייה', () => {
+  it('defaults to feminine and switches to masculine with clientGender m', () => {
+    expect(buildInviteMessageText(base)).toContain('מחכה לראות מה תבחרי!');
+    expect(buildInviteMessageText({ ...base, clientGender: 'm' })).toContain('מחכה לראות מה תבחר!');
+    expect(buildInviteMessageHtml({ ...base, clientGender: 'm' })).toContain('מחכה לראות מה תבחר!');
+    expect(buildInviteMessageHtml({ ...base, clientGender: 'f' })).toContain('מחכה לראות מה תבחרי!');
+  });
+});

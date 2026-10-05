@@ -4,6 +4,7 @@ import { requireGallerySession } from '@/lib/gallerySession';
 import { sendSelectionCompleteEmail, sendClientSelectionSummaryEmail } from '@/lib/email';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { isGalleryExpired } from '@/lib/galleryAccess';
+import { fetchClientGender } from '@/lib/gender';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -112,6 +113,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           await sendSelectionCompleteEmail({
             to: photographerEmail,
             clientName,
+            clientGender: await fetchClientGender(supabaseAdmin, galleryId),
             selectedCount: billableRows.length,
             dashboardUrl: `${siteUrl}/dashboard/galleries/${galleryId}/edit`,
           });

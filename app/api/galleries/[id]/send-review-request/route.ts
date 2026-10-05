@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { sendReviewRequestEmail } from '@/lib/email';
+import { fetchClientGender } from '@/lib/gender';
 import { getManualEmailCooldown, recordManualEmailSend, cooldownResponse } from '@/lib/manualEmailLog';
 
 // שליחת בקשת ביקורת - זמינה רק אחרי שהצלמת סימנה את הגלריה כ"נמסרה"
@@ -57,6 +58,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { sent: emailSent } = await sendReviewRequestEmail({
     to: client.email,
     clientName: client.full_name,
+    clientGender: await fetchClientGender(supabase, gallery.id),
     businessName: photographer.business_name,
     reviewLink: photographer.review_link,
     replyTo: user.email,

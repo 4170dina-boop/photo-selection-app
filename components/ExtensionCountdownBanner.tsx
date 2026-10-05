@@ -10,6 +10,7 @@ import {
   deadlineWarning,
   extensionButtonMode,
 } from '@/lib/extensionRequests';
+import { gt, type ViewerGender } from '@/lib/gender';
 
 interface ExtensionStatus {
   available: boolean;
@@ -28,8 +29,11 @@ export default function ExtensionCountdownBanner(props: {
   isOwner: boolean;
   selectionOpen: boolean;
   accent: string;
+  // לשון פנייה לצופה (lib/gender.ts) - חסר = נקבה כמו קודם
+  gender?: ViewerGender;
 }) {
   const { galleryId, expiresAt, isOwner, selectionOpen, accent } = props;
+  const gender: ViewerGender = props.gender === undefined ? 'f' : props.gender;
   const [now, setNow] = useState(() => new Date());
   const [status, setStatus] = useState<ExtensionStatus | null>(null);
   const [choosing, setChoosing] = useState(false);
@@ -82,14 +86,14 @@ export default function ExtensionCountdownBanner(props: {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(data?.error ?? 'שליחת הבקשה נכשלה, נסי שוב');
+        setError(data?.error ?? `שליחת הבקשה נכשלה, ${gt(gender, 'נסי', 'נסה', 'נסה/י')} שוב`);
         return;
       }
       if (data) setStatus(data);
       setChoosing(false);
       setMessage(`הבקשה להארכה של ${days} ימים נשלחה לצלמת 💛`);
     } catch {
-      setError('שליחת הבקשה נכשלה - בדקי את החיבור ונסי שוב');
+      setError(`שליחת הבקשה נכשלה - ${gt(gender, 'בדקי', 'בדוק', 'בדוק/י')} את החיבור ${gt(gender, 'ונסי', 'ונסה', 'ונסה/י')} שוב`);
     } finally {
       setSending(false);
     }

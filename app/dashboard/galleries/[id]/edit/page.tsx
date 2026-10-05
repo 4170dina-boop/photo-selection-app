@@ -13,6 +13,8 @@ import MagicButton from '@/components/MagicButton';
 import GalleryPaymentsSection from '@/components/GalleryPaymentsSection';
 import EmailInput from '@/components/EmailInput';
 import ClientInviteMessageCopy from '@/components/ClientInviteMessageCopy';
+import ClientGenderField from '@/components/ClientGenderField';
+import { normalizeGender, type Gender } from '@/lib/gender';
 import ExtensionRequestsPanel from '@/components/ExtensionRequestsPanel';
 import { MANUAL_EMAIL_COOLDOWN_SECONDS, formatCooldownLeft } from '@/lib/manualEmailCooldown';
 
@@ -46,6 +48,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   // כתובות מייל נוספות (למשל בני משפחה) שמקבלות את אותו מייל הזמנה/תזכורת -
   // ראו additional_invite_emails ב-supabase/schema.sql, בדיוק כמו ב"גלריה חדשה".
   const [additionalEmails, setAdditionalEmails] = useState<string[]>([]);
+  // לשון פנייה ללקוח/ה בגלריה ובמיילים (galleries.client_gender)
+  const [clientGender, setClientGender] = useState<Gender>('f');
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -258,6 +262,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setPhotographerNotes(data.photographer_notes ?? '');
     setReminderDays(data.reminder_days != null ? String(data.reminder_days) : '');
     setAdditionalEmails(data.additional_invite_emails ?? []);
+    setClientGender(normalizeGender(data.client_gender) ?? 'f');
     setViewCount(data.view_count ?? 0);
     setLastViewedAt(data.last_viewed_at ?? null);
     setDeliveredAt(data.delivered_at ?? null);
@@ -286,6 +291,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           photographerNotes,
           reminderDays: reminderDays ? Number(reminderDays) : null,
           additionalInviteEmails: additionalEmails.map((email) => email.trim()).filter((email) => email.length > 0),
+          clientGender,
         }),
       });
 
@@ -516,6 +522,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
                 galleryId={galleryId}
                 accessCode={accessCode}
                 clientName={clientName}
+                clientGender={clientGender}
                 expiresAt={expiresAt || null}
                 businessName={businessName}
                 logoUrl={logoUrl}
@@ -562,6 +569,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
             required
           />
         </label>
+
+        <ClientGenderField value={clientGender} onChange={setClientGender} />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {additionalEmails.map((email, i) => (

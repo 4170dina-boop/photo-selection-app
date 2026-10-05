@@ -8,6 +8,8 @@ import PriceInput from '@/components/PriceInput';
 import { israelEndOfDayIso } from '@/lib/israelTime';
 import EmailInput from '@/components/EmailInput';
 import ClientInviteMessageCopy from '@/components/ClientInviteMessageCopy';
+import ClientGenderField from '@/components/ClientGenderField';
+import type { Gender } from '@/lib/gender';
 
 interface CreatedGallery {
   galleryId: string;
@@ -40,6 +42,8 @@ function NewGalleryForm() {
   // additional_invite_emails ב-supabase/schema.sql. רשימה פשוטה של שדות טקסט,
   // לא טבלה - אין כאן עוד שום מושג זהות, רק עוד נמענים לאותו מייל.
   const [additionalEmails, setAdditionalEmails] = useState<string[]>([]);
+  // לשון פנייה ללקוח/ה בגלריה ובמיילים (galleries.client_gender) - ברירת מחדל נקבה
+  const [clientGender, setClientGender] = useState<Gender>('f');
 
   // ממלאים את השדות מברירות המחדל שהצלמת הגדירה בהגדרות (app/dashboard/settings/page.tsx),
   // כדי שלא תצטרך להקליד את אותם מספרים בכל גלריה - עדיין אפשר לשנות פה לפני היצירה.
@@ -102,6 +106,7 @@ function NewGalleryForm() {
           extraPhotoPrice: Number(extraPhotoPrice),
           expiresAt: expiresAt ? israelEndOfDayIso(expiresAt) : null,
           additionalInviteEmails: additionalEmails.map((email) => email.trim()).filter((email) => email.length > 0),
+          clientGender,
         }),
       });
 
@@ -154,6 +159,7 @@ function NewGalleryForm() {
             galleryId={created.galleryId}
             accessCode={created.accessCode}
             clientName={clientName}
+            clientGender={clientGender}
             expiresAt={expiresAt || null}
             prominent
           />
@@ -215,6 +221,8 @@ function NewGalleryForm() {
             required
           />
         </label>
+
+        <ClientGenderField value={clientGender} onChange={setClientGender} />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {additionalEmails.map((email, i) => (

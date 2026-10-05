@@ -135,6 +135,9 @@ create table galleries (
   -- app/api/gallery/[id]/selection) - null = טרם נשלחה. נתפסת ב-UPDATE מותנה
   -- (is null) כדי שהמייל ייצא פעם אחת בלבד לכל גלריה, גם בבקשות מקבילות.
   quota_notified_at timestamptz,
+  -- לשון הפנייה ללקוח/ה הראשי/ת בגלריה ובמיילים (lib/gender.ts): 'f' = נקבה
+  -- (ברירת המחדל), 'm' = זכר. נקבע ע"י הצלמת בטופס יצירה/עריכה של הגלריה.
+  client_gender text default 'f' not null check (client_gender in ('f', 'm')),
   created_at timestamptz default now()
 );
 
@@ -149,6 +152,10 @@ create table gallery_participants (
   gallery_id uuid references galleries(id) on delete cascade not null,
   display_name text not null,
   is_owner boolean default false not null,
+  -- לשון הפנייה לאורח/ת (נבחרת במסך ההצטרפות, app/api/gallery/[id]/identify).
+  -- null = לא ידוע (אורחים מלפני השדה) - הגלריה פונה בצורה ניטרלית ("בחר/י").
+  -- לבעלים לא בשימוש - שם קובע galleries.client_gender.
+  gender text check (gender in ('f', 'm')),
   created_at timestamptz default now()
 );
 
@@ -2081,3 +2088,16 @@ create policy "photographers read own logo" on storage.objects
 --     )
 --   ));
 -- ===== סוף מיגרציה: בקשות הארכה לתקופת הבחירה =====
+
+-- ===== מיגרציה: לשון פנייה ללקוח/ה ולאורחים (client_gender / gender) =====
+-- להריץ פעם אחת על פרויקט קיים (הכל idempotent). עד שמריצים - הקוד לא נשבר:
+-- הלקוח/ה הראשי/ת נחשב/ת נקבה ('f'), אורחים - פנייה ניטרלית, והבחירה בטפסים
+-- פשוט לא נשמרת (ראו lib/gender.ts).
+-- alter table galleries add column if not exists client_gender text default 'f' not null;
+-- alter table galleries drop constraint if exists galleries_client_gender_check;
+-- alter table galleries add constraint galleries_client_gender_check check (client_gender in ('f', 'm'));
+-- alter table gallery_participants add column if not exists gender text;
+-- alter table gallery_participants drop constraint if exists gallery_participants_gender_check;
+-- alter table gallery_participants add constraint gallery_participants_gender_check check (gender in ('f', 'm'));
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: לשון פנייה =====

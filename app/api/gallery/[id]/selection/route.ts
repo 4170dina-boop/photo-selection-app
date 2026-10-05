@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { requireGallerySession } from '@/lib/gallerySession';
 import { checkGalleryWritable } from '@/lib/galleryAccess';
 import { sendQuotaReachedEmail } from '@/lib/email';
+import { fetchClientGender } from '@/lib/gender';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { countBillableSelected } from '@/lib/gifts';
 import { syncPaidAtAfterTotalChange } from '@/lib/galleryPayments';
@@ -139,6 +140,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
               await sendQuotaReachedEmail({
                 to: photographerEmail,
                 clientName,
+                clientGender: await fetchClientGender(supabaseAdmin, galleryId),
                 includedPhotos: pkg.included_photos,
                 dashboardUrl: `${siteUrl}/dashboard/galleries/${galleryId}/edit`,
               });

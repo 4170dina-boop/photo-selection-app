@@ -293,3 +293,39 @@ describe('parseAdditionalInviteEmails', () => {
     expect(parseAdditionalInviteEmails([...ten, 'u10@x.co']).ok).toBe(false);
   });
 });
+
+describe('lib/email - לשון פנייה (clientGender)', () => {
+  const originalFetch = global.fetch;
+  const originalKey = process.env.RESEND_API_KEY;
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = originalKey;
+    vi.resetModules();
+  });
+
+  it('genders photographer notifications and the review request by client gender', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchSpy as unknown as typeof fetch;
+    const { sendSelectionCompleteEmail, sendQuotaReachedEmail, sendReviewRequestEmail, sendExtensionRequestedEmail } =
+      await import('./email');
+    const bodyAt = (i: number) => JSON.parse((fetchSpy.mock.calls[i] as [string, RequestInit])[1].body as string);
+
+    await sendSelectionCompleteEmail({ to: 'p@x.co', clientName: 'דני', clientGender: 'm', selectedCount: 3, dashboardUrl: 'https://x.co' });
+    expect(bodyAt(0).subject).toBe('דני סיים לבחור תמונות');
+    await sendSelectionCompleteEmail({ to: 'p@x.co', clientName: 'רחל', selectedCount: 3, dashboardUrl: 'https://x.co' });
+    expect(bodyAt(1).subject).toBe('רחל סיימה לבחור תמונות');
+
+    await sendQuotaReachedEmail({ to: 'p@x.co', clientName: 'דני', clientGender: 'm', includedPhotos: 30, dashboardUrl: 'https://x.co' });
+    expect(bodyAt(2).subject).toContain('דני הגיע למכסת');
+    expect(bodyAt(2).html).toContain('הוא עדיין יכול');
+
+    await sendReviewRequestEmail({ to: 'c@x.co', clientName: 'דני', clientGender: 'm', businessName: 'סטודיו', reviewLink: 'https://x.co/r' });
+    expect(bodyAt(3).html).toContain('מקווה שאתה נהנה');
+
+    await sendExtensionRequestedEmail({ to: 'p@x.co', clientName: 'דני', clientGender: 'm', days: 2, currentExpiresAt: null, dashboardUrl: 'https://x.co' });
+    expect(bodyAt(4).subject).toBe('הלקוח דני ביקש הארכה של 2 ימים');
+  });
+});

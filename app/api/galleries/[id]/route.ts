@@ -11,6 +11,7 @@ import {
   STATUS_GUARDED_UPDATE_MAX_ATTEMPTS,
 } from '@/lib/galleryLifecycle';
 import { applyRowGuard } from '@/lib/rowGuard';
+import { fetchClientGender, parseGenderInput, saveClientGender } from '@/lib/gender';
 
 // עריכה/מחיקה של גלריה קיימת, בדיוק כמו app/api/galleries/route.ts (יצירה) -
 // רץ עם session הצלם (לא service key), כך שה-RLS הקיים כבר דואג שאי אפשר
@@ -55,7 +56,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
-  return NextResponse.json(gallery);
+  // best-effort בנפרד מה-select הראשי - עמודה חסרה = 'f' (lib/gender.ts)
+  const clientGender = await fetchClientGender(supabase, gallery.id);
+
+  return NextResponse.json({ ...gallery, client_gender: clientGender });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -83,6 +87,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     photographerNotes?: string | null;
     reminderDays?: number | null;
     additionalInviteEmails?: unknown;
+    clientGender?: unknown;
   };
   try {
     body = await req.json();
@@ -111,6 +116,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: parsedInviteEmails.error }, { status: 400 });
   }
   const additionalInviteEmails = parsedInviteEmails.value;
+
+  // לשון פנייה ללקוח/ה (lib/gender.ts) - חסר = לא משנים את הקיים
+  const parsedGender = parseGenderInput(body.clientGender);
+  if (!parsedGender.ok) {
+    return NextResponse.json({ error: parsedGender.error }, { status: 400 });
+  }
 
   // גלריה שה-cron סימן כ-expired חוזרת לפעילה כשהתוקף מוארך לעתיד או מוסר
   // (statusAfterExpiryChange ב-lib/galleryLifecycle.ts). המעבר *מ*-expired
@@ -208,6 +219,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   if (clientError) {
     return NextResponse.json({ error: 'עדכון פרטי הלקוחה נכשל' }, { status: 500 });
+  }
+
+  // עדכון נפרד כדי שעמודה חסרה (מיגרציה שלא רצה) לא תפיל את כל השמירה
+  if (parsedGender.value) {
+    const saved = await saveClientGender(supabase, gallery.id, parsedGender.value);
+    if (saved === 'error') {
+      return NextResponse.json({ error: 'שמירת לשון הפנייה נכשלה' }, { status: 500 });
+    }
   }
 
   // upsert ולא update: גלריה ישנה בלי שורת packages (למשל יצירה שנקטעה) הייתה

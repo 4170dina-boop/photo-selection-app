@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { sendGalleryInviteEmail, parseAdditionalInviteEmails, isValidEmail } from '@/lib/email';
 import { parseGalleryNumbers } from '@/lib/galleryValidation';
+import { DEFAULT_CLIENT_GENDER, parseGenderInput, saveClientGender } from '@/lib/gender';
 
 // יוצר גלריה חדשה (client + gallery + package) עבור הצלם המחובר.
 // רץ דרך לקוח השרת עם ה-session של הצלם (לא service key) - כך RLS הקיים
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
     expiresAt?: string;
     reminderDays?: number;
     additionalInviteEmails?: unknown;
+    clientGender?: unknown;
   };
   try {
     body = await req.json();
@@ -68,6 +70,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsedInviteEmails.error }, { status: 400 });
   }
   const additionalInviteEmails = parsedInviteEmails.value;
+
+  // לשון פנייה ללקוח/ה (lib/gender.ts) - אופציונלי, ברירת מחדל נקבה
+  const parsedGender = parseGenderInput(body.clientGender);
+  if (!parsedGender.ok) {
+    return NextResponse.json({ error: parsedGender.error }, { status: 400 });
+  }
+  const clientGender = parsedGender.value ?? DEFAULT_CLIENT_GENDER;
 
   const { data: photographer, error: photographerError } = await supabase
     .from('photographers')
@@ -173,6 +182,13 @@ export async function POST(req: NextRequest) {
     await rollback('gallery', supabase.from('galleries').delete().eq('id', gallery.id));
     await rollback('client', supabase.from('clients').delete().eq('id', client.id));
     return NextResponse.json({ error: 'יצירת הגלריה נכשלה' }, { status: 500 });
+  }
+
+  // עדכון נפרד (לא בתוך ה-insert) כדי שגלריה תיווצר גם אם מיגרציית
+  // client_gender עוד לא רצה. 'f' היא ממילא ברירת המחדל של העמודה.
+  if (clientGender !== DEFAULT_CLIENT_GENDER) {
+    const saved = await saveClientGender(supabase, gallery.id, clientGender);
+    if (saved === 'error') console.error('[POST /api/galleries] שמירת client_gender נכשלה:', gallery.id);
   }
 
   // שליחת המייל היא best-effort: כישלון שליחה לא אמור לבטל את יצירת הגלריה -
