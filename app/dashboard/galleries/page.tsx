@@ -8,6 +8,7 @@ import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { giftExclusionFilter, groupGiftIdsByGallery } from '@/lib/gifts';
 import { theme, goldButtonStyle, inputStyle, outlineButtonStyle } from '@/lib/theme';
 import { computePaymentSummary, formatShekels } from '@/lib/payments';
+import { galleryRevenue, sumShekels } from '@/lib/revenue';
 
 interface GalleryRow {
   id: string;
@@ -29,6 +30,10 @@ interface GalleryRow {
   amount_due_override: number | null;
   gallery_payments: { amount: number }[] | null;
   selectedCount: number;
+}
+
+function rowRevenue(row: GalleryRow) {
+  return galleryRevenue({ pkg: row.packages, selectedCount: row.selectedCount, amountDueOverride: row.amount_due_override });
 }
 
 function rowPaymentSummary(row: GalleryRow) {
@@ -76,36 +81,63 @@ export default function GalleriesDashboard() {
     e.stopPropagation();
     setTogglingEditingId(row.id);
 
-    const res = await fetch(`/api/galleries/${row.id}/toggle-editing`, { method: 'POST' });
-    setTogglingEditingId(null);
-
-    if (!res.ok) return;
-    const data = await res.json();
-    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, editing_started_at: data.editingStartedAt } : r)));
+    // שולחים את הערך הרצוי (לא "הפוך") - לחיצה כפולה/לשונית ישנה לא תהפוך שוב
+    try {
+      const res = await fetch(`/api/galleries/${row.id}/toggle-editing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: !row.editing_started_at }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, editing_started_at: data.editingStartedAt } : r)));
+    } catch {
+      // שגיאת רשת - הסימון פשוט לא משתנה
+    } finally {
+      setTogglingEditingId(null);
+    }
   }
 
   async function handleToggleDelivered(row: GalleryRow, e: React.MouseEvent) {
     e.stopPropagation();
     setTogglingDeliveredId(row.id);
 
-    const res = await fetch(`/api/galleries/${row.id}/toggle-delivered`, { method: 'POST' });
-    setTogglingDeliveredId(null);
-
-    if (!res.ok) return;
-    const data = await res.json();
-    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, delivered_at: data.deliveredAt } : r)));
+    // שולחים את הערך הרצוי (לא "הפוך") - לחיצה כפולה/לשונית ישנה לא תהפוך שוב
+    try {
+      const res = await fetch(`/api/galleries/${row.id}/toggle-delivered`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: !row.delivered_at }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, delivered_at: data.deliveredAt } : r)));
+    } catch {
+      // שגיאת רשת - הסימון פשוט לא משתנה
+    } finally {
+      setTogglingDeliveredId(null);
+    }
   }
 
   async function handleTogglePaid(row: GalleryRow, e: React.MouseEvent) {
     e.stopPropagation();
     setTogglingPaidId(row.id);
 
-    const res = await fetch(`/api/galleries/${row.id}/toggle-paid`, { method: 'POST' });
-    setTogglingPaidId(null);
-
-    if (!res.ok) return;
-    const data = await res.json();
-    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, paid_at: data.paidAt } : r)));
+    // שולחים את הערך הרצוי (לא "הפוך") - לחיצה כפולה/לשונית ישנה לא תהפוך שוב
+    try {
+      const res = await fetch(`/api/galleries/${row.id}/toggle-paid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: !row.paid_at }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, paid_at: data.paidAt } : r)));
+    } catch {
+      // שגיאת רשת - הסימון פשוט לא משתנה
+    } finally {
+      setTogglingPaidId(null);
+    }
   }
 
   // פעולות מרוכזות - לולאה על ה-API הקיים של פריט בודד (לא route חדש) - פשוט
@@ -113,7 +145,7 @@ export default function GalleriesDashboard() {
   // מספיק שזה לא בעיית ביצועים.
   async function handleBulkDelete() {
     if (selectedIds.size === 0) return;
-    if (!window.confirm(`למחוק ${selectedIds.size} גלריות? כל התמונות והבחירות שלהן יימחקו לצמיתות - אי אפשר לבטל את זה.`)) return;
+    if (!window.confirm(`למחוק ${selectedIds.size} גלריות? כל התמונות, הבחירות והיסטוריית התשלומים שלהן יימחקו לצמיתות - אי אפשר לבטל את זה.`)) return;
 
     setBulkWorking(true);
     setBulkMessage('');
@@ -295,17 +327,11 @@ export default function GalleriesDashboard() {
   const pendingActionCount = rows.filter((r) => r.status === 'draft' || r.status === 'sent' || r.status === 'in_progress').length;
   const completedCount = rows.filter((r) => r.status === 'completed').length;
 
-  // סכום חריגות מכל הגלריות יחד - אותו חישוב שכל שורה עושה בנפרד, ראו למטה
-  const totalOverage = rows.reduce((sum, row) => {
-    const included = row.packages?.included_photos ?? 0;
-    const overageCount = Math.max(0, row.selectedCount - included);
-    return sum + overageCount * (row.packages?.extra_photo_price ?? 0);
-  }, 0);
-
-  // מחיר החבילות עצמן - נספר על כל הגלריות (לא רק פעילות), כי בדרך כלל
-  // גובים על החבילה בזמן ההזמנה, לא רק כשהיא מסתיימת.
-  const totalBasePrice = rows.reduce((sum, row) => sum + (row.packages?.base_price ?? 0), 0);
-  const totalRevenue = totalBasePrice + totalOverage;
+  // סה"כ הכנסה = הסכום לתשלום של כל הגלריות (לא רק פעילות - בדרך כלל גובים
+  // על החבילה בזמן ההזמנה), כולל דריסה ידנית של הסכום, באגורות שלמות - ראו
+  // lib/revenue.ts. חריגות = רק בגלריות בלי דריסה ידנית.
+  const totalRevenue = sumShekels(rows.map((row) => rowRevenue(row).total));
+  const totalOverage = sumShekels(rows.map((row) => rowRevenue(row).overage));
 
   // כמה עוד נשאר לגבות מכל הגלריות יחד (יתרות פתוחות בלבד - גלריה שסומנה
   // כשולמה, גם ידנית, לא נספרת) - ראו outstanding ב-lib/payments.ts.
@@ -366,8 +392,8 @@ export default function GalleriesDashboard() {
           <h1 style={{ fontSize: 20, margin: 0 }}>הגלריות שלי</h1>
           {totalRevenue > 0 && (
             <p style={{ color: theme.gold, fontSize: 13, margin: '0.25rem 0 0' }}>
-              סה"כ הכנסה: ₪{totalRevenue}
-              {totalOverage > 0 && ` (מתוכה חריגות: ₪${totalOverage})`}
+              סה"כ הכנסה: {formatShekels(totalRevenue)}
+              {totalOverage > 0 && ` (מתוכה חריגות: ${formatShekels(totalOverage)})`}
             </p>
           )}
           {totalOutstanding > 0 && (
@@ -517,8 +543,8 @@ export default function GalleriesDashboard() {
         // הכנה לחיוב בפועל (עדיין לא מומש - ראו README, "מה עדיין חסר") - כרגע
         // רק מציגה לצלמת כמה חריגה יש וכמה זה שווה, לפי extra_photo_price של החבילה
         const overageCount = Math.max(0, row.selectedCount - included);
-        const overagePrice = row.packages?.extra_photo_price ?? 0;
-        const overageTotal = overageCount * overagePrice;
+        const overagePrice = Number(row.packages?.extra_photo_price ?? 0);
+        const overageTotal = rowRevenue(row).overage;
         const payment = rowPaymentSummary(row);
 
         return (
@@ -637,12 +663,12 @@ export default function GalleriesDashboard() {
               </div>
               {!!row.packages?.base_price && (
                 <div style={{ fontSize: 12, color: theme.textMuted, marginTop: '0.15rem' }}>
-                  מחיר חבילה: ₪{row.packages.base_price}
+                  מחיר חבילה: {formatShekels(Number(row.packages.base_price))}
                 </div>
               )}
               {overageCount > 0 && (
                 <div style={{ fontSize: 12, color: theme.gold, marginTop: '0.15rem' }}>
-                  חריגה: {overageCount} תמונות{overagePrice > 0 ? ` (₪${overageTotal})` : ''}
+                  חריגה: {overageCount} תמונות{overagePrice > 0 && !payment.isOverridden ? ` (${formatShekels(overageTotal)})` : ''}
                 </div>
               )}
               {payment.paymentCount > 0 && (

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { listAllKeys, deleteObjects } from '@/lib/r2';
 import { isValidEmail } from '@/lib/email';
+import { parseGalleryNumbers } from '@/lib/galleryValidation';
 
 // עריכה/מחיקה של גלריה קיימת, בדיוק כמו app/api/galleries/route.ts (יצירה) -
 // רץ עם session הצלם (לא service key), כך שה-RLS הקיים כבר דואג שאי אפשר
@@ -81,15 +82,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'גוף בקשה לא תקין' }, { status: 400 });
   }
 
-  const { clientName, clientEmail, includedPhotos, basePrice, extraPhotoPrice, expiresAt, photographerNotes, reminderDays } = body;
+  const { clientName, clientEmail, photographerNotes } = body;
 
-  if (reminderDays != null && reminderDays < 1) {
-    return NextResponse.json({ error: 'מספר ימי התזכורת חייב להיות לפחות 1' }, { status: 400 });
-  }
-
-  if (!clientName?.trim() || !clientEmail?.trim() || includedPhotos == null || includedPhotos < 0) {
+  if (!clientName?.trim() || !clientEmail?.trim() || body.includedPhotos == null) {
     return NextResponse.json({ error: 'חסרים פרטים (שם לקוחה, אימייל ומספר תמונות בחבילה)' }, { status: 400 });
   }
+
+  // כל המספרים/התאריך נבדקים לפני הכתיבה הראשונה (clients) - כדי ששגיאת
+  // אימות לא תשאיר שמירה חלקית. ראו lib/galleryValidation.ts.
+  const numbers = parseGalleryNumbers(body);
+  if (!numbers.ok) {
+    return NextResponse.json({ error: numbers.error }, { status: 400 });
+  }
+  const { includedPhotos, basePrice, extraPhotoPrice, expiresAt, reminderDays } = numbers.value;
 
   // כמו ב-POST ליצירה (app/api/galleries/route.ts) - אופציונלי, אבל אם ניתנו
   // כתובות הן חייבות להיות תקינות.
@@ -113,9 +118,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const { error: galleryError } = await supabase
     .from('galleries')
     .update({
-      expires_at: expiresAt || null,
+      expires_at: expiresAt,
       photographer_notes: photographerNotes?.trim() || null,
-      reminder_days: reminderDays || null,
+      reminder_days: reminderDays,
       additional_invite_emails: additionalInviteEmails.length > 0 ? additionalInviteEmails : null,
     })
     .eq('id', gallery.id);
@@ -124,10 +129,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'עדכון הגלריה נכשל' }, { status: 500 });
   }
 
+  // upsert ולא update: גלריה ישנה בלי שורת packages (למשל יצירה שנקטעה) הייתה
+  // "מצליחה" ב-update שתואם 0 שורות, והחבילה לא הייתה נשמרת בשקט.
   const { error: packageError } = await supabase
     .from('packages')
-    .update({ included_photos: includedPhotos, base_price: basePrice ?? 0, extra_photo_price: extraPhotoPrice ?? 0 })
-    .eq('gallery_id', gallery.id);
+    .upsert(
+      { gallery_id: gallery.id, included_photos: includedPhotos, base_price: basePrice, extra_photo_price: extraPhotoPrice },
+      { onConflict: 'gallery_id' }
+    );
 
   if (packageError) {
     return NextResponse.json({ error: 'עדכון החבילה נכשל' }, { status: 500 });

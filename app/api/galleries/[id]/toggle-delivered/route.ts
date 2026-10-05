@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { nextToggleTimestamp, readToggleValue } from '@/lib/toggleValue';
 
 // הופכת (toggle) את סימון "נמסר" - "הושלם" (galleries.status) אומר רק שהלקוחה
 // סיימה לבחור, לא שהתמונות המוגמרות בפועל כבר נשלחו/נמסרו אליה. שדה נפרד
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
-  const newDeliveredAt = gallery.delivered_at ? null : new Date().toISOString();
+  const newDeliveredAt = nextToggleTimestamp(gallery.delivered_at, await readToggleValue(req), new Date().toISOString());
 
   const { error } = await supabase.from('galleries').update({ delivered_at: newDeliveredAt }).eq('id', gallery.id);
 

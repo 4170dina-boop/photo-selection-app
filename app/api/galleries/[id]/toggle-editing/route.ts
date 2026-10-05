@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { nextToggleTimestamp, readToggleValue } from '@/lib/toggleValue';
 
 // הופכת (toggle) את סימון "בעריכה" - שלב ביניים נפרד גם מ-status ('completed'
 // אומר רק שהלקוחה סיימה לבחור) וגם מ-delivered_at (מסירת הקבצים הסופיים
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
-  const newEditingStartedAt = gallery.editing_started_at ? null : new Date().toISOString();
+  const newEditingStartedAt = nextToggleTimestamp(gallery.editing_started_at, await readToggleValue(req), new Date().toISOString());
 
   const { error } = await supabase
     .from('galleries')

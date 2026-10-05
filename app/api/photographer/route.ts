@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { MAX_SHOOT_REMINDER_DAYS } from '@/lib/shoots';
+import { parseLogoUrl, parseNonNegativeInt, parsePrice, parseReminderDays } from '@/lib/galleryValidation';
 
 // פרופיל הצלמת המחוברת - watermark_text (מוטבע על תצוגות התמונות, ראו
 // lib/watermark.ts), brand_color, logo_url, וברירות המחדל למילוי אוטומטי
@@ -90,8 +91,14 @@ export async function PATCH(req: NextRequest) {
 
   // logoUrl מגיע רק כשהוא באמת השתנה (העלאה חדשה/הסרה) - PATCH הרגיל של שאר
   // ההגדרות לא שולח את השדה הזה בכלל, כדי לא לדרוס בטעות לוגו קיים ב-null.
+  // רק URL ציבורי מה-bucket photographer-logos שלנו (או null) - הלוגו מוצג
+  // ללקוחות בגלריה, אז לא מקבלים כל כתובת חיצונית. ראו lib/galleryValidation.ts.
   if ('logoUrl' in body) {
-    update.logo_url = body.logoUrl?.trim() || null;
+    const logo = parseLogoUrl(body.logoUrl, process.env.NEXT_PUBLIC_SUPABASE_URL);
+    if (!logo.ok) {
+      return NextResponse.json({ error: logo.error }, { status: 400 });
+    }
+    update.logo_url = logo.value;
   }
 
   // customTheme: null מנקה חזרה לפלטה הקבועה. אם מוגדר, כל 4 השדות חייבים
@@ -110,29 +117,27 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
+  // ברירות מחדל מספריות - Number.isFinite/isInteger דרך lib/galleryValidation.ts,
+  // כך ש-NaN, '' ושברים במקום מספר שלם נדחים ולא נכתבים ל-DB.
   if (body.defaultIncludedPhotos != null) {
-    if (body.defaultIncludedPhotos < 0) {
-      return NextResponse.json({ error: 'מספר תמונות ברירת מחדל לא יכול להיות שלילי' }, { status: 400 });
-    }
-    update.default_included_photos = body.defaultIncludedPhotos;
+    const r = parseNonNegativeInt(body.defaultIncludedPhotos, 'מספר תמונות ברירת מחדל חייב להיות מספר שלם אי-שלילי');
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+    update.default_included_photos = r.value;
   }
   if (body.defaultBasePrice != null) {
-    if (body.defaultBasePrice < 0) {
-      return NextResponse.json({ error: 'מחיר ברירת מחדל לא יכול להיות שלילי' }, { status: 400 });
-    }
-    update.default_base_price = body.defaultBasePrice;
+    const r = parsePrice(body.defaultBasePrice, 'מחיר ברירת מחדל חייב להיות מספר אי-שלילי');
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+    update.default_base_price = r.value;
   }
   if (body.defaultExtraPhotoPrice != null) {
-    if (body.defaultExtraPhotoPrice < 0) {
-      return NextResponse.json({ error: 'מחיר ברירת מחדל לא יכול להיות שלילי' }, { status: 400 });
-    }
-    update.default_extra_photo_price = body.defaultExtraPhotoPrice;
+    const r = parsePrice(body.defaultExtraPhotoPrice, 'מחיר ברירת מחדל חייב להיות מספר אי-שלילי');
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+    update.default_extra_photo_price = r.value;
   }
   if (body.reminderDaysDefault != null) {
-    if (body.reminderDaysDefault < 1) {
-      return NextResponse.json({ error: 'מספר ימי התזכורת חייב להיות לפחות 1' }, { status: 400 });
-    }
-    update.reminder_days_default = body.reminderDaysDefault;
+    const r = parseReminderDays(body.reminderDaysDefault);
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+    update.reminder_days_default = r.value;
   }
   if ('reviewLink' in body) {
     const reviewLink = body.reviewLink?.trim() || null;

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { sendGalleryInviteEmail, isValidEmail } from '@/lib/email';
+import { parseGalleryNumbers } from '@/lib/galleryValidation';
 
 // יוצר גלריה חדשה (client + gallery + package) עבור הצלם המחובר.
 // רץ דרך לקוח השרת עם ה-session של הצלם (לא service key) - כך RLS הקיים
@@ -9,6 +10,14 @@ import { sendGalleryInviteEmail, isValidEmail } from '@/lib/email';
 // אוכף מעצמו שאי אפשר ליצור רשומות תחת צלם אחר.
 function generateAccessCode(): string {
   return crypto.randomBytes(4).toString('hex').toUpperCase(); // קוד קריא בן 8 תווים
+}
+
+// מחיקת rollback אחרי כישלון באמצע היצירה - אם גם היא נכשלת לא נשאר מה
+// לעשות מול הלקוחה (כבר מחזירים שגיאה), אבל לפחות רושמים ללוג כדי שיהיה אפשר
+// לנקות ידנית שורות יתומות.
+async function rollback(label: string, op: PromiseLike<{ error: unknown }>) {
+  const { error } = await op;
+  if (error) console.error(`[POST /api/galleries] rollback failed (${label}):`, error);
 }
 
 export async function POST(req: NextRequest) {
@@ -38,11 +47,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'גוף בקשה לא תקין' }, { status: 400 });
   }
 
-  const { clientName, clientEmail, includedPhotos, basePrice, extraPhotoPrice, expiresAt, reminderDays } = body;
+  const { clientName, clientEmail } = body;
 
-  if (!clientName?.trim() || !clientEmail?.trim() || includedPhotos == null || includedPhotos < 0) {
+  if (!clientName?.trim() || !clientEmail?.trim() || body.includedPhotos == null) {
     return NextResponse.json({ error: 'חסרים פרטים (שם לקוחה, אימייל ומספר תמונות בחבילה)' }, { status: 400 });
   }
+
+  // כל המספרים/התאריך נבדקים כאן, לפני הכתיבה הראשונה - ראו lib/galleryValidation.ts
+  const numbers = parseGalleryNumbers(body);
+  if (!numbers.ok) {
+    return NextResponse.json({ error: numbers.error }, { status: 400 });
+  }
+  const { includedPhotos, basePrice, extraPhotoPrice, expiresAt, reminderDays } = numbers.value;
 
   // כתובות מייל נוספות (למשל בני משפחה) - אופציונלי, אבל אם ניתנו כולן חייבות
   // להיות כתובות תקינות. ראו lib/email.ts: isValidEmail ו-additional_invite_emails
@@ -100,14 +116,14 @@ export async function POST(req: NextRequest) {
       status: 'sent',
       reminder_days: reminderDays ?? photographer.reminder_days_default,
       sent_at: new Date().toISOString(),
-      expires_at: expiresAt || null,
+      expires_at: expiresAt,
       additional_invite_emails: additionalInviteEmails.length > 0 ? additionalInviteEmails : null,
     })
     .select('id')
     .single();
 
   if (galleryError || !gallery) {
-    await supabase.from('clients').delete().eq('id', client.id);
+    await rollback('client', supabase.from('clients').delete().eq('id', client.id));
 
     // מגבלת חשבון חינמי (טריגר enforce_active_gallery_limit ב-DB) - ראו supabase/schema.sql
     if (galleryError?.message?.includes('LIMIT_ACTIVE_GALLERY')) {
@@ -123,13 +139,13 @@ export async function POST(req: NextRequest) {
   const { error: packageError } = await supabase.from('packages').insert({
     gallery_id: gallery.id,
     included_photos: includedPhotos,
-    base_price: basePrice ?? 0,
-    extra_photo_price: extraPhotoPrice ?? 0,
+    base_price: basePrice,
+    extra_photo_price: extraPhotoPrice,
   });
 
   if (packageError) {
-    await supabase.from('galleries').delete().eq('id', gallery.id);
-    await supabase.from('clients').delete().eq('id', client.id);
+    await rollback('gallery', supabase.from('galleries').delete().eq('id', gallery.id));
+    await rollback('client', supabase.from('clients').delete().eq('id', client.id));
     return NextResponse.json({ error: 'יצירת החבילה נכשלה' }, { status: 500 });
   }
 
@@ -143,13 +159,23 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (ownerError || !ownerParticipant) {
-    await supabase.from('packages').delete().eq('gallery_id', gallery.id);
-    await supabase.from('galleries').delete().eq('id', gallery.id);
-    await supabase.from('clients').delete().eq('id', client.id);
+    await rollback('package', supabase.from('packages').delete().eq('gallery_id', gallery.id));
+    await rollback('gallery', supabase.from('galleries').delete().eq('id', gallery.id));
+    await rollback('client', supabase.from('clients').delete().eq('id', client.id));
     return NextResponse.json({ error: 'יצירת הגלריה נכשלה' }, { status: 500 });
   }
 
-  await supabase.from('galleries').update({ owner_participant_id: ownerParticipant.id }).eq('id', gallery.id);
+  const { error: ownerLinkError } = await supabase
+    .from('galleries')
+    .update({ owner_participant_id: ownerParticipant.id })
+    .eq('id', gallery.id);
+
+  if (ownerLinkError) {
+    // gallery_participants/packages נמחקים ב-CASCADE עם הגלריה
+    await rollback('gallery', supabase.from('galleries').delete().eq('id', gallery.id));
+    await rollback('client', supabase.from('clients').delete().eq('id', client.id));
+    return NextResponse.json({ error: 'יצירת הגלריה נכשלה' }, { status: 500 });
+  }
 
   // שליחת המייל היא best-effort: כישלון שליחה לא אמור לבטל את יצירת הגלריה -
   // הצלם עדיין רואה את הקישור והקוד במסך ויכול לשלוח ידנית אם emailSent=false.

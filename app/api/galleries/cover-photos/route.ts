@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { getPresignedDownloadUrl } from '@/lib/r2';
+import { mapWithConcurrency } from '@/lib/concurrency';
 
 // signed URL של התמונה הראשונה שהועלתה לכל גלריה של הצלמת המחוברת - לתמונה
 // קטנה ברשימת הגלריות (app/dashboard/galleries/page.tsx) כדי שיהיה קל לזהות
@@ -13,6 +14,7 @@ const supabaseAdmin = createAdminClient(
 );
 
 const SIGNED_URL_TTL_SECONDS = 60 * 60; // שעה - מספיק לישיבה אחת בלוח הגלריות
+const COVER_QUERY_CONCURRENCY = 8;
 
 export async function GET() {
   const supabase = createClient();
@@ -40,20 +42,22 @@ export async function GET() {
     return NextResponse.json({ covers: {} });
   }
 
-  const { data: photos } = await supabaseAdmin
-    .from('photos')
-    .select('gallery_id, thumbnail_path, created_at')
-    .in('gallery_id', galleryIds)
-    .order('created_at', { ascending: true });
-
-  // ראשונה בלבד לכל גלריה - photos ממוין מהישן לחדש, אז דילוג על גלריה
-  // שכבר יש לה תמונה נבחרת נותן בדיוק את הראשונה.
+  // שאילתה נפרדת (limit 1) לכל גלריה, ולא שליפה אחת של כל התמונות - שליפה
+  // אחת נחתכת ב-1000 שורות של PostgREST, כך שגלריות חדשות (שהתמונות שלהן
+  // ממוינות אחרונות) נשארו בלי תמונת שער. במקביל, אבל עם תקרה, כדי לא להציף
+  // את ה-DB כשיש לצלמת הרבה גלריות.
   const firstPhotoByGallery = new Map<string, string>();
-  for (const photo of photos ?? []) {
-    if (!firstPhotoByGallery.has(photo.gallery_id) && photo.thumbnail_path) {
-      firstPhotoByGallery.set(photo.gallery_id, photo.thumbnail_path);
-    }
-  }
+  await mapWithConcurrency(galleryIds, COVER_QUERY_CONCURRENCY, async (galleryId) => {
+    const { data } = await supabaseAdmin
+      .from('photos')
+      .select('thumbnail_path')
+      .eq('gallery_id', galleryId)
+      .not('thumbnail_path', 'is', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (data?.thumbnail_path) firstPhotoByGallery.set(galleryId, data.thumbnail_path);
+  });
 
   const covers: Record<string, string> = {};
   await Promise.all(
