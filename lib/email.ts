@@ -1,6 +1,7 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { toHebrewDateString } from '@/lib/hebrewDate';
 import { formatShootDateLabel, formatShootTime } from '@/lib/shoots';
+import { DEFAULT_CLIENT_GENDER, gt, type Gender } from '@/lib/gender';
 
 // שליחת מייל דרך Resend (REST API ישיר, בלי SDK נוסף). אם RESEND_API_KEY לא
 // מוגדר - לא זורקים שגיאה, רק מדלגים ומדפיסים אזהרה. כך גם app/api/cron/tick/route.ts
@@ -318,6 +319,8 @@ export async function sendGalleryInviteEmail(params: GalleryInviteParams): Promi
 interface SelectionCompleteParams {
   to: string;
   clientName: string;
+  // לשון על הלקוח/ה בגוף שלישי ("סיימה"/"סיים") - galleries.client_gender
+  clientGender?: Gender | null;
   selectedCount: number;
   dashboardUrl: string;
 }
@@ -327,22 +330,24 @@ interface SelectionCompleteParams {
 // מלהיכנס ולבדוק ידנית. שם התצוגה כאן "אזור צלמים" ולא שם הלקוחה/הצלמת -
 // זו התראה מהמערכת עצמה, לא מייל בשם הלקוחה.
 export async function sendSelectionCompleteEmail(params: SelectionCompleteParams): Promise<SendResult> {
+  const finished = gt(params.clientGender ?? DEFAULT_CLIENT_GENDER, 'סיימה', 'סיים');
   const html = wrapEmailHtml({
     headerText: 'אזור צלמים',
     bodyHtml: `
       <p style="margin: 0 0 8px;">היי,</p>
-      <p style="margin: 0;"><b>${escapeHtml(params.clientName)}</b> סיימה לבחור תמונות בגלריה - נבחרו <b>${escapeHtml(params.selectedCount)}</b> תמונות.</p>
+      <p style="margin: 0;"><b>${escapeHtml(params.clientName)}</b> ${finished} לבחור תמונות בגלריה - נבחרו <b>${escapeHtml(params.selectedCount)}</b> תמונות.</p>
     `,
     ctaText: 'צפייה בבחירה ובהורדת התמונות',
     ctaUrl: params.dashboardUrl,
   });
 
-  return sendEmail(params.to, `${params.clientName} סיימה לבחור תמונות`, html, { fromName: 'אזור צלמים ✨' });
+  return sendEmail(params.to, `${params.clientName} ${finished} לבחור תמונות`, html, { fromName: 'אזור צלמים ✨' });
 }
 
 interface QuotaReachedParams {
   to: string;
   clientName: string;
+  clientGender?: Gender | null;
   includedPhotos: number;
   dashboardUrl: string;
 }
@@ -352,18 +357,23 @@ interface QuotaReachedParams {
 // לב אליו, לא קריאה לפעולה. נשלחת פעם אחת בדיוק ברגע החציה, ראו
 // app/api/gallery/[id]/selection/route.ts.
 export async function sendQuotaReachedEmail(params: QuotaReachedParams): Promise<SendResult> {
+  const gender = params.clientGender ?? DEFAULT_CLIENT_GENDER;
   const html = wrapEmailHtml({
     headerText: 'אזור צלמים',
     bodyHtml: `
       <p style="margin: 0 0 8px;">היי,</p>
-      <p style="margin: 0 0 8px;"><b>${escapeHtml(params.clientName)}</b> בחרה ${escapeHtml(params.includedPhotos)} תמונות - בדיוק המכסה שכלולה בחבילה שלה.</p>
-      <p style="margin: 0; font-size: 13px; color: #6b6156;">היא עדיין יכולה להמשיך לבחור (עם חיוב על חריגה), או שהיא כבר עומדת לסיים.</p>
+      <p style="margin: 0 0 8px;"><b>${escapeHtml(params.clientName)}</b> ${gt(gender, 'בחרה', 'בחר')} ${escapeHtml(params.includedPhotos)} תמונות - בדיוק המכסה שכלולה בחבילה ${gt(gender, 'שלה', 'שלו')}.</p>
+      <p style="margin: 0; font-size: 13px; color: #6b6156;">${gt(
+        gender,
+        'היא עדיין יכולה להמשיך לבחור (עם חיוב על חריגה), או שהיא כבר עומדת לסיים.',
+        'הוא עדיין יכול להמשיך לבחור (עם חיוב על חריגה), או שהוא כבר עומד לסיים.'
+      )}</p>
     `,
     ctaText: 'צפייה בגלריה',
     ctaUrl: params.dashboardUrl,
   });
 
-  return sendEmail(params.to, `${params.clientName} הגיעה למכסת התמונות בחבילה`, html, { fromName: 'אזור צלמים ✨' });
+  return sendEmail(params.to, `${params.clientName} ${gt(gender, 'הגיעה', 'הגיע')} למכסת התמונות בחבילה`, html, { fromName: 'אזור צלמים ✨' });
 }
 
 interface FinalPhotosReadyParams {
@@ -459,6 +469,7 @@ export async function sendClientSelectionSummaryEmail(params: ClientSelectionSum
 interface ReviewRequestParams {
   to: string;
   clientName: string;
+  clientGender?: Gender | null;
   businessName: string;
   reviewLink: string;
   replyTo?: string;
@@ -473,7 +484,7 @@ export async function sendReviewRequestEmail(params: ReviewRequestParams): Promi
     headerText: params.businessName,
     bodyHtml: `
       <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
-      <p style="margin: 0 0 8px;">מקווה שאת נהנית מהתמונות! 💛</p>
+      <p style="margin: 0 0 8px;">מקווה ${gt(params.clientGender ?? DEFAULT_CLIENT_GENDER, 'שאת נהנית', 'שאתה נהנה')} מהתמונות! 💛</p>
       <p style="margin: 0; font-size: 13px; color: #6b6156;">
         אם יש לך רגע, ביקורת קצרה ממך תעזור לי המון להמשיך לצלם עוד אירועים כמו שלך.
       </p>
@@ -614,6 +625,7 @@ export function extensionDateText(iso: string): string {
 interface ExtensionRequestedParams {
   to: string;
   clientName: string;
+  clientGender?: Gender | null;
   days: number;
   currentExpiresAt: string | null;
   dashboardUrl: string;
@@ -624,18 +636,21 @@ interface ExtensionRequestedParams {
 // נעשים בדף עריכת הגלריה.
 export async function sendExtensionRequestedEmail(params: ExtensionRequestedParams): Promise<SendResult> {
   const daysText = params.days === 1 ? 'יום אחד' : `${params.days} ימים`;
+  const gender = params.clientGender ?? DEFAULT_CLIENT_GENDER;
+  const who = gt(gender, 'הלקוחה', 'הלקוח');
+  const asked = gt(gender, 'ביקשה', 'ביקש');
   const html = wrapEmailHtml({
     headerText: 'אזור צלמים',
     bodyHtml: `
       <p style="margin: 0 0 8px;">היי,</p>
-      <p style="margin: 0 0 8px;">הלקוחה <b>${escapeHtml(params.clientName)}</b> ביקשה הארכה של <b>${escapeHtml(daysText)}</b> לבחירת התמונות.</p>
+      <p style="margin: 0 0 8px;">${who} <b>${escapeHtml(params.clientName)}</b> ${asked} הארכה של <b>${escapeHtml(daysText)}</b> לבחירת התמונות.</p>
       ${params.currentExpiresAt ? `<p style="margin: 0; font-size: 13px; color: #6b6156;">תאריך הסיום הנוכחי: ${escapeHtml(extensionDateText(params.currentExpiresAt))}</p>` : ''}
     `,
     ctaText: 'לאישור או דחייה',
     ctaUrl: params.dashboardUrl,
   });
 
-  return sendEmail(params.to, `הלקוחה ${params.clientName} ביקשה הארכה של ${daysText}`, html, { fromName: 'אזור צלמים ✨' });
+  return sendEmail(params.to, `${who} ${params.clientName} ${asked} הארכה של ${daysText}`, html, { fromName: 'אזור צלמים ✨' });
 }
 
 interface ExtensionDecisionParams {

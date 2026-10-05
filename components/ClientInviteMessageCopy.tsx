@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { theme, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import { buildGalleryUrl, buildInviteMessageHtml, buildInviteMessageText } from '@/lib/clientInviteMessage';
+import type { Gender } from '@/lib/gender';
 
 // כפתור "✎ העתקת הודעה מוכנה לשליחה" - גיבוי ידני (וואטסאפ/מייל רגיל) למייל
 // ההזמנה האוטומטי. מעתיק גם טקסט רגיל וגם HTML מעוצב באותה פעולה
@@ -19,6 +20,8 @@ interface ClientInviteMessageCopyProps {
   galleryId: string;
   accessCode: string;
   clientName?: string | null;
+  // לשון הפנייה בהודעה ("מה תבחרי" / "מה תבחר") - ברירת מחדל נקבה
+  clientGender?: Gender;
   expiresAt?: string | null;
   // שניהם undefined = הקומפוננטה טוענת בעצמה מ-/api/photographer
   businessName?: string;
@@ -33,6 +36,7 @@ export default function ClientInviteMessageCopy({
   galleryId,
   accessCode,
   clientName,
+  clientGender,
   expiresAt,
   businessName,
   logoUrl,
@@ -85,6 +89,7 @@ export default function ClientInviteMessageCopy({
   async function handleCopy() {
     const params = {
       clientName,
+      clientGender,
       galleryUrl: buildGalleryUrl(process.env.NEXT_PUBLIC_SITE_URL || window.location.origin, galleryId),
       accessCode,
       expiresAt,

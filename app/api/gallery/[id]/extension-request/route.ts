@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireGallerySession } from '@/lib/gallerySession';
 import { sendExtensionRequestedEmail } from '@/lib/email';
+import { fetchClientGender } from '@/lib/gender';
 import {
   decideNewExtensionRequest,
   isMissingTableError,
@@ -125,6 +126,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         await sendExtensionRequestedEmail({
           to: photographerEmail,
           clientName: (gallery as any).clients?.full_name ?? 'לקוחה',
+          clientGender: await fetchClientGender(supabaseAdmin, galleryId),
           days: parsedDays.days,
           currentExpiresAt: gallery.expires_at,
           dashboardUrl: `${siteUrl}/dashboard/galleries/${galleryId}/edit`,
