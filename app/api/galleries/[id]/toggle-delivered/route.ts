@@ -40,7 +40,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const newDeliveredAt = nextToggleTimestamp(gallery.delivered_at, await readToggleValue(req), new Date().toISOString());
 
-  const { error } = await supabase.from('galleries').update({ delivered_at: newDeliveredAt }).eq('id', gallery.id);
+  // כל שינוי ב-delivered_at מאפס גם את התראת מחיקת המקור - ההתראה הקודמת
+  // (אם נשלחה) דיברה על תאריך מסירה אחר, ו-cron/tick מוחק מקור רק אחרי
+  // שנשלחה התראה על המסירה הנוכחית לפחות 5 ימים קודם.
+  const { error } = await supabase
+    .from('galleries')
+    .update({ delivered_at: newDeliveredAt, originals_deletion_warning_sent_at: null })
+    .eq('id', gallery.id);
 
   if (error) {
     return NextResponse.json({ error: 'עדכון סימון המסירה נכשל' }, { status: 500 });

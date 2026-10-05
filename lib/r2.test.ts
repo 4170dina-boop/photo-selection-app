@@ -20,7 +20,7 @@ vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
 });
 
 import { DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
-import { deleteObjects, listAllKeys } from './r2';
+import { deleteObjects, listAllKeys, summarizeDeleteOutput } from './r2';
 
 const makeKeys = (n: number) => Array.from({ length: n }, (_, i) => `gallery-1/photo-${i}.jpg`);
 
@@ -63,6 +63,19 @@ describe('deleteObjects', () => {
     sendMock.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('boom'));
     await expect(deleteObjects(makeKeys(1500))).rejects.toThrow('boom');
     expect(sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces per-key Errors returned with HTTP 200 instead of reporting success', async () => {
+    sendMock
+      .mockResolvedValueOnce({ Errors: [{ Key: 'gallery-1/photo-5.jpg', Code: 'AccessDenied', Message: 'nope' }] })
+      .mockResolvedValueOnce({});
+    const result = await deleteObjects(makeKeys(1500));
+    expect(result.deletedCount).toBe(1499);
+    expect(result.failed).toEqual([{ key: 'gallery-1/photo-5.jpg', code: 'AccessDenied', message: 'nope' }]);
+  });
+
+  it('summarizeDeleteOutput counts everything as deleted when there are no Errors', () => {
+    expect(summarizeDeleteOutput(['a', 'b'], undefined)).toEqual({ deletedCount: 2, failed: [] });
   });
 });
 

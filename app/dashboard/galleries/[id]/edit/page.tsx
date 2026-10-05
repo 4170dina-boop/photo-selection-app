@@ -272,10 +272,12 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
       return;
     }
 
+    const failedAdditional: string[] = Array.isArray(data.failedAdditional) ? data.failedAdditional : [];
+    const additionalNote = failedAdditional.length > 0 ? ` (לא נשלח לכתובות הנוספות: ${failedAdditional.join(', ')})` : '';
     setResendMessage(
-      data.emailSent
+      (data.emailSent
         ? 'ההזמנה נשלחה שוב בהצלחה'
-        : 'שליחת המייל האוטומטי נכשלה - אפשר להעתיק הודעה מוכנה למטה ולשלוח בעצמך (וואטסאפ/מייל)'
+        : 'שליחת המייל האוטומטי נכשלה - אפשר להעתיק הודעה מוכנה למטה ולשלוח בעצמך (וואטסאפ/מייל)') + additionalNote
     );
   }
 

@@ -133,17 +133,52 @@ export async function headObject(key: string): Promise<{ size: number } | null> 
 // מחלקים לקבוצות כדי שמחיקה של גלריה גדולה (הרבה יותר מ-1000 קבצים) לא תיכשל.
 const DELETE_CHUNK_SIZE = 1000;
 
-export async function deleteObjects(keys: string[]): Promise<void> {
+export interface DeleteObjectsFailure {
+  key: string;
+  code?: string;
+  message?: string;
+}
+
+export interface DeleteObjectsResult {
+  deletedCount: number;
+  failed: DeleteObjectsFailure[];
+}
+
+// DeleteObjects לא זורק על כישלון של מפתח בודד - הבקשה "מצליחה" (HTTP 200)
+// ומחזירה את המפתחות שנכשלו ב-Errors. הפונקציה הזו (טהורה, עם טסטים) מתרגמת
+// את התשובה לרשימת כישלונות מפורשת. מפתח שלא היה קיים מלכתחילה לא מופיע ב-Errors
+// (מחיקה ב-S3/R2 היא idempotent), אז הוא נספר כהצלחה.
+export function summarizeDeleteOutput(
+  chunk: string[],
+  errors: { Key?: string; Code?: string; Message?: string }[] | undefined
+): DeleteObjectsResult {
+  const failed: DeleteObjectsFailure[] = (errors ?? []).map((e) => ({
+    key: e.Key ?? '(unknown)',
+    code: e.Code,
+    message: e.Message,
+  }));
+  return { deletedCount: Math.max(0, chunk.length - failed.length), failed };
+}
+
+// זורקת אם בקשה שלמה נכשלה (רשת/הרשאות - כמו קודם, הקוראים הקיימים סומכים על
+// זה), ומחזירה את הכישלונות ברמת המפתח הבודד כדי שקוראים שזה קריטי להם
+// (ניקוי המקור ב-cron) יוכלו לדעת שלא הכול נמחק.
+export async function deleteObjects(keys: string[]): Promise<DeleteObjectsResult> {
+  const result: DeleteObjectsResult = { deletedCount: 0, failed: [] };
   for (let i = 0; i < keys.length; i += DELETE_CHUNK_SIZE) {
     const chunk = keys.slice(i, i + DELETE_CHUNK_SIZE);
     if (chunk.length === 0) continue;
-    await s3.send(
+    const output = await s3.send(
       new DeleteObjectsCommand({
         Bucket: R2_BUCKET_NAME,
-        Delete: { Objects: chunk.map((Key) => ({ Key })) },
+        Delete: { Objects: chunk.map((Key) => ({ Key })), Quiet: true },
       })
     );
+    const summary = summarizeDeleteOutput(chunk, output.Errors);
+    result.deletedCount += summary.deletedCount;
+    result.failed.push(...summary.failed);
   }
+  return result;
 }
 
 export interface R2Object {

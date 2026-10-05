@@ -38,7 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id, expires_at, clients(full_name, email, access_code)')
+    .select('id, status, expires_at, reopened_for_selection_at, clients(full_name, email, access_code)')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
@@ -49,6 +49,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   if (!gallery.expires_at) {
     return NextResponse.json({ error: 'לגלריה הזו אין תאריך תוקף - אי אפשר לשלוח תזכורת תפוגה' }, { status: 400 });
+  }
+
+  // תזכורת "הגלריה עומדת לפוג" לא הגיונית אם התוקף כבר פג, או אם הלקוחה כבר
+  // סיימה לבחור (אלא אם הצלמת פתחה לה מחדש את הבחירה).
+  if (gallery.status === 'expired' || new Date(gallery.expires_at).getTime() < Date.now()) {
+    return NextResponse.json({ error: 'תוקף הגלריה כבר פג - אפשר להאריך את התוקף ואז לשלוח תזכורת' }, { status: 400 });
+  }
+  if (gallery.status === 'completed' && !gallery.reopened_for_selection_at) {
+    return NextResponse.json({ error: 'הלקוחה כבר סיימה לבחור - אין צורך בתזכורת' }, { status: 400 });
   }
 
   const client = (gallery as any).clients;

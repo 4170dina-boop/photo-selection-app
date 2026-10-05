@@ -65,4 +65,10 @@ describe('toHebrewDateString', () => {
   it('uses plain Adar in a non-leap year (5785)', () => {
     expect(toHebrewDateString(noonUtc('2025-03-14'))).toBe('י״ד באדר תשפ״ה');
   });
+
+  it('uses the Israel civil day regardless of server timezone', () => {
+    // 22:30 UTC ב-10.10 זה כבר 11.10 (01:30) בישראל
+    expect(toHebrewDateString(new Date('2026-10-10T22:30:00Z'))).toBe(toHebrewDateString(noonUtc('2026-10-11')));
+    expect(toHebrewDateString(new Date('2026-10-10T22:30:00Z'))).not.toBe(toHebrewDateString(noonUtc('2026-10-10')));
+  });
 });
