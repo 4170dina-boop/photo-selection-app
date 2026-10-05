@@ -31,10 +31,36 @@ describe('createWatermarkedPreview', () => {
 
   it('actually alters the pixel data (watermark is really composited, not a no-op)', async () => {
     const input = await buildTestImage(800, 600);
-    const plainResize = await sharp(input).jpeg({ quality: 82 }).toBuffer();
-    const watermarked = await createWatermarkedPreview(input, 'סטודיו דוגמה');
+    // אותו pipeline בדיוק כמו createWatermarkedPreview (rotate + resize + jpeg 82),
+    // רק בלי ה-composite - כך שההבדל היחיד בין שתי התוצאות הוא סימן המים עצמו.
+    const resized = await sharp(input)
+      .rotate()
+      .resize({ width: 2000, height: 2000, fit: 'inside', withoutEnlargement: true })
+      .toBuffer();
+    const noWatermark = await sharp(resized).jpeg({ quality: 82 }).toBuffer();
+    const watermarked = await createWatermarkedPreview(input, 'Studio Demo');
 
-    expect(Buffer.compare(watermarked, plainResize)).not.toBe(0);
+    // בדיקת שפיות: בלי composite ה-pipeline המשוחזר זהה בייט לבייט, אחרת
+    // ההשוואה למטה לא הייתה מוכיחה כלום
+    const again = await sharp(resized).jpeg({ quality: 82 }).toBuffer();
+    expect(Buffer.compare(again, noWatermark)).toBe(0);
+
+    const a = await sharp(noWatermark).raw().toBuffer();
+    const b = await sharp(watermarked).raw().toBuffer();
+    expect(a.length).toBe(b.length);
+
+    // סימן מים לבן חצי-שקוף מבהיר פיקסלים: סופרים כמה ערכים השתנו משמעותית
+    // (מעבר לרעש דחיסת JPEG) ובודקים שהממוצע הכללי עלה
+    let changed = 0;
+    let sumA = 0;
+    let sumB = 0;
+    for (let i = 0; i < a.length; i++) {
+      if (Math.abs(a[i] - b[i]) > 20) changed++;
+      sumA += a[i];
+      sumB += b[i];
+    }
+    expect(changed / a.length).toBeGreaterThan(0.005);
+    expect(sumB / b.length).toBeGreaterThan(sumA / a.length);
   });
 
   it('does not throw on watermark text containing XML-special characters', async () => {
