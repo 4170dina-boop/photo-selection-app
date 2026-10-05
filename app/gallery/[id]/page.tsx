@@ -21,6 +21,11 @@ import {
   rtlArrowDelta,
   isGalleryDataStale,
   zipDownloadSummary,
+  toggleStatusTo,
+  shouldAutoAdvance,
+  swipeNavDelta,
+  enlargedShortcutStatus,
+  tapHintKey,
 } from '@/lib/galleryClient';
 
 interface GalleryPageProps {
@@ -101,6 +106,16 @@ const FINISH_UNDO_SECONDS = 60;
 // כמה תמונות אפשר להשוות בו-זמנית - יותר מזה נהיה צפוף מדי לראות הבדלים
 // אמיתיים בין תמונות, במיוחד בנייד.
 const MAX_COMPARE = 4;
+
+// "אני רוצה את זו" בתצוגה המוגדלת -> רגע קצר לראות שהסימון נקלט, ואז
+// מעבר אוטומטי לתמונה הבאה.
+const AUTO_ADVANCE_MS = 300;
+
+// טקסט לקוראי מסך בלבד (למשל תיאור קיצורי המקלדת בתצוגה המוגדלת)
+const visuallyHiddenStyle: React.CSSProperties = {
+  position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
+  overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0,
+};
 
 // ראשי תיבות קצרים לתג "מי בחר מה" - שם מלא לא נכנס בעיגול קטן
 function initials(name: string): string {
@@ -254,6 +269,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [photographerName, setPhotographerName] = useState<string | null>(null);
   const [photographerLogo, setPhotographerLogo] = useState<string | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
+  // הודעת "חדש" חד-פעמית ללקוחות חוזרות: הקשה על תמונה כבר לא מסמנת "אולי",
+  // אלא פותחת אותה בגדול (tapHintKey ב-lib/galleryClient.ts)
+  const [showTapHint, setShowTapHint] = useState(false);
 
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
@@ -281,6 +299,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [enlargedId, setEnlargedId] = useState<string | null>(null);
   const [zoomScale, setZoomScale] = useState(1);
   const enlargedImgRef = useRef<HTMLImageElement | null>(null);
+  // מעבר אוטומטי ממתין אחרי "אני רוצה את זו" - מתבטל בכל ניווט/סגירה
+  const autoAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // תחילת מגע באצבע אחת בתצוגה המוגדלת (להחלקה ימינה/שמאלה); null = לא
+  // החלקה (למשל צביטה בשתי אצבעות)
+  const enlargedSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  // מתי בוצעה החלקה לאחרונה - כדי שקליק "רפאים" אחריה לא יסגור את התצוגה
+  const enlargedLastSwipeAtRef = useRef(0);
 
   // מניעת flush כפול במקביל (interval + online + קריאה ידנית)
   const flushInFlightRef = useRef(false);
@@ -353,18 +378,41 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   // ניווט בין תמונות עם מקשי חצים, ו-Escape לסגירה - עובד רק כשמצב ההגדלה פתוח.
   // RTL: כפתור "הבאה" משמאל, אז חץ שמאלה = הבאה (rtlArrowDelta).
+  // S = "אני רוצה את זו", M = "אולי" (enlargedShortcutStatus) - אותם כפתורים
+  // כמו בפס התחתון. myMarks/isLocked בתלויות כדי שהמתג יקרא את הסטטוס העדכני.
   useEffect(() => {
     if (!enlargedId) return;
 
     function handleKeyDown(e: KeyboardEvent) {
       const delta = rtlArrowDelta(e.key);
-      if (delta !== 0) navigateEnlarged(delta);
-      else if (e.key === 'Escape') setEnlargedId(null);
+      if (delta !== 0) {
+        navigateEnlarged(delta);
+        return;
+      }
+      if (e.key === 'Escape') {
+        setEnlargedId(null);
+        return;
+      }
+      const target = enlargedShortcutStatus(e);
+      if (target && enlargedId) {
+        e.preventDefault();
+        markEnlarged(enlargedId, target);
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enlargedId, myMarks, isLocked, photos]);
+
+  // כל ניווט/סגירה של התצוגה המוגדלת מבטל מעבר אוטומטי שעוד ממתין
+  useEffect(() => {
+    return () => {
+      if (autoAdvanceTimerRef.current) {
+        clearTimeout(autoAdvanceTimerRef.current);
+        autoAdvanceTimerRef.current = null;
+      }
+    };
   }, [enlargedId]);
 
   // ניווט וסגירה במקלדת במצב סקירה ברצף - מאזין נפרד מזה של ההגדלה הרגילה,
@@ -667,9 +715,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       if (typeof window !== 'undefined' && data.myParticipant && !serverReadOnly) {
         const seenKey = `gallery_welcome_seen_${galleryId}_${data.myParticipant.id}`;
         try {
-          setShowWelcome(!localStorage.getItem(seenKey));
+          const returning = !!localStorage.getItem(seenKey);
+          setShowWelcome(!returning);
+          // לקוחה חוזרת (כבר ראתה את שער הפתיחה בגרסה הקודמת) שעוד לא ראתה את
+          // ההסבר על ההתנהגות החדשה של הקשה על תמונה, ושהבחירה עדיין פתוחה לה
+          const lockedNow = data.status === 'completed' && !data.reopenedForSelectionAt;
+          setShowTapHint(returning && !lockedNow && !localStorage.getItem(tapHintKey(galleryId)));
         } catch {
           setShowWelcome(false);
+          setShowTapHint(false);
         }
       } else {
         setShowWelcome(false);
@@ -797,8 +851,19 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   function dismissWelcome() {
     if (typeof window !== 'undefined' && myParticipant) {
       localStorage.setItem(`gallery_welcome_seen_${galleryId}_${myParticipant.id}`, '1');
+      // לקוחה חדשה כבר פוגשת את ההתנהגות החדשה מההתחלה - לא צריך להציג לה "חדש:"
+      try {
+        localStorage.setItem(tapHintKey(galleryId), '1');
+      } catch {}
     }
     setShowWelcome(false);
+  }
+
+  function dismissTapHint() {
+    try {
+      localStorage.setItem(tapHintKey(galleryId), '1');
+    } catch {}
+    setShowTapHint(false);
   }
 
   async function handleSubmitCode(e: React.FormEvent) {
@@ -1140,12 +1205,36 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     return photos.some((p) => p.id === photoId && p.isGift);
   }
 
-  function cycleStatus(photoId: string) {
+  // הלב בפינת הכרטיס בגריד - בחירה מהירה בלי לפתוח: נבחרה <-> כלום בלבד
+  // ("אולי" נקבע רק מהתצוגה המוגדלת / סקירה ברצף / בחירה מהירה).
+  function toggleSelectedFromGrid(photoId: string) {
     if (isLocked || !myParticipant) return; // הבחירה כבר נשלחה - נעול לעריכה
     if (isGiftPhoto(photoId)) return;
-    const current = myMarks[photoId]?.status; // undefined | 'maybe' | 'selected'
-    const next = current === undefined ? 'maybe' : current === 'maybe' ? 'selected' : null;
-    return setPhotoStatus(photoId, next);
+    return setPhotoStatus(photoId, toggleStatusTo(myMarks[photoId]?.status, 'selected'));
+  }
+
+  // כפתורי הפס התחתון בתצוגה המוגדלת (וגם מקשי S/M). אחרי "אני רוצה את זו"
+  // (קביעה, לא ביטול) - מעבר אוטומטי לתמונה הבאה אחרי רגע קצר; בתמונה
+  // האחרונה נשארים. אותם שומרים כמו בכל מקום: נעילה, משתתפת מזוהה, מתנה.
+  function markEnlarged(photoId: string, target: 'maybe' | 'selected') {
+    if (isLocked || !myParticipant) return;
+    if (isGiftPhoto(photoId)) return;
+    const next = toggleStatusTo(myMarks[photoId]?.status, target);
+    setPhotoStatus(photoId, next);
+
+    if (autoAdvanceTimerRef.current) {
+      clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+    const index = photos.findIndex((p) => p.id === photoId);
+    if (!shouldAutoAdvance(next, index, photos.length)) return;
+    const nextId = photos[index + 1].id;
+    autoAdvanceTimerRef.current = setTimeout(() => {
+      autoAdvanceTimerRef.current = null;
+      setZoomScale(1);
+      // רק אם הלקוחה עדיין על אותה תמונה (לא דפדפה/סגרה בינתיים)
+      setEnlargedId((cur) => (cur === photoId ? nextId : cur));
+    }, AUTO_ADVANCE_MS);
   }
 
   // מחיל שינוי סטטוס על המצב המקומי (myMarks/allMarks/ownerSelectedCount) -
@@ -1181,8 +1270,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
   }
 
-  // מופרד מ-cycleStatus כדי שגם מצב ההשוואה יוכל לקבוע ישירות "נבחר" על תמונה
-  // ספציפית, בלי לעבור דרך הריצה של אולי->נבחר->כלום.
+  // נקודת הכניסה המשותפת לכל שינוי סטטוס (לב בגריד, התצוגה המוגדלת, השוואה,
+  // סקירה ברצף, בחירה מהירה) - קובעת ישירות את הסטטוס הרצוי.
   //
   // מעדכן את המסך מיד (אופטימי), לפני תשובת השרת - כדי שאפשר יהיה להמשיך
   // לדפדף ולבחור גם באינטרנט חלש/מנותק. אם זו שגיאת רשת (לא שרת), הפעולה
@@ -1671,6 +1760,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               display: 'flex', flexDirection: 'column', gap: '0.5rem',
             }}
           >
+            <span>🔍 לחיצה על תמונה פותחת אותה בגדול, ובוחרים בכפתורים למטה</span>
             <span>⇄ אפשר להשוות בין כמה תמונות זו לצד זו</span>
             <span>✎ אפשר להוסיף הערה אישית לכל תמונה</span>
             {giftPhotos.length > 0 && (
@@ -1831,9 +1921,33 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </div>
       )}
 
+      {!isLocked && showTapHint && (
+        <div
+          role="status"
+          style={{
+            margin: '0.6rem 1.5rem 0', padding: '0.5rem 0.75rem 0.5rem 0.5rem', borderRadius: 8,
+            background: `${accent}1f`, border: `1px solid ${accent}55`, color: theme.text, fontSize: 13,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem',
+          }}
+        >
+          <span>✨ חדש: לחיצה על תמונה מגדילה אותה, ובוחרים בכפתורים למטה</span>
+          <button
+            type="button"
+            onClick={dismissTapHint}
+            aria-label="סגירת ההודעה"
+            style={{
+              flexShrink: 0, width: 44, height: 44, borderRadius: '50%', border: 'none',
+              background: 'transparent', color: theme.textMuted, fontSize: 16, cursor: 'pointer',
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {!isLocked && (
       <p style={{ textAlign: 'center', fontSize: 12, color: theme.textFaint, padding: '0.5rem 1.5rem 0' }}>
-        לחיצה ראשונה על תמונה =<span style={{ color: theme.green }}>אולי</span> · לחיצה שנייה = <span style={{ color: accent }}>נבחר</span> · לחיצה שלישית מבטלת
+        לחיצה על תמונה פותחת אותה בגדול · <span style={{ color: accent }}>♡</span> בפינה בוחר מהר
       </p>
       )}
 
@@ -2307,6 +2421,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         const currentIndex = photos.findIndex((p) => p.id === enlargedId);
         const hasPrev = currentIndex > 0;
         const hasNext = currentIndex < photos.length - 1;
+        const enlargedStatus = myStatuses[photo.id];
+        const canMark = !isLocked && !!myParticipant && !photo.isGift;
         return (
           <div
             ref={enlargedDialogRef}
@@ -2314,12 +2430,45 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             role="dialog"
             aria-modal="true"
             aria-label={`תצוגה מוגדלת: ${photo.original_filename}`}
+            aria-describedby="enlarged-keyboard-hint"
             style={{
               position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 50,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem 2rem 11rem',
             }}
-            onClick={() => setEnlargedId(null)}
+            // הקשה על הרקע רק סוגרת - אף פעם לא משנה בחירה. קליק שמגיע מיד
+            // אחרי החלקה (דפדפנים מסוימים) לא נחשב הקשה.
+            onClick={() => {
+              if (Date.now() - enlargedLastSwipeAtRef.current < 400) return;
+              setEnlargedId(null);
+            }}
+            // החלקה באצבע אחת ימינה/שמאלה = דפדוף (swipeNavDelta, אותה סמנטיקת RTL
+            // כמו החצים). צביטה (שתי אצבעות) מבטלת את ההחלקה, ובזום אין החלקה
+            // בכלל - שם התנועה שייכת לזום (ראו המאזינים ה-native על התמונה).
+            onTouchStart={(e) => {
+              if (e.touches.length !== 1) {
+                enlargedSwipeStartRef.current = null;
+                return;
+              }
+              enlargedSwipeStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            }}
+            onTouchEnd={(e) => {
+              const start = enlargedSwipeStartRef.current;
+              if (!start || e.touches.length > 0 || e.changedTouches.length === 0) return;
+              enlargedSwipeStartRef.current = null;
+              const t = e.changedTouches[0];
+              const delta = swipeNavDelta(t.clientX - start.x, t.clientY - start.y, zoomScale > 1);
+              if (delta === 0) return;
+              enlargedLastSwipeAtRef.current = Date.now();
+              navigateEnlarged(delta);
+            }}
+            onTouchCancel={() => {
+              enlargedSwipeStartRef.current = null;
+            }}
           >
+            <span id="enlarged-keyboard-hint" style={visuallyHiddenStyle}>
+              חצים לדפדוף בין התמונות, Escape לסגירה
+              {canMark ? '. מקש S - אני רוצה את זו, מקש M - אולי' : ''}
+            </span>
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -2372,24 +2521,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             {zoomScale > 1 && (
               <div
                 style={{
-                  position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 51,
+                  position: 'absolute', top: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 51,
                   background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 12,
                   padding: '4px 10px', borderRadius: 12,
                 }}
               >
                 {Math.round(zoomScale * 100)}%
-              </div>
-            )}
-            {photo.isGift && zoomScale === 1 && (
-              <div
-                style={{
-                  position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 51,
-                  background: accentSolid, color: accentText, fontSize: 13, textAlign: 'center',
-                  padding: '6px 14px', borderRadius: 14, maxWidth: 'min(90vw, 420px)', boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-                }}
-              >
-                <b>🎁 מתנה ממני</b> - כלולה אצלך אוטומטית
-                {photo.giftMessage && <div style={{ fontStyle: 'italic', marginTop: 2, overflowWrap: 'anywhere' }}>"{photo.giftMessage}"</div>}
               </div>
             )}
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2402,17 +2539,109 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               onError={() => handleImageError(photo.id)}
               onClick={(e) => {
                 e.stopPropagation();
+                if (Date.now() - enlargedLastSwipeAtRef.current < 400) return; // סוף החלקה, לא הקשה לזום
                 setZoomScale((prev) => (prev > 1 ? 1 : 2));
               }}
               onContextMenu={(e) => e.preventDefault()}
               title="קליק או גלגלת עכבר להגדלה/הקטנה"
               style={{
-                maxHeight: '90vh', maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
+                // מקום לפס הבחירה הקבוע למטה, כדי שהכפתורים לא יכסו את התמונה
+                maxHeight: 'calc(100vh - 13rem)', maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
                 transform: `scale(${zoomScale})`, transition: zoomScale === 1 ? 'transform 0.15s ease-out' : 'none',
                 cursor: zoomScale > 1 ? 'zoom-out' : 'zoom-in',
                 WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
               }}
             />
+
+            {/* פס בחירה קבוע בתחתית, הרחק מהתמונה - כאן (ולא בהקשה על הכרטיס)
+                בוחרים. קליקים/מגע בתוכו לא מגיעים לרקע (סגירה) או להחלקה. */}
+            <div
+              onClick={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              onTouchEnd={(e) => e.stopPropagation()}
+              style={{
+                position: 'fixed', bottom: 0, insetInline: 0, zIndex: 52,
+                background: 'rgba(15,22,38,0.96)', borderTop: `1px solid ${theme.border}`,
+                padding: '0.6rem 1rem calc(0.75rem + env(safe-area-inset-bottom))',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem',
+                color: theme.text,
+              }}
+            >
+              <div aria-live="polite" style={{ fontSize: 13, color: theme.textMuted, textAlign: 'center' }}>
+                <span>תמונה <bdi dir="ltr">{currentIndex + 1} / {photos.length}</bdi></span>
+                {packageInfo && (
+                  <>
+                    {' · '}נבחרו{' '}
+                    <bdi dir="ltr">
+                      <b style={{ color: accent }}>{ownerSelectedCount}</b> / {packageInfo.included}
+                    </bdi>
+                    {overIncluded > 0 && (
+                      <span style={{ color: accent }}>
+                        {' · '}+{overIncluded} נוספות{extraCost > 0 ? ` (תוספת ${Math.round(extraCost)} ₪)` : ''}
+                      </span>
+                    )}
+                  </>
+                )}
+                {!isOwner && myParticipant && <span>{' · '}הבחירות שלך (קלט בלבד): {mySelectedCount}</span>}
+              </div>
+
+              {canMark ? (
+                <div style={{ display: 'flex', gap: '0.75rem', width: '100%', maxWidth: 480 }}>
+                  <button
+                    type="button"
+                    aria-pressed={enlargedStatus === 'selected'}
+                    aria-keyshortcuts="S"
+                    title="אני רוצה את זו (מקש S)"
+                    onClick={() => markEnlarged(photo.id, 'selected')}
+                    style={{
+                      flex: 2, minHeight: 52, borderRadius: 12, fontSize: 16, fontWeight: 'bold', cursor: 'pointer',
+                      fontFamily: theme.fontSans,
+                      border: `2px solid ${enlargedStatus === 'selected' ? accent : 'rgba(255,255,255,0.45)'}`,
+                      background: enlargedStatus === 'selected' ? accentSolid : 'rgba(255,255,255,0.08)',
+                      color: enlargedStatus === 'selected' ? accentText : '#fff',
+                    }}
+                  >
+                    ✓ אני רוצה את זו
+                    {/* המצב עצמו מוכרז דרך aria-pressed - כאן רק חיזוק ויזואלי */}
+                    {enlargedStatus === 'selected' && (
+                      <span aria-hidden="true" style={{ display: 'block', fontSize: 12, fontWeight: 'normal' }}>
+                        נבחרה · לחיצה נוספת מבטלת
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={enlargedStatus === 'maybe'}
+                    aria-keyshortcuts="M"
+                    title="אולי (מקש M)"
+                    onClick={() => markEnlarged(photo.id, 'maybe')}
+                    style={{
+                      flex: 1, minHeight: 52, borderRadius: 26, fontSize: 15, fontWeight: 'bold', cursor: 'pointer',
+                      fontFamily: theme.fontSans,
+                      border: `2px solid ${enlargedStatus === 'maybe' ? theme.green : 'rgba(255,255,255,0.45)'}`,
+                      background: enlargedStatus === 'maybe' ? theme.green : 'rgba(255,255,255,0.08)',
+                      color: enlargedStatus === 'maybe' ? theme.goldText : '#fff',
+                    }}
+                  >
+                    🤔 אולי
+                    {enlargedStatus === 'maybe' && (
+                      <span aria-hidden="true" style={{ display: 'block', fontSize: 12, fontWeight: 'normal' }}>
+                        מסומנת
+                      </span>
+                    )}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: photo.isGift ? accent : theme.textFaint, textAlign: 'center', maxWidth: 480 }}>
+                  {photo.isGift ? (
+                    <>
+                      <b>🎁 מתנה ממני</b> - כלולה אצלך אוטומטית, אין צורך לבחור אותה
+                      {photo.giftMessage && <div style={{ fontStyle: 'italic', marginTop: 2, overflowWrap: 'anywhere', color: theme.text }}>"{photo.giftMessage}"</div>}
+                    </>
+                  ) : readOnly ? 'תקופת הבחירה הסתיימה - אפשר לצפות בלבד.' : isLocked ? 'הבחירה כבר נשלחה - אפשר לצפות בלבד.' : ''}
+                </div>
+              )}
+            </div>
           </div>
         );
       })()}
@@ -2694,50 +2923,39 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             ? theme.green
             : 'transparent';
 
-          const heartBg = status === 'selected' ? accent : status === 'maybe' ? theme.green : 'rgba(10,10,11,0.6)';
-          const heartFilled = status !== undefined;
-          const heartColor = status === 'selected' ? accentText : heartFilled ? theme.goldText : '#fff';
+          const isSelected = status === 'selected';
+          // הלב בפינה = נבחרה <-> כלום בלבד; "אולי" מוצג בתג הסטטוס, לא בלב
+          const heartBg = isSelected ? accent : 'rgba(10,10,11,0.6)';
+          const heartColor = isSelected ? accentText : '#fff';
+          const showStatusBadge = !!status && !isGift;
 
-          // תיאור נגיש למקלדת/קורא מסך - אותה פעולה שקורה בקליק עכבר, כדי
-          // שבחירת תמונות תהיה אפשרית גם בלי עכבר (לא רק אלמנטים עם onClick).
+          // תיאור נגיש לקורא מסך - הסטטוס מוכרז על הקבוצה (הכרטיס), והפעולות
+          // עצמן הן כפתורים אמיתיים נפרדים (פתיחה / לב / הערה), בלי role מקונן.
           const statusLabel = isGift
             ? 'תמונת מתנה - כלולה אוטומטית'
             : status === 'selected' ? 'נבחרה' : status === 'maybe' ? 'מסומנת כאולי' : 'לא מסומנת';
-          const cardActionLabel = compareMode
+          const canOpen = !!photo.thumbnailUrl && !!photo.fullUrl;
+          const mainButtonLabel = compareMode
             ? `${photo.original_filename}, ${isComparing ? 'נבחרה להשוואה' : 'לא נבחרה להשוואה'}`
-            : `${photo.original_filename}, ${statusLabel}`;
+            : `פתיחת תמונה ${photo.original_filename}`;
 
-          // קליק על תמונת מתנה פותח אותה בהגדלה במקום לסמן - אין מה לבחור בה
-          function handleCardActivate(e: React.MouseEvent | React.KeyboardEvent) {
+          // הקשה/Enter על הכרטיס רק פותחת את התמונה בגדול - הבחירה עצמה בפס
+          // שבתצוגה המוגדלת או בלב שבפינה. במצב השוואה - בחירה להשוואה כמו קודם.
+          function handleCardActivate(e: React.MouseEvent) {
             if (compareMode) return toggleCompareSelect(photo.id, e);
-            if (isGift) {
-              if (!photo.thumbnailUrl) return;
-              setZoomScale(1);
-              setEnlargedId(photo.id);
-              return;
-            }
-            cycleStatus(photo.id);
-          }
-
-          function handleCardKeyDown(e: React.KeyboardEvent) {
-            if (e.key !== 'Enter' && e.key !== ' ') return;
-            e.preventDefault();
-            handleCardActivate(e);
+            if (!canOpen) return;
+            setZoomScale(1);
+            setEnlargedId(photo.id);
           }
 
           return (
             <div
               key={photo.id}
-              role="button"
-              tabIndex={0}
-              aria-pressed={compareMode ? isComparing : isGift ? undefined : status === 'selected'}
-              aria-label={cardActionLabel}
-              onClick={handleCardActivate}
-              onKeyDown={handleCardKeyDown}
+              role="group"
+              aria-label={`${photo.original_filename}, ${statusLabel}`}
               onContextMenu={(e) => e.preventDefault()} // חסימת קליק ימני - הרתעה בלבד, לא הגנה אמיתית
               style={{
                 position: 'relative',
-                cursor: compareMode || isGift || !isLocked ? 'pointer' : 'default',
                 border: `2px solid ${borderColor}`,
                 borderRadius: 6,
                 overflow: 'hidden',
@@ -2746,8 +2964,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               }}
             >
               <div
+                aria-hidden="true"
                 style={{
-                  position: 'absolute', top: 8, right: 8, zIndex: 1,
+                  position: 'absolute', top: 8, right: 8, zIndex: 1, pointerEvents: 'none',
                   background: 'rgba(0,0,0,0.45)', color: '#fff', fontSize: 10,
                   padding: '2px 7px', borderRadius: 10,
                 }}
@@ -2755,37 +2974,35 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 {photo.original_filename}
               </div>
 
+              {showStatusBadge && (
+                // סימון שלא תלוי רק בצבע: אייקון + טקסט, וצורה שונה - "נבחרה"
+                // מרובע, "אולי" עגול
+                <div
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute', bottom: 8, right: 8, zIndex: 1, pointerEvents: 'none',
+                    fontSize: 12, fontWeight: 'bold', padding: '3px 8px', whiteSpace: 'nowrap',
+                    border: '1px solid rgba(255,255,255,0.55)', boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
+                    ...(isSelected
+                      ? { background: accentSolid, color: accentText, borderRadius: 3 }
+                      : { background: theme.green, color: theme.goldText, borderRadius: 999 }),
+                  }}
+                >
+                  {isSelected ? '✓ נבחרה' : '🤔 אולי'}
+                </div>
+              )}
+
               {photo.possiblyBlurry && (
                 <div
                   title="הערכה אוטומטית לפי חדות - לא תמיד מדויקת, בדקי בעצמך"
                   style={{
-                    position: 'absolute', bottom: compareMode ? 8 : 58, right: 8, zIndex: 1,
+                    position: 'absolute', bottom: showStatusBadge ? 38 : 8, right: 8, zIndex: 1, pointerEvents: 'none',
                     background: theme.warningBg, color: theme.warningText, fontSize: 10,
                     padding: '2px 7px', borderRadius: 10,
                   }}
                 >
                   ייתכן שמטושטשת (הערכה אוטומטית)
                 </div>
-              )}
-
-              {!compareMode && photo.thumbnailUrl && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setZoomScale(1);
-                    setEnlargedId(photo.id);
-                  }}
-                  title="הגדלת תמונה"
-                  aria-label={`הגדלת ${photo.original_filename}`}
-                  style={{
-                    position: 'absolute', bottom: 6, right: 6, zIndex: 1,
-                    background: 'rgba(0,0,0,0.45)', border: 'none', color: '#fff',
-                    borderRadius: '50%', width: 44, height: 44, cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13,
-                  }}
-                >
-                  🔍
-                </button>
               )}
 
               {othersMarks.length > 0 && (
@@ -2812,7 +3029,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 <div
                   title="תמונת מתנה - כלולה אצלך אוטומטית, לא נספרת בחבילה ובלי תוספת תשלום"
                   style={{
-                    position: 'absolute', top: othersMarks.length > 0 ? 32 : 8, left: 8, zIndex: 1,
+                    position: 'absolute', top: othersMarks.length > 0 ? 32 : 8, left: 8, zIndex: 1, pointerEvents: 'none',
                     background: accentSolid, color: accentText, fontSize: 12, fontWeight: 'bold',
                     padding: '4px 10px', borderRadius: 14, border: '1px solid rgba(255,255,255,0.45)',
                     boxShadow: '0 2px 8px rgba(0,0,0,0.35)', whiteSpace: 'nowrap',
@@ -2825,7 +3042,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               {isGift && (
                 <div
                   style={{
-                    // zIndex 0 - מעל התמונה, אבל מתחת לכפתור ההגדלה (🔍, zIndex 1) שבפינה הימנית
+                    // zIndex 0 - מעל התמונה, מתחת לשאר התגים/כפתורים (zIndex 1)
                     position: 'absolute', bottom: 0, insetInline: 0, zIndex: 0, pointerEvents: 'none',
                     background: 'linear-gradient(to top, rgba(0,0,0,0.8), rgba(0,0,0,0.35) 70%, transparent)',
                     color: '#fff', fontSize: 12, lineHeight: 1.45, padding: '1.5rem 3.5rem 0.6rem 0.75rem',
@@ -2838,50 +3055,59 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 </div>
               )}
 
-              {!compareMode && !isGift && !readOnly && (
-                <div
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`${statusLabel} - לחיצה תעבור לסטטוס הבא`}
+              {/* מוסתר כשהבחירה נעולה/צפייה בלבד - הסטטוס עדיין מוצג בתג */}
+              {!compareMode && !isGift && !isLocked && myParticipant && (
+                <button
+                  type="button"
+                  aria-pressed={isSelected}
+                  aria-label={`בחירת התמונה ${photo.original_filename}`}
                   onClick={(e) => {
                     e.stopPropagation();
-                    cycleStatus(photo.id);
+                    toggleSelectedFromGrid(photo.id);
                   }}
-                  onKeyDown={(e) => {
-                    if (e.key !== 'Enter' && e.key !== ' ') return;
-                    e.preventDefault();
-                    e.stopPropagation();
-                    cycleStatus(photo.id);
-                  }}
-                  title="לחיצה: מחזור בין אולי / נבחר / כלום"
+                  title={isSelected ? 'ביטול בחירה' : 'בחירת התמונה'}
                   style={{
                     position: 'absolute', top: othersMarks.length > 0 ? 30 : 6, left: 6, zIndex: 1,
                     background: heartBg, border: '1px solid rgba(255,255,255,0.3)', color: heartColor,
-                    borderRadius: '50%', width: 44, height: 44, fontSize: 18,
+                    borderRadius: '50%', width: 44, height: 44, fontSize: 18, padding: 0,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
                   }}
                 >
-                  {heartFilled ? '♥' : '♡'}
-                </div>
+                  <span aria-hidden="true">{isSelected ? '♥' : '♡'}</span>
+                </button>
               )}
 
-              {photo.thumbnailUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={photo.thumbnailUrl}
-                  alt={`${photo.original_filename} - ${statusLabel}`}
-                  draggable={false}
-                  loading="lazy"
-                  decoding="async"
-                  onError={() => handleImageError(photo.id)}
-                  style={{
-                    width: '100%', height: 'auto', display: 'block', pointerEvents: 'none',
-                    WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
-                  }}
-                />
-              ) : (
-                <ProcessingPlaceholder />
-              )}
+              {/* הכפתור הראשי של הכרטיס - התמונה עצמה */}
+              <button
+                type="button"
+                onClick={handleCardActivate}
+                disabled={!compareMode && !canOpen}
+                aria-pressed={compareMode ? isComparing : undefined}
+                aria-label={mainButtonLabel}
+                style={{
+                  display: 'block', width: '100%', padding: 0, margin: 0, border: 'none',
+                  background: 'transparent', color: 'inherit', font: 'inherit',
+                  cursor: compareMode || canOpen ? 'pointer' : 'default',
+                }}
+              >
+                {photo.thumbnailUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={photo.thumbnailUrl}
+                    alt=""
+                    draggable={false}
+                    loading="lazy"
+                    decoding="async"
+                    onError={() => handleImageError(photo.id)}
+                    style={{
+                      width: '100%', height: 'auto', display: 'block', pointerEvents: 'none',
+                      WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
+                    }}
+                  />
+                ) : (
+                  <ProcessingPlaceholder />
+                )}
+              </button>
 
               {status && !isGift && !readOnly && (
                 <button

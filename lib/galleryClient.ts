@@ -204,3 +204,46 @@ export function rtlArrowDelta(key: string): 1 | -1 | 0 {
 export function zipDownloadSummary(done: number, total: number): string {
   return `הורדו ${done} מתוך ${total} תמונות`;
 }
+
+// ---- תצוגה מוגדלת כמקום הבחירה (במקום מחזור אולי/נבחר בהקשה על הכרטיס) ----
+
+export type PhotoStatus = 'maybe' | 'selected';
+
+// כפתור "אני רוצה את זו" / "אולי" / הלב בפינה: לחיצה על הסטטוס הנוכחי
+// מבטלת אותו, כל לחיצה אחרת קובעת אותו (גם מעבר ישיר מ"אולי" ל"נבחר").
+export function toggleStatusTo(current: PhotoStatus | undefined, target: PhotoStatus): PhotoStatus | null {
+  return current === target ? null : target;
+}
+
+// מעבר אוטומטי לתמונה הבאה - רק כשהלקוחה בדיוק סימנה "נבחרה" (לא בביטול,
+// לא ב"אולי"), ורק אם יש תמונה הבאה; בתמונה האחרונה נשארים.
+export function shouldAutoAdvance(next: PhotoStatus | null, index: number, total: number): boolean {
+  return next === 'selected' && index >= 0 && index < total - 1;
+}
+
+// החלקה אופקית בתצוגה המוגדלת. RTL - באותה סמנטיקה של rtlArrowDelta ("הבאה"
+// משמאל): גרירת התמונה ימינה (dx>0) חושפת את מה שמשמאל = הבאה (1), שמאלה =
+// הקודמת (-1). לא נחשב החלקה כשהתמונה מוגדלת (זום/צביטה), כשהתנועה בעיקר
+// אנכית, או מתחת לסף.
+export const SWIPE_THRESHOLD_PX = 50;
+
+export function swipeNavDelta(dx: number, dy: number, zoomed: boolean, threshold = SWIPE_THRESHOLD_PX): 1 | -1 | 0 {
+  if (zoomed) return 0;
+  if (Math.abs(dx) < threshold || Math.abs(dx) <= Math.abs(dy)) return 0;
+  return dx > 0 ? 1 : -1;
+}
+
+// מקלדת בתצוגה המוגדלת: S = נבחרה, M = אולי. לפי e.code (מיקום פיזי של
+// המקש) כדי שיעבוד גם כשהמקלדת על עברית (ד / צ), ובלי Ctrl/Alt/Meta כדי לא
+// לחטוף קיצורים של הדפדפן (Ctrl+S וכו').
+export function enlargedShortcutStatus(e: { code: string; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean }): PhotoStatus | null {
+  if (e.ctrlKey || e.altKey || e.metaKey) return null;
+  if (e.code === 'KeyS') return 'selected';
+  if (e.code === 'KeyM') return 'maybe';
+  return null;
+}
+
+// הודעת "חדש" חד-פעמית על שינוי ההתנהגות של הקשה על תמונה
+export function tapHintKey(galleryId: string): string {
+  return `gallery_tap_hint_v2_${galleryId}`;
+}

@@ -14,6 +14,11 @@ import {
   isGalleryDataStale,
   zipDownloadSummary,
   queueHasPhoto,
+  toggleStatusTo,
+  shouldAutoAdvance,
+  swipeNavDelta,
+  enlargedShortcutStatus,
+  tapHintKey,
   type PendingAction,
 } from './galleryClient';
 
@@ -163,5 +168,42 @@ describe('misc', () => {
 
   it('formats the zip summary', () => {
     expect(zipDownloadSummary(3, 5)).toBe('הורדו 3 מתוך 5 תמונות');
+  });
+});
+
+describe('enlarged view selection', () => {
+  it('toggles to a target status or clears it', () => {
+    expect(toggleStatusTo(undefined, 'selected')).toBe('selected');
+    expect(toggleStatusTo('maybe', 'selected')).toBe('selected');
+    expect(toggleStatusTo('selected', 'selected')).toBeNull();
+    expect(toggleStatusTo('selected', 'maybe')).toBe('maybe');
+    expect(toggleStatusTo('maybe', 'maybe')).toBeNull();
+  });
+
+  it('auto-advances only after selecting, and not from the last photo', () => {
+    expect(shouldAutoAdvance('selected', 0, 3)).toBe(true);
+    expect(shouldAutoAdvance('selected', 2, 3)).toBe(false);
+    expect(shouldAutoAdvance(null, 0, 3)).toBe(false);
+    expect(shouldAutoAdvance('maybe', 0, 3)).toBe(false);
+    expect(shouldAutoAdvance('selected', -1, 3)).toBe(false);
+  });
+
+  it('maps horizontal swipes with RTL semantics', () => {
+    expect(swipeNavDelta(80, 10, false)).toBe(1);
+    expect(swipeNavDelta(-80, 10, false)).toBe(-1);
+    expect(swipeNavDelta(40, 0, false)).toBe(0);
+    expect(swipeNavDelta(80, 90, false)).toBe(0);
+    expect(swipeNavDelta(200, 0, true)).toBe(0);
+  });
+
+  it('maps S/M shortcuts by physical key, ignoring modifiers', () => {
+    expect(enlargedShortcutStatus({ code: 'KeyS' })).toBe('selected');
+    expect(enlargedShortcutStatus({ code: 'KeyM' })).toBe('maybe');
+    expect(enlargedShortcutStatus({ code: 'KeyS', ctrlKey: true })).toBeNull();
+    expect(enlargedShortcutStatus({ code: 'KeyX' })).toBeNull();
+  });
+
+  it('builds the hint key per gallery', () => {
+    expect(tapHintKey('g1')).toBe('gallery_tap_hint_v2_g1');
   });
 });
