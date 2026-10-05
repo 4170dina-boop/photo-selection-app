@@ -16,6 +16,9 @@ interface CustomTheme {
   accent: string;
 }
 
+// מגבלת הגלריות הפעילות בחשבון חינמי - כמו freeGalleryLimit ב-app/dashboard/galleries/page.tsx
+const FREE_GALLERY_LIMIT = 1;
+
 export default function SettingsPage() {
   const [supabase] = useState(() => createClient());
   const [photographerId, setPhotographerId] = useState<string | null>(null);
@@ -51,6 +54,27 @@ export default function SettingsPage() {
   const [changingPassword, setChangingPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
   const [passwordSaved, setPasswordSaved] = useState(false);
+  // "חשבון וגלריות": מונה הגלריות הפעילות (מול מגבלת החשבון החינמי) וייצוא
+  // אנשי הקשר - עברו לכאן מראש "הגלריות שלי". null = עוד לא נטען/נכשל.
+  const [galleryCounts, setGalleryCounts] = useState<{ active: number; total: number; isUnlimited: boolean } | null>(null);
+
+  // תואם ל-enforce_active_gallery_limit ב-supabase/schema.sql (ולחישוב ב-
+  // app/dashboard/galleries/page.tsx): פעילה = כל סטטוס חוץ מ-completed/expired.
+  // best-effort - כישלון פשוט מסתיר את השורה.
+  useEffect(() => {
+    Promise.all([
+      supabase.from('galleries').select('status'),
+      supabase.from('photographers').select('is_unlimited').maybeSingle(),
+    ]).then(([galleriesRes, photographerRes]) => {
+      if (galleriesRes.error || !galleriesRes.data) return;
+      const statuses = galleriesRes.data as { status: string }[];
+      setGalleryCounts({
+        active: statuses.filter((g) => g.status !== 'completed' && g.status !== 'expired').length,
+        total: statuses.length,
+        isUnlimited: !!(photographerRes.data as { is_unlimited?: boolean } | null)?.is_unlimited,
+      });
+    }, () => {});
+  }, [supabase]);
 
   useEffect(() => {
     (async () => {
@@ -566,6 +590,27 @@ export default function SettingsPage() {
 
         {themeSaved && <p style={{ color: theme.successText, fontSize: 13, marginTop: '0.5rem' }}>העיצוב נשמר!</p>}
       </div>
+
+      {galleryCounts && (
+        <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
+          <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.5rem' }}>חשבון וגלריות</h2>
+          <p
+            style={{
+              fontSize: 13, margin: '0 0 0.5rem',
+              color: !galleryCounts.isUnlimited && galleryCounts.active >= FREE_GALLERY_LIMIT ? theme.errorText : theme.textMuted,
+            }}
+          >
+            {galleryCounts.isUnlimited
+              ? `${galleryCounts.active} גלריות פעילות (חשבון ללא הגבלה)`
+              : `${galleryCounts.active}/${FREE_GALLERY_LIMIT} גלריות פעילות (חשבון חינמי)`}
+          </p>
+          {galleryCounts.total > 0 && (
+            <a href="/api/galleries/export-contacts" style={{ color: theme.textMuted, fontSize: 13, textDecoration: 'underline' }}>
+              ייצוא רשימת אנשי קשר (CSV)
+            </a>
+          )}
+        </div>
+      )}
 
       <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
         <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '1rem' }}>שינוי סיסמה</h2>
