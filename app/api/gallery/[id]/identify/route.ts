@@ -39,7 +39,7 @@ const DISPLAY_NAME_MAX_LENGTH = 40;
 // יכול לנחש מיילים בלי הגבלה ע"י הקלדה חוזרת של הקוד בין ניחוש לניחוש.
 const OWNER_CLAIM_LOCKED_ERROR = 'יותר מדי ניסיונות שגויים - נסי שוב בעוד כמה דקות';
 const OWNER_EMAIL_MISMATCH_ERROR =
-  'כתובת המייל לא תואמת לזו שהצלמת רשמה. אם את לא הלקוחה הרשומה, בחרי "לא, אני מישהי אחרת"';
+  'כתובת המייל לא תואמת לזו שהצלמת רשמה. אם את/ה לא הלקוחה הרשומה, יש לבחור "לא, אני בן/בת משפחה או חבר/ה"';
 const EMAIL_MAX_LENGTH = 254;
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
