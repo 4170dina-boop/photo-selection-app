@@ -1,0 +1,37 @@
+// English: common words and error messages.
+import type { Section } from '../types';
+import type { common as he } from '../he/common';
+
+export const common: Section<typeof he> = {
+  'common.loading': 'Loading...',
+  'common.loadingGallery': 'Loading your gallery...',
+  'common.back': 'Back',
+  'common.cancel': 'Cancel',
+  'common.save': 'Save',
+  'common.close': 'Close',
+  'common.closeNotice': 'Dismiss',
+  'common.prev': 'Previous',
+  'common.next': 'Next',
+  'common.processing': 'Processing...',
+  'common.processingAria': 'Photo is still processing',
+  'common.processingStill': 'This photo is still processing',
+  'common.photoN': 'Photo {n}',
+  'common.photographer': 'your photographer',
+  'common.ownerFallback': 'the main client',
+  'common.language': 'Language',
+
+  'err.noInternet': 'No internet connection. Please check your connection and try again.',
+  'err.offlineRetryLater': "You're offline right now - try again once you're back online.",
+  'err.galleryExpired': 'This gallery has expired',
+  'err.loadFailed': "Couldn't load the gallery. Please refresh the page.",
+  'err.downloadFailed': "The download didn't work - please try again",
+  'err.zipFailed': "Couldn't prepare the ZIP - please try again",
+  'err.updateNotSaved': "That change wasn't saved - please try again.",
+  'err.noteNotSaved': "Your note wasn't saved - please try again.",
+  'err.offlineNotSaved': "Some choices you made offline weren't saved - the gallery may already be locked",
+  'err.finishPendingOffline': "Some choices haven't been saved yet (no connection). Your selection will be sent once you're back online, or you can try again.",
+  'err.finishFailed': "Couldn't send your selection - please try again.",
+  'err.clearFailed': "Couldn't clear your choices - please try again.",
+  'err.aiFailed': 'The analysis failed - please try again.',
+  'err.identifyFailed': "Couldn't join the gallery - please try again",
+};
