@@ -6,6 +6,7 @@ import { theme } from '@/lib/theme';
 import { FREE_PHOTO_LIMIT, indicesToUpload, mapWithConcurrency } from '@/lib/uploadPolicy';
 import { createMicroBatcher } from '@/lib/microBatch';
 import { prepareForUpload } from './uploadCompressor';
+import { readTakenAtFromFile } from '@/lib/exifDate';
 
 // תור ההעלאה חי כאן (context גלובלי לדשבורד) ולא ב-state מקומי של דף ההעלאה,
 // כדי שהעלאה שכבר רצה תמשיך (ותוצג בפס ההתקדמות הצף) גם כשהצלמת עוברת
@@ -106,7 +107,7 @@ function createGalleryBatchers(galleryId: string) {
       delayMs: BATCH_DELAY_MS,
       run: (files) => postBatch(`/api/galleries/${galleryId}/photos/presign-upload`, files, 'בקשת URL להעלאה נכשלה'),
     }),
-    register: createMicroBatcher<{ path: string; originalFilename: string }, RegisterResult>({
+    register: createMicroBatcher<{ path: string; originalFilename: string; takenAt?: string | null }, RegisterResult>({
       maxSize: BATCH_MAX_SIZE,
       delayMs: BATCH_DELAY_MS,
       run: (files) => postBatch(`/api/galleries/${galleryId}/photos`, files, 'שמירת התמונה נכשלה'),
@@ -164,7 +165,12 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       // הקטנה ל-3000px בצלע הארוכה (ראו lib/uploadResize.ts) ב-Web Worker -
       // קובץ מצלמה של ~10MB הופך ל-~1-2MB, והדף לא קופא בזמן הפענוח.
       // "עובדים" אחרים מעלים בזמן שהתמונה הזו מוקטנת.
-      const file = await prepareForUpload(originalFile, !!options.fullResolution);
+      // שעת הצילום (EXIF) נקראת מהמקור לפני ההקטנה - הקנבס מוחק את ה-EXIF
+      // (ראו lib/exifDate.ts). משמשת לחלוקה לפרקים ולזיהוי תמונות דומות.
+      const [file, takenAt] = await Promise.all([
+        prepareForUpload(originalFile, !!options.fullResolution),
+        readTakenAtFromFile(originalFile),
+      ]);
 
       // אחסון עבר ל-Cloudflare R2 (ראו lib/r2.ts) - ל-R2 (כמו S3) אין מקבילה
       // ל-RLS שמאפשרת לדפדפן להעלות ישירות בבטחה, אז מבקשים URL חתום מהשרת
@@ -185,7 +191,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       // הוא נכשל (למשל מגבלת התמונות), השרת גם מוחק את הקובץ מ-R2 כדי שלא
       // יישאר יתום. thumbnail_path נשאר null עד שהעיבוד למטה מסיים - עד אז
       // התמונה לא מוצגת ללקוחה בכלל (אף פעם לא המקור הנקי).
-      const registerData = await batchers.register({ path, originalFilename: file.name });
+      const registerData = await batchers.register({ path, originalFilename: file.name, takenAt });
       if (registerData.error || !registerData.id) throw new Error(registerData.error ?? 'שמירת התמונה נכשלה');
       const photo = { id: registerData.id };
 
