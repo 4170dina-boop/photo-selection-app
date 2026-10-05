@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
+import PriceInput from '@/components/PriceInput';
 import { israelEndOfDayIso } from '@/lib/israelTime';
 import EmailInput from '@/components/EmailInput';
 
@@ -250,10 +251,7 @@ function NewGalleryForm() {
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
           מחיר החבילה (₪)
-          <input
-            type="number"
-            min={0}
-            step="any"
+          <PriceInput
             value={basePrice}
             onChange={(e) => setBasePrice(e.target.value)}
             style={inputStyle}
@@ -262,10 +260,7 @@ function NewGalleryForm() {
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
           מחיר לתמונה נוספת (₪)
-          <input
-            type="number"
-            min={0}
-            step="any"
+          <PriceInput
             value={extraPhotoPrice}
             onChange={(e) => setExtraPhotoPrice(e.target.value)}
             style={inputStyle}

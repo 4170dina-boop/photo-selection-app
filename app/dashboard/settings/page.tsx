@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
+import PriceInput from '@/components/PriceInput';
 import { createClient } from '@/lib/supabase/client';
 import { classifySignInError, isRateLimitError, RATE_LIMIT_MESSAGE } from '@/lib/authErrors';
 
@@ -401,10 +402,7 @@ export default function SettingsPage() {
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
               מחיר החבילה (₪)
-              <input
-                type="number"
-                min={0}
-                step="any"
+              <PriceInput
                 value={defaultBasePrice}
                 onChange={(e) => setDefaultBasePrice(e.target.value)}
                 style={inputStyle}
@@ -413,10 +411,7 @@ export default function SettingsPage() {
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
               מחיר לתמונה נוספת (₪)
-              <input
-                type="number"
-                min={0}
-                step="any"
+              <PriceInput
                 value={defaultExtraPhotoPrice}
                 onChange={(e) => setDefaultExtraPhotoPrice(e.target.value)}
                 style={inputStyle}
