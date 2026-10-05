@@ -37,7 +37,7 @@ describe('numberToHebrewLetters', () => {
   // אז 715 יוצא "טות״ש" במקום "תשט״ו". לא משפיע על ימים (1-30) ולא על השנים
   // הנוכחיות (תשפ״x), רק על שנים כמו תשט״ו/תשט״ז. it.fails יתהפך ויכשיל את
   // הסוויטה ברגע שהבאג יתוקן - אז להחליף ל-it רגיל.
-  it.fails('handles 15/16 combined with hundreds (e.g. 715 -> תשט״ו) [known bug]', () => {
+  it('handles 15/16 combined with hundreds (e.g. 715 -> תשט״ו)', () => {
     expect(numberToHebrewLetters(715)).toBe('תשט״ו');
     expect(numberToHebrewLetters(716)).toBe('תשט״ז');
   });

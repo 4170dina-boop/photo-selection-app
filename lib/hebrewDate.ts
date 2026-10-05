@@ -13,16 +13,26 @@ export function numberToHebrewLetters(num: number): string {
   let n = num;
   let letters = '';
 
+  // מאות קודם, כדי ש-715 ייכתב תשט״ו ולא טות״ש.
+  for (const [value, letter] of values) {
+    if (value < 100) break;
+    while (n >= value) {
+      letters += letter;
+      n -= value;
+    }
+  }
+
   // 15/16 נכתבים ט״ו/ט״ז ולא י״ה/י״ו, כדי לא לאיית את שם ה'.
-  if (n % 100 === 15) {
+  if (n === 15) {
     letters += 'טו';
-    n -= 15;
-  } else if (n % 100 === 16) {
+    n = 0;
+  } else if (n === 16) {
     letters += 'טז';
-    n -= 16;
+    n = 0;
   }
 
   for (const [value, letter] of values) {
+    if (value >= 100) continue;
     while (n >= value) {
       letters += letter;
       n -= value;
