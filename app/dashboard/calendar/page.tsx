@@ -12,6 +12,7 @@ import {
   daysUntilLabel,
   compareShoots,
 } from '@/lib/shoots';
+import EmailInput from '@/components/EmailInput';
 
 // יומן צילומים - תצוגת חודש + רשימת הצילומים הקרובים, ויצירה/עריכה/מחיקה של
 // צילום. הנתונים מ-app/api/shoots (session הצלמת + RLS). התזכורות ללקוחה
@@ -372,12 +373,10 @@ export default function CalendarPage() {
                   style={{ ...inputStyle, flex: 1, minWidth: 160 }}
                   required
                 />
-                <input
-                  type="email"
-                  dir="ltr"
+                <EmailInput
                   placeholder="email@example.com"
                   value={form.clientEmail}
-                  onChange={(e) => updateForm({ clientEmail: e.target.value })}
+                  onValueChange={(v) => updateForm({ clientEmail: v })}
                   style={{ ...inputStyle, flex: 1, minWidth: 180 }}
                   required
                 />

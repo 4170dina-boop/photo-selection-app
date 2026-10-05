@@ -10,6 +10,7 @@ import { canDeliverFinals } from '@/lib/galleryLifecycle';
 import { createClient } from '@/lib/supabase/client';
 import MagicButton from '@/components/MagicButton';
 import GalleryPaymentsSection from '@/components/GalleryPaymentsSection';
+import EmailInput from '@/components/EmailInput';
 
 interface DeliveredPhoto {
   id: string;
@@ -564,10 +565,9 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
           אימייל הלקוחה
-          <input
-            type="email"
+          <EmailInput
             value={clientEmail}
-            onChange={(e) => setClientEmail(e.target.value)}
+            onValueChange={setClientEmail}
             style={inputStyle}
             required
           />
@@ -576,12 +576,11 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {additionalEmails.map((email, i) => (
             <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <input
-                type="email"
+              <EmailInput
                 value={email}
                 placeholder="כתובת מייל נוספת (למשל בן/בת משפחה)"
-                onChange={(e) =>
-                  setAdditionalEmails((prev) => prev.map((v, idx) => (idx === i ? e.target.value : v)))
+                onValueChange={(next) =>
+                  setAdditionalEmails((prev) => prev.map((v, idx) => (idx === i ? next : v)))
                 }
                 style={{ ...inputStyle, flex: 1 }}
               />

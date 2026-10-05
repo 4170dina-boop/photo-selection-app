@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { theme, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
+import EmailInput from '@/components/EmailInput';
 
 interface PhotographerRow {
   id: string;
@@ -129,12 +130,10 @@ export default function AdminPage() {
           אחרי שיש דומיין מאומת ב-Resend, אפשר לעדכן כאן בלי לגעת בהגדרות ב-Vercel.
         </p>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <input
-            type="email"
+          <EmailInput
             value={fromEmailInput}
-            onChange={(e) => setFromEmailInput(e.target.value)}
+            onValueChange={setFromEmailInput}
             placeholder="hello@your-domain.co.il"
-            dir="ltr"
             style={{
               flex: '1 1 240px', padding: '0.5rem 0.75rem', borderRadius: 8,
               border: `1px solid ${theme.border}`, background: theme.bg, color: theme.text, fontSize: 14,

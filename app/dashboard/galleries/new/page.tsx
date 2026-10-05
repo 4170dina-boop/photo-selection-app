@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import { israelEndOfDayIso } from '@/lib/israelTime';
+import EmailInput from '@/components/EmailInput';
 
 interface CreatedGallery {
   galleryId: string;
@@ -197,10 +198,9 @@ function NewGalleryForm() {
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
           אימייל הלקוחה
-          <input
-            type="email"
+          <EmailInput
             value={clientEmail}
-            onChange={(e) => setClientEmail(e.target.value)}
+            onValueChange={setClientEmail}
             style={inputStyle}
             required
           />
@@ -209,12 +209,11 @@ function NewGalleryForm() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {additionalEmails.map((email, i) => (
             <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <input
-                type="email"
+              <EmailInput
                 value={email}
                 placeholder="כתובת מייל נוספת (למשל בן/בת משפחה)"
-                onChange={(e) =>
-                  setAdditionalEmails((prev) => prev.map((v, idx) => (idx === i ? e.target.value : v)))
+                onValueChange={(next) =>
+                  setAdditionalEmails((prev) => prev.map((v, idx) => (idx === i ? next : v)))
                 }
                 style={{ ...inputStyle, flex: 1 }}
               />

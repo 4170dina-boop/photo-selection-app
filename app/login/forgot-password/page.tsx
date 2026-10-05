@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { theme, inputStyle, goldButtonStyle } from '@/lib/theme';
 import { callbackErrorMessage, isRateLimitError, RATE_LIMIT_MESSAGE } from '@/lib/authErrors';
+import EmailInput from '@/components/EmailInput';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -60,11 +61,10 @@ export default function ForgotPasswordPage() {
               הזיני את כתובת המייל שאיתה נרשמת, ונשלח לך קישור לקביעת סיסמה חדשה.
             </p>
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-              <input
-                type="email"
+              <EmailInput
                 placeholder="אימייל"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onValueChange={setEmail}
                 style={inputStyle}
                 required
               />

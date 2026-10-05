@@ -13,6 +13,7 @@ import {
   RATE_LIMIT_MESSAGE,
   SIGN_IN_ERROR_MESSAGES,
 } from '@/lib/authErrors';
+import EmailInput from '@/components/EmailInput';
 
 export default function LoginPage() {
   return (
@@ -190,11 +191,10 @@ function LoginForm() {
               required
             />
           )}
-          <input
-            type="email"
+          <EmailInput
             placeholder="אימייל"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onValueChange={setEmail}
             style={inputStyle}
             required
           />
