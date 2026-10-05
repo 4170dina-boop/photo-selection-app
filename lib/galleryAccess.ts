@@ -1,4 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { safeCompare } from './session';
+import { isLockedOut, type LockoutState } from './accessLockout';
 
 export function isGalleryExpired(expiresAt: string | null | undefined, now = new Date()): boolean {
   return !!expiresAt && new Date(expiresAt) < now;
@@ -121,4 +123,47 @@ export function decideIdentify(params: {
     return { kind: 'owner' };
   }
   return { kind: 'guest' };
+}
+
+// גורם אימות שני ל"כן, זאת אני" (app/api/gallery/[id]/identify/route.ts): קוד
+// הגישה משותף לכל המשפחה (הוא נשלח גם ל-additional_invite_emails), אז הוא לבד
+// לא מוכיח שמי שנכנסה היא הלקוחה הרשומה. כדי לקבל זהות בעלים (סיום בחירה וכו')
+// צריך להקליד גם את כתובת המייל שהצלמת רשמה ללקוחה (clients.email).
+// השוואה בלי תלות ברישיות/רווחים בקצוות, ובזמן קבוע (safeCompare משווה
+// hash-ים באורך קבוע, כך שגם אורך המייל הנכון לא דולף דרך תזמון התשובה).
+export function normalizeEmailForCompare(email: string | null | undefined): string {
+  return typeof email === 'string' ? email.trim().toLowerCase() : '';
+}
+
+export function ownerEmailMatches(expected: string | null | undefined, provided: string | null | undefined): boolean {
+  const a = normalizeEmailForCompare(expected);
+  const b = normalizeEmailForCompare(provided);
+  // מחשבים את ההשוואה גם כשאחד מהם ריק, כדי שלא יהיה מסלול מהיר שונה בתזמון
+  const same = safeCompare(a, b);
+  return !!a && !!b && same;
+}
+
+export type OwnerClaimCheck =
+  | { kind: 'ok' }
+  | { kind: 'locked' }
+  | { kind: 'missing' }
+  | { kind: 'no_registered_email' }
+  | { kind: 'mismatch' };
+
+// ההחלטה הטהורה לגבי ניסיון "זאת אני": נעילה קודמת (owner_claim_locked_until -
+// אותה לוגיקה של lib/accessLockout.ts, אבל מונה נפרד; ראו ההסבר ב-route) נבדקת
+// קודם, כדי שגם מייל נכון לא יעבור בזמן נעילה. mismatch = ניסיון שגוי שצריך
+// להירשם (register_failed_owner_claim). missing לא נספר כניסיון - זו בקשה
+// שלא מולאה (למשל דף ישן שעוד לא שולח את השדה).
+export function evaluateOwnerClaim(params: {
+  lockout: LockoutState | null | undefined;
+  registeredEmail: string | null | undefined;
+  providedEmail: string | null | undefined;
+  now?: Date;
+}): OwnerClaimCheck {
+  const { lockout, registeredEmail, providedEmail, now = new Date() } = params;
+  if (isLockedOut(lockout, now)) return { kind: 'locked' };
+  if (!normalizeEmailForCompare(providedEmail)) return { kind: 'missing' };
+  if (!normalizeEmailForCompare(registeredEmail)) return { kind: 'no_registered_email' };
+  return ownerEmailMatches(registeredEmail, providedEmail) ? { kind: 'ok' } : { kind: 'mismatch' };
 }
