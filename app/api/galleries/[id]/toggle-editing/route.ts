@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { nextToggleTimestamp, readToggleValue } from '@/lib/toggleValue';
+import { canStartEditing, EDITING_REQUIRES_COMPLETED_MESSAGE } from '@/lib/galleryLifecycle';
 
 // הופכת (toggle) את סימון "בעריכה" - שלב ביניים נפרד גם מ-status ('completed'
 // אומר רק שהלקוחה סיימה לבחור) וגם מ-delivered_at (מסירת הקבצים הסופיים
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id, editing_started_at')
+    .select('id, editing_started_at, status')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
@@ -39,6 +40,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const newEditingStartedAt = nextToggleTimestamp(gallery.editing_started_at, await readToggleValue(req), new Date().toISOString());
+
+  // עריכה מתחילה רק אחרי שהלקוחה סיימה לבחור. ביטול סימון קיים מותר תמיד.
+  if (newEditingStartedAt && !gallery.editing_started_at && !canStartEditing(gallery)) {
+    return NextResponse.json({ error: EDITING_REQUIRES_COMPLETED_MESSAGE }, { status: 409 });
+  }
 
   const { error } = await supabase
     .from('galleries')

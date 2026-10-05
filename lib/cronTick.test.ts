@@ -48,11 +48,21 @@ describe('expiry reminder', () => {
 describe('originals cleanup', () => {
   const now = new Date('2026-10-05T08:00:00Z');
   const deliveredLongAgo = new Date(now.getTime() - 40 * DAY).toISOString();
+  const FINAL = { status: 'completed', reopened_for_selection_at: null };
+
+  it('refuses unless the selection is final (completed and not reopened)', () => {
+    const warned = new Date(now.getTime() - 10 * DAY).toISOString();
+    const base = { delivered_at: deliveredLongAgo, originals_cleaned_up_at: null, originals_deletion_warning_sent_at: warned };
+    expect(isOriginalsCleanupDue({ ...base, ...FINAL }, now)).toBe(true);
+    expect(isOriginalsCleanupDue({ ...base, status: 'completed', reopened_for_selection_at: now.toISOString() }, now)).toBe(false);
+    expect(isOriginalsCleanupDue({ ...base, status: 'in_progress', reopened_for_selection_at: null }, now)).toBe(false);
+    expect(isOriginalsCleanupDue({ ...base, status: 'expired', reopened_for_selection_at: null }, now)).toBe(false);
+  });
 
   it('refuses when the warning was never sent', () => {
     expect(
       isOriginalsCleanupDue(
-        { delivered_at: deliveredLongAgo, originals_cleaned_up_at: null, originals_deletion_warning_sent_at: null },
+        { ...FINAL, delivered_at: deliveredLongAgo, originals_cleaned_up_at: null, originals_deletion_warning_sent_at: null },
         now
       )
     ).toBe(false);
@@ -62,7 +72,7 @@ describe('originals cleanup', () => {
     const warned = new Date(now.getTime() - 4 * DAY).toISOString();
     expect(
       isOriginalsCleanupDue(
-        { delivered_at: deliveredLongAgo, originals_cleaned_up_at: null, originals_deletion_warning_sent_at: warned },
+        { ...FINAL, delivered_at: deliveredLongAgo, originals_cleaned_up_at: null, originals_deletion_warning_sent_at: warned },
         now
       )
     ).toBe(false);
@@ -72,7 +82,7 @@ describe('originals cleanup', () => {
     const warned = new Date(now.getTime() - 5 * DAY + 30 * 1000).toISOString();
     expect(
       isOriginalsCleanupDue(
-        { delivered_at: deliveredLongAgo, originals_cleaned_up_at: null, originals_deletion_warning_sent_at: warned },
+        { ...FINAL, delivered_at: deliveredLongAgo, originals_cleaned_up_at: null, originals_deletion_warning_sent_at: warned },
         now
       )
     ).toBe(true);
@@ -83,6 +93,7 @@ describe('originals cleanup', () => {
     expect(
       isOriginalsCleanupDue(
         {
+          ...FINAL,
           delivered_at: new Date(now.getTime() - 29 * DAY).toISOString(),
           originals_cleaned_up_at: null,
           originals_deletion_warning_sent_at: warned,
@@ -92,7 +103,7 @@ describe('originals cleanup', () => {
     ).toBe(false);
     expect(
       isOriginalsCleanupDue(
-        { delivered_at: deliveredLongAgo, originals_cleaned_up_at: now.toISOString(), originals_deletion_warning_sent_at: warned },
+        { ...FINAL, delivered_at: deliveredLongAgo, originals_cleaned_up_at: now.toISOString(), originals_deletion_warning_sent_at: warned },
         now
       )
     ).toBe(false);

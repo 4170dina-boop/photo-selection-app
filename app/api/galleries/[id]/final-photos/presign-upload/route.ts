@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { getPresignedUploadUrl } from '@/lib/r2';
 import { buildFinalPhotoKey, validateUploadRequest } from '@/lib/uploadPolicy';
+import { canDeliverFinals, SELECTION_NOT_FINAL_MESSAGE } from '@/lib/galleryLifecycle';
 
 // מקביל ל-.../photos/presign-upload/route.ts, אבל לתת-התיקייה final/ - מחליף
 // את ההעלאה הישירה של תמונות סופיות ב-handleUploadFinalPhotos
@@ -30,13 +31,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id')
+    .select('id, status, reopened_for_selection_at')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
 
   if (!gallery) {
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
+  }
+
+  // תמונה סופית ראשונה מסמנת את הגלריה כנמסרה (trg_delivered_photos_mark_delivered),
+  // וזה מתחיל את ספירת 30 הימים למחיקת המקור - אסור לפני שהלקוחה סיימה לבחור.
+  if (!canDeliverFinals(gallery)) {
+    return NextResponse.json({ error: SELECTION_NOT_FINAL_MESSAGE }, { status: 409 });
   }
 
   const validation = validateUploadRequest(await req.json().catch(() => null));

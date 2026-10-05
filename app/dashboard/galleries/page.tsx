@@ -9,6 +9,7 @@ import { giftExclusionFilter, groupGiftIdsByGallery } from '@/lib/gifts';
 import { theme, goldButtonStyle, inputStyle, outlineButtonStyle } from '@/lib/theme';
 import { computePaymentSummary, formatShekels } from '@/lib/payments';
 import { galleryRevenue, sumShekels } from '@/lib/revenue';
+import { canDeliverFinals, isReminderEligible } from '@/lib/galleryLifecycle';
 
 interface GalleryRow {
   id: string;
@@ -20,6 +21,7 @@ interface GalleryRow {
   sent_at: string | null;
   editing_started_at: string | null;
   delivered_at: string | null;
+  reopened_for_selection_at: string | null;
   paid_at: string | null;
   owner_participant_id: string | null;
   clients: { full_name: string } | null;
@@ -109,7 +111,11 @@ export default function GalleriesDashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: !row.delivered_at }),
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data.error) window.alert(data.error);
+        return;
+      }
       const data = await res.json();
       setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, delivered_at: data.deliveredAt } : r)));
     } catch {
@@ -165,11 +171,15 @@ export default function GalleriesDashboard() {
   async function handleBulkReminder() {
     if (selectedIds.size === 0) return;
 
-    // תזכורת תפוגה דורשת expires_at - מדלגים בשקט על גלריות בלי תוקף,
-    // אותה בדיקה שכבר קיימת ב-app/api/galleries/[id]/send-reminder.
-    const eligible = rows.filter((r) => selectedIds.has(r.id) && r.expires_at);
+    // רק גלריות שהלקוחה עדיין בוחרת בהן (sent/in_progress, או שנפתחה מחדש)
+    // עם תוקף עתידי - אותם תנאים כמו app/api/galleries/[id]/send-reminder,
+    // ראו isReminderEligible ב-lib/galleryLifecycle.ts.
+    const now = new Date();
+    const selectedRows = rows.filter((r) => selectedIds.has(r.id));
+    const eligible = selectedRows.filter((r) => isReminderEligible(r, now));
+    const skipped = selectedRows.length - eligible.length;
     if (eligible.length === 0) {
-      setBulkMessage('אין בבחירה גלריות עם תוקף מוגדר - אי אפשר לשלוח תזכורת');
+      setBulkMessage('אין בבחירה גלריות שהלקוחה עדיין בוחרת בהן עם תוקף עתידי - אי אפשר לשלוח תזכורת');
       return;
     }
 
@@ -186,7 +196,10 @@ export default function GalleriesDashboard() {
     }
 
     setBulkWorking(false);
-    setBulkMessage(`נשלחו ${sent} מתוך ${eligible.length} תזכורות (גלריות בלי תוקף דולגו)`);
+    setBulkMessage(
+      `נשלחו ${sent} מתוך ${eligible.length} תזכורות` +
+        (skipped > 0 ? ` (דולגו ${skipped} גלריות שהושלמו, שפג תוקפן או שאין להן תוקף)` : '')
+    );
     setSelectedIds(new Set());
   }
 
@@ -196,7 +209,7 @@ export default function GalleriesDashboard() {
 
     const { data: galleries, error } = await supabase
       .from('galleries')
-      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, editing_started_at, delivered_at, paid_at, owner_participant_id, amount_due_override, clients(full_name), packages(included_photos, base_price, extra_photo_price), gallery_payments(amount)')
+      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, editing_started_at, delivered_at, paid_at, reopened_for_selection_at, owner_participant_id, amount_due_override, clients(full_name), packages(included_photos, base_price, extra_photo_price), gallery_payments(amount)')
       .order('created_at', { ascending: false });
 
     // בלי הבדיקה הזו, שגיאת שאילתה (למשל RLS, או עמודה חסרה אם המיגרציה
@@ -621,17 +634,26 @@ export default function GalleriesDashboard() {
               </button>
             )}
 
+            {/* מסירה מתחילה את ספירת 30 הימים למחיקת המקור - חסום כשהבחירה
+                נפתחה מחדש ללקוחה (ביטול סימון קיים תמיד מותר). */}
             {status === 'completed' && (
               <button
                 onClick={(e) => handleToggleDelivered(row, e)}
-                disabled={togglingDeliveredId === row.id}
-                title={row.delivered_at ? 'לחצי כדי לבטל את סימון המסירה' : 'לחצי אחרי שמסרת ללקוחה את התמונות הסופיות'}
+                disabled={togglingDeliveredId === row.id || (!row.delivered_at && !canDeliverFinals(row))}
+                title={
+                  row.delivered_at
+                    ? 'לחצי כדי לבטל את סימון המסירה'
+                    : !canDeliverFinals(row)
+                      ? 'הבחירה פתוחה מחדש ללקוחה - אפשר לסמן כנמסר רק אחרי שתסיים לבחור שוב'
+                      : 'לחצי אחרי שמסרת ללקוחה את התמונות הסופיות'
+                }
                 style={{
-                  padding: '0.25rem 0.75rem', borderRadius: 16, fontSize: 12, whiteSpace: 'nowrap', cursor: 'pointer',
+                  padding: '0.25rem 0.75rem', borderRadius: 16, fontSize: 12, whiteSpace: 'nowrap',
+                  cursor: !row.delivered_at && !canDeliverFinals(row) ? 'not-allowed' : 'pointer',
                   border: `1px solid ${row.delivered_at ? theme.successText : theme.border}`,
                   color: row.delivered_at ? theme.successText : theme.textFaint,
                   background: 'transparent',
-                  opacity: togglingDeliveredId === row.id ? 0.6 : 1,
+                  opacity: togglingDeliveredId === row.id || (!row.delivered_at && !canDeliverFinals(row)) ? 0.5 : 1,
                 }}
               >
                 {row.delivered_at ? '✓ נמסר' : 'סימון כנמסר'}

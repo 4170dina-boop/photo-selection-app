@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import { toHebrewDateString } from '@/lib/hebrewDate';
 import { israelEndOfDayIso } from '@/lib/israelTime';
+import { canDeliverFinals } from '@/lib/galleryLifecycle';
 import { createClient } from '@/lib/supabase/client';
 import MagicButton from '@/components/MagicButton';
 import GalleryPaymentsSection from '@/components/GalleryPaymentsSection';
@@ -822,7 +823,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
 
         {/* מחיקת מקור אוטומטית 30 יום אחרי מסירה (app/api/cron/tick/route.ts) -
             רק שקיפות, אין כאן שום כפתור/פעולה - זו עבודת רקע יומית. */}
-        {deliveredAt && !originalsCleanedUpAt && (
+        {deliveredAt && !originalsCleanedUpAt && canDeliverFinals({ status, reopened_for_selection_at: reopenedForSelectionAt }) && (
           <p style={{ color: theme.textFaint, fontSize: 12, marginBottom: '1rem' }}>
             💡 תמונות המקור (הלא-ערוכות) יימחקו אוטומטית ב-
             {toHebrewDateString(new Date(new Date(deliveredAt).getTime() + 30 * 24 * 60 * 60 * 1000))}
@@ -835,24 +836,35 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           </p>
         )}
 
-        <label
-          style={{
-            ...outlineButtonStyle,
-            display: 'inline-block',
-            cursor: uploadingFinal ? 'default' : 'pointer',
-            opacity: uploadingFinal ? 0.6 : 1,
-          }}
-        >
-          {uploadingFinal ? 'מעלה...' : '+ העלאת תמונות סופיות'}
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={handleUploadFinalPhotos}
-            disabled={uploadingFinal}
-            style={{ display: 'none' }}
-          />
-        </label>
+        {/* מסירה (העלאה ראשונה מסמנת "נמסר") מתחילה את ספירת 30 הימים למחיקת
+            המקור - רק אחרי שהלקוחה סיימה לבחור. השרת אוכף גם הוא
+            (.../final-photos/presign-upload). */}
+        {canDeliverFinals({ status, reopened_for_selection_at: reopenedForSelectionAt }) ? (
+          <label
+            style={{
+              ...outlineButtonStyle,
+              display: 'inline-block',
+              cursor: uploadingFinal ? 'default' : 'pointer',
+              opacity: uploadingFinal ? 0.6 : 1,
+            }}
+          >
+            {uploadingFinal ? 'מעלה...' : '+ העלאת תמונות סופיות'}
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleUploadFinalPhotos}
+              disabled={uploadingFinal}
+              style={{ display: 'none' }}
+            />
+          </label>
+        ) : (
+          <p style={{ background: theme.warningBg, color: theme.warningText, padding: '0.75rem 1rem', borderRadius: 8, fontSize: 13 }}>
+            {status === 'completed'
+              ? 'הבחירה פתוחה כרגע מחדש ללקוחה - אפשר יהיה להעלות תמונות סופיות אחרי שתסיים לבחור שוב (או אחרי שתנעלי את הבחירה בחזרה).'
+              : 'אפשר להעלות תמונות סופיות רק אחרי שהלקוחה מסיימת לבחור - המסירה מתחילה את ספירת 30 הימים עד מחיקת תמונות המקור.'}
+          </p>
+        )}
 
         {!loadingDelivered && deliveredPhotos.length > 0 && (
           <div

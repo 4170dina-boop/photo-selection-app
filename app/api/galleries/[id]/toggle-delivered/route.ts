@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { nextToggleTimestamp, readToggleValue } from '@/lib/toggleValue';
+import { canDeliverFinals, SELECTION_NOT_FINAL_MESSAGE } from '@/lib/galleryLifecycle';
 
 // הופכת (toggle) את סימון "נמסר" - "הושלם" (galleries.status) אומר רק שהלקוחה
 // סיימה לבחור, לא שהתמונות המוגמרות בפועל כבר נשלחו/נמסרו אליה. שדה נפרד
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id, delivered_at')
+    .select('id, delivered_at, status, reopened_for_selection_at')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
@@ -39,6 +40,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const newDeliveredAt = nextToggleTimestamp(gallery.delivered_at, await readToggleValue(req), new Date().toISOString());
+
+  // סימון "נמסר" מתחיל את ספירת 30 הימים למחיקת המקור (cron/tick) - מותר רק
+  // אחרי שהלקוחה סיימה לבחור. ביטול סימון קיים מותר תמיד.
+  if (newDeliveredAt && !gallery.delivered_at && !canDeliverFinals(gallery)) {
+    return NextResponse.json({ error: SELECTION_NOT_FINAL_MESSAGE }, { status: 409 });
+  }
 
   // כל שינוי ב-delivered_at מאפס גם את התראת מחיקת המקור - ההתראה הקודמת
   // (אם נשלחה) דיברה על תאריך מסירה אחר, ו-cron/tick מוחק מקור רק אחרי

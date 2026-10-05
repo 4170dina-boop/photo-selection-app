@@ -4,6 +4,7 @@ import { listAllKeys, deleteObjects } from '@/lib/r2';
 import { parseAdditionalInviteEmails, isValidEmail } from '@/lib/email';
 import { syncPaidAtAfterTotalChange } from '@/lib/galleryPayments';
 import { parseGalleryNumbers } from '@/lib/galleryValidation';
+import { expiresAtChanged, statusAfterExpiryChange } from '@/lib/galleryLifecycle';
 
 // עריכה/מחיקה של גלריה קיימת, בדיוק כמו app/api/galleries/route.ts (יצירה) -
 // רץ עם session הצלם (לא service key), כך שה-RLS הקיים כבר דואג שאי אפשר
@@ -20,7 +21,7 @@ async function loadOwnedGallery(supabase: ReturnType<typeof createClient>, galle
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id, client_id, photographer_id')
+    .select('id, client_id, photographer_id, status, expires_at, owner_participant_id')
     .eq('id', galleryId)
     .eq('photographer_id', photographer.id)
     .single();
@@ -105,15 +106,33 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
   const additionalInviteEmails = parsedInviteEmails.value;
 
-  const { error: clientError } = await supabase
-    .from('clients')
-    .update({ full_name: clientName.trim(), email: clientEmail.trim() })
-    .eq('id', gallery.client_id);
-
-  if (clientError) {
-    return NextResponse.json({ error: 'עדכון פרטי הלקוחה נכשל' }, { status: 500 });
+  // גלריה שה-cron סימן כ-expired חוזרת לפעילה כשהתוקף מוארך לעתיד או מוסר
+  // (statusAfterExpiryChange ב-lib/galleryLifecycle.ts). המעבר *מ*-expired
+  // מותר ל-session הצלמת (guard_gallery_status_transitions חוסם רק מעבר *אל*
+  // completed/expired), ו-enforce_active_gallery_limit אוכף את מגבלת החשבון
+  // החינמי - מטופל למטה כ-402.
+  let ownerHasSelections = false;
+  if (gallery.status === 'expired' && gallery.owner_participant_id) {
+    const { count, error: countError } = await supabase
+      .from('selections')
+      .select('id', { count: 'exact', head: true })
+      .eq('gallery_id', gallery.id)
+      .eq('participant_id', gallery.owner_participant_id);
+    if (countError) {
+      return NextResponse.json({ error: 'בדיקת הבחירות של הלקוחה נכשלה' }, { status: 500 });
+    }
+    ownerHasSelections = (count ?? 0) > 0;
   }
+  const reactivatedStatus = statusAfterExpiryChange({
+    status: gallery.status,
+    oldExpiresAt: gallery.expires_at,
+    newExpiresAt: expiresAt,
+    ownerHasSelections,
+    now: new Date(),
+  });
 
+  // הגלריה נכתבת ראשונה (לפני clients/packages): היא זו שיכולה להיחסם ע"י
+  // מגבלת הגלריה הפעילה, וכך חסימה כזו לא משאירה שמירה חלקית של פרטי הלקוחה.
   const { error: galleryError } = await supabase
     .from('galleries')
     .update({
@@ -121,11 +140,33 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       photographer_notes: photographerNotes?.trim() || null,
       reminder_days: reminderDays,
       additional_invite_emails: additionalInviteEmails.length > 0 ? additionalInviteEmails : null,
+      // תאריך תוקף חדש = תזכורת התפוגה החד-פעמית (cron/tick) צריכה לצאת שוב
+      // לפי התאריך החדש, ולא להיחשב "כבר נשלחה" על התאריך הקודם.
+      ...(expiresAtChanged(gallery.expires_at, expiresAt) ? { last_reminder_sent_at: null } : {}),
+      ...(reactivatedStatus ? { status: reactivatedStatus } : {}),
     })
     .eq('id', gallery.id);
 
+  if (galleryError?.message?.includes('LIMIT_ACTIVE_GALLERY')) {
+    return NextResponse.json(
+      {
+        error:
+          'בחשבון חינמי אפשר רק גלריה פעילה אחת, והארכת התוקף מחזירה את הגלריה הזו לפעילה. השלימי או מחקי את הגלריה הפעילה האחרת ונסי שוב.',
+      },
+      { status: 402 }
+    );
+  }
   if (galleryError) {
     return NextResponse.json({ error: 'עדכון הגלריה נכשל' }, { status: 500 });
+  }
+
+  const { error: clientError } = await supabase
+    .from('clients')
+    .update({ full_name: clientName.trim(), email: clientEmail.trim() })
+    .eq('id', gallery.client_id);
+
+  if (clientError) {
+    return NextResponse.json({ error: 'עדכון פרטי הלקוחה נכשל' }, { status: 500 });
   }
 
   // upsert ולא update: גלריה ישנה בלי שורת packages (למשל יצירה שנקטעה) הייתה
@@ -144,7 +185,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // מחיר/מכסת החבילה אולי השתנו - paid_at נגזר מהיתרה כשיש תשלומים (best-effort)
   await syncPaidAtAfterTotalChange(supabase, gallery.id);
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, status: reactivatedStatus ?? gallery.status });
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {

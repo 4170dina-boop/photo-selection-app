@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'crypto';
 import { israelDateString, daysBetweenDateStrings } from '@/lib/israelTime';
+import { isSelectionFinal } from '@/lib/galleryLifecycle';
 
 // לוגיקה טהורה של app/api/cron/tick/route.ts (בלי DB ובלי שליחת מיילים) -
 // כדי שההחלטות "האם מותר/צריך עכשיו" ייבדקו ב-vitest.
@@ -69,6 +70,8 @@ export function originalsWarningSentQueryUpperBound(now: Date): string {
 }
 
 export interface OriginalsCleanupCandidate {
+  status: string | null;
+  reopened_for_selection_at: string | null;
   delivered_at: string | null;
   originals_cleaned_up_at: string | null;
   originals_deletion_warning_sent_at: string | null;
@@ -80,6 +83,9 @@ export interface OriginalsCleanupCandidate {
 // המייל נכשלה כמה ימים ברצף). ימים לוחיים ולא 5×24 שעות מדויקות, כי ה-cron
 // היומי רץ כל פעם בשעה קצת אחרת.
 export function isOriginalsCleanupDue(gallery: OriginalsCleanupCandidate, now: Date): boolean {
+  // רק אחרי שהלקוחה סיימה לבחור והבחירה לא פתוחה מחדש - אחרת היא עדיין
+  // בוחרת מתוך המקור (ראו isSelectionFinal ב-lib/galleryLifecycle.ts).
+  if (!isSelectionFinal(gallery)) return false;
   if (!gallery.delivered_at || gallery.originals_cleaned_up_at || !gallery.originals_deletion_warning_sent_at) return false;
   const delivered = new Date(gallery.delivered_at).getTime();
   if (Number.isNaN(delivered) || delivered > now.getTime() - ORIGINALS_GRACE_DAYS * MS_PER_DAY) return false;

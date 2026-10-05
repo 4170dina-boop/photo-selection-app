@@ -12,6 +12,7 @@ import {
   mapWithConcurrency,
   photosNeedingProcessRetry,
 } from '@/lib/uploadPolicy';
+import { originalsUploadBlockReason } from '@/lib/galleryLifecycle';
 
 interface UploadPageProps {
   params: { galleryId: string };
@@ -64,6 +65,9 @@ export default function UploadPage({ params }: UploadPageProps) {
   // תמונות המקור נמחקו (cron, 30 יום אחרי המסירה) - אי אפשר יותר לשנות מתנות
   // (השרת גם דוחה, ראו app/api/galleries/[id]/photos/[photoId]/gift/route.ts).
   const [originalsCleanedUp, setOriginalsCleanedUp] = useState(false);
+  // הגלריה הושלמה (ולא נפתחה מחדש) / פג תוקפה / המקור נמחק - העלאת מקור חדש
+  // חסומה (השרת אוכף גם הוא, ראו .../photos/presign-upload).
+  const [uploadBlockReason, setUploadBlockReason] = useState<string | null>(null);
 
   // מוודאים שהגלריה שייכת לצלמת המחוברת (אותו דפוס כמו דף העריכה) לפני שמציגים
   // את ממשק ההעלאה - בלי זה, כל צלמת יכולה לנווט לפי galleryId של גלריה של
@@ -86,6 +90,7 @@ export default function UploadPage({ params }: UploadPageProps) {
       const gallery = await res.json().catch(() => null);
       setClientName(gallery?.clients?.full_name ?? null);
       setOriginalsCleanedUp(!!gallery?.originals_cleaned_up_at);
+      setUploadBlockReason(gallery ? originalsUploadBlockReason(gallery, new Date()) : null);
       await loadExistingPhotos();
       setCheckingOwnership(false);
     })();
@@ -387,15 +392,21 @@ export default function UploadPage({ params }: UploadPageProps) {
         </div>
       )}
 
+      {uploadBlockReason && (
+        <p style={{ background: theme.warningBg, color: theme.warningText, padding: '0.75rem 1rem', borderRadius: 8, fontSize: 13, marginBottom: '1rem' }}>
+          {uploadBlockReason}
+        </p>
+      )}
+
       <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
-        <label style={{ ...goldButtonStyle, display: 'inline-block' }}>
+        <label style={{ ...goldButtonStyle, display: 'inline-block', opacity: uploadBlockReason ? 0.5 : 1, cursor: uploadBlockReason ? 'not-allowed' : 'pointer' }}>
           בחירת תמונות
           <input
             type="file"
             accept="image/*"
             multiple
             onChange={handleFileSelect}
-            disabled={uploading}
+            disabled={uploading || !!uploadBlockReason}
             style={{ display: 'none' }}
           />
         </label>
@@ -403,8 +414,8 @@ export default function UploadPage({ params }: UploadPageProps) {
         <label
           style={{
             display: 'inline-block', padding: '0.6rem 1.1rem', borderRadius: 8,
-            border: `1px solid ${theme.border}`, color: theme.text, cursor: uploading ? 'default' : 'pointer',
-            opacity: uploading ? 0.6 : 1,
+            border: `1px solid ${theme.border}`, color: theme.text, cursor: uploadBlockReason ? 'not-allowed' : uploading ? 'default' : 'pointer',
+            opacity: uploadBlockReason ? 0.5 : uploading ? 0.6 : 1,
           }}
         >
           בחירת תיקייה שלמה
@@ -415,7 +426,7 @@ export default function UploadPage({ params }: UploadPageProps) {
             directory=""
             multiple
             onChange={handleFolderSelect}
-            disabled={uploading}
+            disabled={uploading || !!uploadBlockReason}
             style={{ display: 'none' }}
           />
         </label>
@@ -427,7 +438,7 @@ export default function UploadPage({ params }: UploadPageProps) {
         {items.length > 0 && (uploading || toUploadCount > 0) && (
           <button
             onClick={startUpload}
-            disabled={uploading || toUploadCount === 0}
+            disabled={uploading || toUploadCount === 0 || !!uploadBlockReason}
             style={{
               ...goldButtonStyle,
               background: 'transparent',

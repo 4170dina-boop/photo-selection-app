@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
 import { getPresignedUploadUrl } from '@/lib/r2';
 import { buildPhotoKey, FREE_PHOTO_LIMIT, remainingPhotoQuota, validateUploadRequest } from '@/lib/uploadPolicy';
+import { originalsUploadBlockReason } from '@/lib/galleryLifecycle';
 
 // מחליף את ההעלאה הישירה מהדפדפן ל-Supabase Storage שהייתה קודם ב-
 // app/dashboard/UploadProvider.tsx: ל-R2 (כמו S3) אין מקבילה ל-RLS שמאפשרת
@@ -31,13 +32,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id')
+    .select('id, status, expires_at, reopened_for_selection_at, originals_cleaned_up_at')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
 
   if (!gallery) {
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
+  }
+
+  // תמונות מקור חדשות לא הגיוניות כשהלקוחה כבר לא יכולה לבחור מתוכן (הבחירה
+  // הסתיימה ולא נפתחה מחדש, או שפג תוקף), או כשתמונות המקור כבר נמחקו.
+  const blockReason = originalsUploadBlockReason(gallery, new Date());
+  if (blockReason) {
+    return NextResponse.json({ error: blockReason }, { status: 409 });
   }
 
   const validation = validateUploadRequest(await req.json().catch(() => null));

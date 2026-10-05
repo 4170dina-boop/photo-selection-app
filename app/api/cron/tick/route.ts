@@ -232,6 +232,9 @@ async function sendOriginalsWarnings(ctx: RunContext) {
     supabaseAdmin
       .from('galleries')
       .select('id, delivered_at, clients(full_name), photographers(auth_user_id)')
+      // רק בחירה סופית (completed, לא פתוחה מחדש) - כמו isOriginalsCleanupDue
+      .eq('status', 'completed')
+      .is('reopened_for_selection_at', null)
       .not('delivered_at', 'is', null)
       .lt('delivered_at', originalsWarningThreshold(now))
       .is('originals_cleaned_up_at', null)
@@ -299,7 +302,10 @@ async function cleanupOriginals(ctx: RunContext) {
   const { rows: galleries, error } = await fetchAllPages((from, to) =>
     supabaseAdmin
       .from('galleries')
-      .select('id, delivered_at, originals_cleaned_up_at, originals_deletion_warning_sent_at')
+      .select('id, status, reopened_for_selection_at, delivered_at, originals_cleaned_up_at, originals_deletion_warning_sent_at')
+      // רק בחירה סופית (completed, לא פתוחה מחדש) - נבדק שוב ב-isOriginalsCleanupDue
+      .eq('status', 'completed')
+      .is('reopened_for_selection_at', null)
       .not('delivered_at', 'is', null)
       .lt('delivered_at', originalsCleanupThreshold(now))
       .is('originals_cleaned_up_at', null)
