@@ -18,8 +18,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 // (UploadProvider, process/route, ai-picks, review, selected-photos,
 // cover-photos, מחיקת גלריה, storage-usage, cron/tick) עובר עכשיו דרך המודול
 // הזה. לא נגענו בנתוני Supabase Storage הישנים (הוחלט לוותר על מיגרציה בפועל -
-// כל מה שהיה שם היה נתוני בדיקה חד-פעמיים) - app/api/admin/migrate-storage/route.ts
-// נשאר כקוד מת בכוונה, לא בשימוש.
+// כל מה שהיה שם היה נתוני בדיקה חד-פעמיים), וקוד המיגרציה עצמו הוסר.
 //
 // R2_ENDPOINT_OVERRIDE מאפשר להצביע את אותו קוד בדיוק על שרת S3-compatible
 // מקומי (למשל MinIO/s3rver) לבדיקות, בלי לגעת בלוגיקה - forcePathStyle נדרש
@@ -39,16 +38,47 @@ const s3 = new S3Client({
   forcePathStyle: !!process.env.R2_ENDPOINT_OVERRIDE,
 });
 
+// client נפרד לחתימת URL-ים בלבד: בגרסאות החדשות של ה-SDK ברירת המחדל היא
+// לחשב checksum (CRC32) לכל PutObject, ובחתימה מראש זה נכנס ל-URL כ-checksum
+// של גוף ריק - שלא יתאים לקובץ שהדפדפן מעלה בפועל. WHEN_REQUIRED מבטל את זה
+// רק לחתימות, בלי לשנות את ההתנהגות של שאר הפעולות בצד שרת.
+const presignS3 = new S3Client({
+  region: 'auto',
+  endpoint,
+  credentials: { accessKeyId: ACCESS_KEY_ID, secretAccessKey: SECRET_ACCESS_KEY },
+  forcePathStyle: !!process.env.R2_ENDPOINT_OVERRIDE,
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+});
+
 // כמה זמן ה-URL החתום תקף - אותו טווח שהיה בשימוש מול Supabase Storage
 // (createSignedUrl) בכל מקומות הקריאה הקיימים.
 const DEFAULT_EXPIRES_SECONDS = 60 * 60;
 
+// URL להעלאה תקף לזמן קצר בלבד - הדפדפן משתמש בו מיד אחרי שקיבל אותו.
+const UPLOAD_EXPIRES_SECONDS = 15 * 60;
+
 // חותם URL להעלאה ישירה מהדפדפן (PUT) - ה-key נקבע בצד שרת ע"י ה-route
-// שקורא לפונקציה הזו (לא מתקבל מהלקוח), בדיוק כמו שהיה בהעלאה הישירה
-// ל-Supabase Storage היום.
-export async function getPresignedUploadUrl(key: string, contentType?: string, expiresIn = DEFAULT_EXPIRES_SECONDS): Promise<string> {
-  const command = new PutObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key, ContentType: contentType });
-  return getSignedUrl(s3, command, { expiresIn });
+// שקורא לפונקציה הזו (לא מתקבל מהלקוח). Content-Type ו-Content-Length נחתמים
+// לתוך ה-URL (signableHeaders), אחרת ה-SDK משאיר אותם מחוץ לחתימה: R2 דוחה
+// PUT עם סוג או גודל שונים ממה שה-route אימת (lib/uploadPolicy.ts), כך שאי
+// אפשר להעלות דרך ה-URL הזה קובץ ענק או משהו שאינו תמונה מהרשימה המותרת.
+// הדפדפן חייב לשלוח בדיוק את אותו Content-Type; Content-Length הוא אוטומטי.
+export async function getPresignedUploadUrl(
+  key: string,
+  contentType: string,
+  contentLength: number,
+  expiresIn = UPLOAD_EXPIRES_SECONDS
+): Promise<string> {
+  const command = new PutObjectCommand({
+    Bucket: R2_BUCKET_NAME,
+    Key: key,
+    ContentType: contentType,
+    ContentLength: contentLength,
+  });
+  return getSignedUrl(presignS3, command, {
+    expiresIn,
+    signableHeaders: new Set(['content-type', 'content-length']),
+  });
 }
 
 // חותם URL להורדה/צפייה (GET) - עם בדיקת קיום מקדימה כדי לשמר בדיוק את
@@ -67,8 +97,7 @@ export async function getPresignedDownloadUrl(key: string, expiresIn = DEFAULT_E
   return getSignedUrl(s3, command, { expiresIn });
 }
 
-// העלאה ישירה בצד שרת (לא דרך URL חתום) - בשימוש במיגרציה החד-פעמית
-// (מעבירה בייטים מ-Supabase ל-R2) ובכל מקום עתידי שכבר מחזיק את הקובץ
+// העלאה ישירה בצד שרת (לא דרך URL חתום) - בכל מקום שכבר מחזיק את הקובץ
 // בזיכרון בצד שרת (כמו thumbnail אחרי עיבוד סימן מים).
 export async function uploadBuffer(key: string, buffer: Buffer, contentType?: string): Promise<void> {
   await s3.send(new PutObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key, Body: buffer, ContentType: contentType }));
@@ -88,8 +117,8 @@ export async function downloadToBuffer(key: string): Promise<Buffer | null> {
   }
 }
 
-// בודקת קיום + גודל בלי להוריד את הקובץ עצמו - בשימוש במיגרציה לאימות
-// שהגודל שהועלה ל-R2 תואם למקור לפני שמסמנים שורה כ"הועברה".
+// בודקת קיום + גודל בלי להוריד את הקובץ עצמו - בשימוש ב-process/רישום
+// התמונה כדי לדחות קובץ חסר או גדול מדי לפני שמורידים אותו לזיכרון.
 export async function headObject(key: string): Promise<{ size: number } | null> {
   try {
     const result = await s3.send(new HeadObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));

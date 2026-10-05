@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { deleteObjects } from '@/lib/r2';
+import { isKeyInGallery } from '@/lib/uploadPolicy';
 
 // מחליף את handleDeleteFinalPhoto ב-app/dashboard/galleries/[id]/edit/page.tsx.
 // כמו ב-GET final-photos/route.ts - אין RLS ב-R2, אז מחיקת הקובץ עצמו חייבת
@@ -47,7 +48,11 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return NextResponse.json({ error: 'תמונה לא נמצאה' }, { status: 404 });
   }
 
-  await deleteObjects([photo.file_path]);
+  // file_path נכתב מהדפדפן (insert ישיר ל-delivered_photos) - לא מוחקים
+  // מ-R2 שום דבר מחוץ לתיקיית הגלריה הזו, גם אם השורה מצביעה לשם.
+  if (isKeyInGallery(params.id, photo.file_path)) {
+    await deleteObjects([photo.file_path]);
+  }
 
   const { error: deleteError } = await supabase.from('delivered_photos').delete().eq('id', photo.id);
 

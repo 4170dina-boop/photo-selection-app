@@ -151,22 +151,25 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
-  // מוחקים קודם את הקבצים מ-R2 - מחיקת שורת הגלריה (למטה) לא עושה את זה
-  // אוטומטית, ה-CASCADE ב-DB מוחק רק את רשומות ה-photos/delivered_photos, לא
-  // את הקבצים בפועל. בניגוד ל-list() הלא-רקורסיבי של Supabase Storage (דרש
-  // שאילתה נפרדת לכל אחת מ-thumbs/ ו-final/), ל-S3/R2 אין "תיקיות" אמיתיות -
-  // listAllKeys עם prefix של תחילית ה-gallery id כולל אוטומטית את כל תתי-התיקיות.
-  // אין כאן מקבילה ל-RLS של Supabase (ה-session client לא יכול לגשת ישירות
-  // ל-R2), אז זו פעולה בהרשאות מלאות בצד שרת - הבעלות כבר אומתה למעלה מול ה-DB
-  // (loadOwnedGallery), בלתי תלוי לגמרי בשכבת ה-Storage.
-  const objects = await listAllKeys(`${gallery.id}/`);
-  if (objects.length > 0) {
-    await deleteObjects(objects.map((o) => o.key));
-  }
-
+  // קודם שורת הגלריה ב-DB (ה-CASCADE מוחק גם את photos/delivered_photos), ורק
+  // אחר כך הקבצים ב-R2: אם מחיקת ה-DB נכשלת, הגלריה נשארת שלמה עם כל הקבצים
+  // שלה (במקום גלריה "חיה" שהתמונות שלה כבר נמחקו). קבצים שנשארו אחרי כישלון
+  // בניקוי R2 הם רק בזבוז אחסון, לא נתונים שבורים - לכן best-effort עם לוג.
+  // ל-S3/R2 אין "תיקיות" אמיתיות - listAllKeys עם prefix של ה-gallery id כולל
+  // אוטומטית את כל תתי-התיקיות (thumbs/, final/). הבעלות כבר אומתה למעלה מול
+  // ה-DB (loadOwnedGallery).
   const { error: deleteError } = await supabase.from('galleries').delete().eq('id', gallery.id);
   if (deleteError) {
     return NextResponse.json({ error: 'מחיקת הגלריה נכשלה' }, { status: 500 });
+  }
+
+  try {
+    const objects = await listAllKeys(`${gallery.id}/`);
+    if (objects.length > 0) {
+      await deleteObjects(objects.map((o) => o.key));
+    }
+  } catch (err) {
+    console.error('[galleries/delete] ניקוי קבצי R2 נכשל אחרי מחיקת הגלריה:', gallery.id, err);
   }
 
   // הלקוחה שייכת לגלריה אחת בלבד במודל הנוכחי - מוחקים גם אותה כדי לא להשאיר יתום.

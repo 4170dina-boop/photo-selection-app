@@ -5,6 +5,7 @@ import { BLUR_THRESHOLD } from '@/lib/sharpness';
 import { getPresignedDownloadUrl } from '@/lib/r2';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { countBillableSelected } from '@/lib/gifts';
+import { hasWatermarkedThumbnail } from '@/lib/uploadPolicy';
 
 // service_role - נשאר בצד שרת בלבד. כל הגישה של הלקוחה לנתוני הגלריה
 // עוברת דרך ה-API הזה (ולא דרך anon key ישירות מהדפדפן), כי אין policy
@@ -113,10 +114,14 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // תמונות מתנה (lib/gifts.ts) - אותו דפוס best-effort כמו sharpness_score למעלה.
   const giftById = new Map((await fetchGiftPhotos(supabaseAdmin, [galleryId])).map((g) => [g.id, g]));
 
+  // רק תמונות שכבר עובדו (יש thumbnail עם סימן מים) - תמונה שהעיבוד שלה עוד
+  // לא הסתיים או נכשל פשוט לא מוצגת, במקום ליפול חזרה למקור הנקי. דף ההעלאה
+  // של הצלמת מפעיל עיבוד מחדש לתמונות כאלה.
+  const processedPhotos = (photosData ?? []).filter(hasWatermarkedThumbnail);
+
   const photos = await Promise.all(
-    (photosData ?? []).map(async (photo) => {
-      const thumbPath = photo.thumbnail_path ?? photo.file_path;
-      const thumbUrl = await getPresignedDownloadUrl(thumbPath, SIGNED_URL_TTL_SECONDS);
+    processedPhotos.map(async (photo) => {
+      const thumbUrl = await getPresignedDownloadUrl(photo.thumbnail_path as string, SIGNED_URL_TTL_SECONDS);
 
       // thumbnailUrl ו-fullUrl מצביעים לאותה גרסה (המוקטנת/עם סימן המים) -
       // file_path (המקור הנקי) לא נחשף ללקוחה בשום מקום, כולל מצב השוואה

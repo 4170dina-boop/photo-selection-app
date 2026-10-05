@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { listAllKeys } from '@/lib/r2';
+import { mapWithConcurrency } from '@/lib/uploadPolicy';
+
+// כמה גלריות נסרקות ב-R2 בו-זמנית - בלי הגבלה, צלמת עם הרבה גלריות הייתה
+// שולחת עשרות/מאות בקשות List בבת אחת.
+const LIST_CONCURRENCY = 5;
 
 // מכסת האחסון של תוכנית Cloudflare R2 החינמית (10GB, פי 10 מ-Supabase Storage
 // שממנו עברנו - ראו lib/r2.ts) - קבוע ידני (אין לנו טוקן ל-API של Cloudflare
@@ -35,12 +40,10 @@ export async function GET(req: NextRequest) {
   // אותה תחילית {galleryId}/ - בניגוד ל-list() הלא-רקורסיבי של Supabase
   // Storage (דרש שאילתה נפרדת לכל תת-תיקייה), listAllKeys עם prefix כולל
   // אותן אוטומטית, וגם מחזיר size לכל אובייקט בלי HeadObject נפרד לכל קובץ.
-  await Promise.all(
-    (galleries ?? []).map(async (gallery) => {
-      const objects = await listAllKeys(`${gallery.id}/`);
-      for (const obj of objects) totalBytes += obj.size;
-    })
-  );
+  await mapWithConcurrency(galleries ?? [], LIST_CONCURRENCY, async (gallery) => {
+    const objects = await listAllKeys(`${gallery.id}/`);
+    for (const obj of objects) totalBytes += obj.size;
+  });
 
   const totalGB = totalBytes / 1024 ** 3;
 

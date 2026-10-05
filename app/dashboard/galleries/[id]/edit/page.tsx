@@ -123,12 +123,13 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         const presignRes = await fetch(`/api/galleries/${galleryId}/final-photos/presign-upload`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename: file.name }),
+          // סוג וגודל נחתמים לתוך ה-URL (ראו lib/r2.ts) - השרת דוחה סוג לא נתמך או קובץ מעל 50MB
+          body: JSON.stringify({ contentType: file.type, size: file.size }),
         });
         if (!presignRes.ok) return false;
-        const { path, uploadUrl } = await presignRes.json();
+        const { path, uploadUrl, contentType } = await presignRes.json();
 
-        const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
+        const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': contentType } });
         if (!putRes.ok) return false;
 
         const { error: dbError } = await supabase
@@ -140,7 +141,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
 
     setUploadingFinal(false);
     if (results.some((ok) => !ok)) {
-      setFinalError('חלק מהתמונות לא הועלו בהצלחה - נסי שוב');
+      setFinalError('חלק מהתמונות לא הועלו בהצלחה - נסי שוב (נתמכים JPEG, PNG, WebP, AVIF, TIFF עד 50MB)');
     }
     await loadDeliveredPhotos();
   }
