@@ -2104,3 +2104,13 @@ create policy "photographers read own logo" on storage.objects
 -- alter table gallery_participants add constraint gallery_participants_gender_check check (gender in ('f', 'm'));
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: לשון פנייה =====
+
+-- ===== מיגרציה: שפת הגלריה והמיילים ללקוח/ה (galleries.language) =====
+-- להריץ פעם אחת על פרויקט קיים (הכל idempotent). עד שמריצים - הקוד לא נשבר:
+-- הגלריה מוצגת לפי שפת הדפדפן (או עברית), המיילים ללקוח/ה בעברית, והבחירה
+-- בטופס יצירה/עריכה פשוט לא נשמרת (ראו lib/i18n/galleryLanguage.ts).
+-- alter table galleries add column if not exists language text default 'he' not null;
+-- alter table galleries drop constraint if exists galleries_language_check;
+-- alter table galleries add constraint galleries_language_check check (language in ('he', 'en', 'yi', 'es', 'fr'));
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: שפת הגלריה =====
