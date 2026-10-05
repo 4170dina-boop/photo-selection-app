@@ -48,6 +48,12 @@ create table photographers (
   -- ה-cron רץ כמה פעמים באותו יום. null = טרם נשלח אף פעם.
   shoot_daily_summary_enabled boolean default true not null,
   shoot_summary_sent_on date,
+  -- קישורי תשלום שמוצגים ללקוחה על התוספת (components/ClientPayButton.tsx,
+  -- lib/paymentLinks.ts) - רק קישורים, אין עיבוד תשלומים באפליקציה. https בלבד
+  -- (נבדק ב-app/api/photographer). null = לא מוצג.
+  payment_bit_url text,
+  payment_paybox_url text,
+  payment_bank_details text,
   created_at timestamptz default now()
 );
 
@@ -2101,3 +2107,12 @@ create policy "photographers read own logo" on storage.objects
 -- alter table gallery_participants add constraint gallery_participants_gender_check check (gender in ('f', 'm'));
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: לשון פנייה =====
+
+-- ===== מיגרציה: קישורי תשלום ללקוחה (ביט / PayBox / העברה בנקאית) =====
+-- להריץ פעם אחת על פרויקט קיים (הכל idempotent). עד שמריצים - הקוד לא נשבר:
+-- השדות בהגדרות פשוט לא נשמרים (עם הודעה), וללקוחה לא מוצג כפתור תשלום.
+-- alter table photographers add column if not exists payment_bit_url text;
+-- alter table photographers add column if not exists payment_paybox_url text;
+-- alter table photographers add column if not exists payment_bank_details text;
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: קישורי תשלום =====

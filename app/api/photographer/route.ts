@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { MAX_SHOOT_REMINDER_DAYS } from '@/lib/shoots';
 import { parseLogoUrl, parseNonNegativeInt, parsePrice, parseReminderDays } from '@/lib/galleryValidation';
+import { isMissingColumnError } from '@/lib/gender';
+import { parseBankDetails, parsePaymentUrl } from '@/lib/paymentLinks';
 
 // פרופיל הצלמת המחוברת - watermark_text (מוטבע על תצוגות התמונות, ראו
 // lib/watermark.ts), brand_color, logo_url, וברירות המחדל למילוי אוטומטי
@@ -30,7 +32,29 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'לא נמצא פרופיל צלם' }, { status: 404 });
   }
 
-  return NextResponse.json(photographer);
+  // קישורי תשלום (lib/paymentLinks.ts) - שאילתה נפרדת ו-best-effort, כדי
+  // שעמודות חסרות (מיגרציה שלא רצה, ראו סוף supabase/schema.sql) לא יפילו
+  // את טעינת ההגדרות כולה. payment_links_available=false -> הטופס מציג הודעה.
+  let paymentFields: Record<string, unknown> = {
+    payment_bit_url: null,
+    payment_paybox_url: null,
+    payment_bank_details: null,
+    payment_links_available: false,
+  };
+  try {
+    const { data: paymentRow, error: paymentError } = await supabase
+      .from('photographers')
+      .select('payment_bit_url, payment_paybox_url, payment_bank_details')
+      .eq('id', photographer.id)
+      .maybeSingle();
+    if (!paymentError && paymentRow) {
+      paymentFields = { ...paymentRow, payment_links_available: true };
+    }
+  } catch {
+    // בכוונה שקט - ראו הערה למעלה
+  }
+
+  return NextResponse.json({ ...photographer, ...paymentFields });
 }
 
 export async function PATCH(req: NextRequest) {
@@ -55,6 +79,9 @@ export async function PATCH(req: NextRequest) {
     reviewLink?: string | null;
     shootReminderDays?: number;
     shootDailySummaryEnabled?: boolean;
+    paymentBitUrl?: string | null;
+    paymentPayboxUrl?: string | null;
+    paymentBankDetails?: string | null;
   };
   try {
     body = await req.json();
@@ -157,14 +184,53 @@ export async function PATCH(req: NextRequest) {
     update.shoot_daily_summary_enabled = body.shootDailySummaryEnabled;
   }
 
-  const { error } = await supabase
-    .from('photographers')
-    .update(update)
-    .eq('auth_user_id', user.id);
-
-  if (error) {
-    return NextResponse.json({ error: 'עדכון הפרופיל נכשל' }, { status: 500 });
+  // קישורי תשלום ללקוחה (lib/paymentLinks.ts) - https בלבד. נאספים בנפרד
+  // ונשמרים בעדכון שני, כדי שעמודות חסרות לא יפילו את שמירת שאר ההגדרות.
+  const paymentUpdate: Record<string, unknown> = {};
+  if ('paymentBitUrl' in body) {
+    const r = parsePaymentUrl(body.paymentBitUrl, 'קישור לתשלום בביט');
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+    paymentUpdate.payment_bit_url = r.value;
+  }
+  if ('paymentPayboxUrl' in body) {
+    const r = parsePaymentUrl(body.paymentPayboxUrl, 'קישור PayBox');
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+    paymentUpdate.payment_paybox_url = r.value;
+  }
+  if ('paymentBankDetails' in body) {
+    const r = parseBankDetails(body.paymentBankDetails);
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+    paymentUpdate.payment_bank_details = r.value;
   }
 
-  return NextResponse.json({ success: true });
+  if (Object.keys(update).length > 0) {
+    const { error } = await supabase
+      .from('photographers')
+      .update(update)
+      .eq('auth_user_id', user.id);
+
+    if (error) {
+      return NextResponse.json({ error: 'עדכון הפרופיל נכשל' }, { status: 500 });
+    }
+  }
+
+  // paymentLinksSaved=false = העמודות עוד לא קיימות (צריך להריץ את המיגרציה) -
+  // שאר ההגדרות כבר נשמרו, אז לא מחזירים שגיאה, רק דגל שהטופס מציג כהודעה.
+  let paymentLinksSaved: boolean | undefined;
+  if (Object.keys(paymentUpdate).length > 0) {
+    const { error: paymentError } = await supabase
+      .from('photographers')
+      .update(paymentUpdate)
+      .eq('auth_user_id', user.id);
+    if (paymentError) {
+      if (!isMissingColumnError(paymentError)) {
+        return NextResponse.json({ error: 'שמירת קישורי התשלום נכשלה' }, { status: 500 });
+      }
+      paymentLinksSaved = false;
+    } else {
+      paymentLinksSaved = true;
+    }
+  }
+
+  return NextResponse.json({ success: true, ...(paymentLinksSaved === undefined ? {} : { paymentLinksSaved }) });
 }
