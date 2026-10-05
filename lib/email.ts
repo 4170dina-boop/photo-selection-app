@@ -2,6 +2,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { toHebrewDateString } from '@/lib/hebrewDate';
 import { formatShootDateLabel, formatShootTime } from '@/lib/shoots';
 import { DEFAULT_CLIENT_GENDER, gt, type Gender } from '@/lib/gender';
+import { DEFAULT_LANG, formatDateWithHebrew, formatGalleryDate, langDir, t, type Lang, type MessageKey } from '@/lib/i18n';
 
 // שליחת מייל דרך Resend (REST API ישיר, בלי SDK נוסף). אם RESEND_API_KEY לא
 // מוגדר - לא זורקים שגיאה, רק מדלגים ומדפיסים אזהרה. כך גם app/api/cron/tick/route.ts
@@ -190,6 +191,15 @@ export function safeHref(url: string | null | undefined): string | null {
   }
 }
 
+// ערכים דינמיים בתוך תבנית מתורגמת - כולם עוברים escapeHtml (התבנית עצמה
+// מהמילון, lib/i18n, ומותר בה <b>).
+function tm(lang: Lang, key: MessageKey, params: Record<string, string | number | null | undefined> = {}, gender?: Gender | null): string {
+  const escaped: Record<string, string> = {};
+  for (const [k, v] of Object.entries(params)) escaped[k] = escapeHtml(v);
+  if (typeof params.count === 'number') return t(lang, key, { ...escaped, count: params.count }, gender);
+  return t(lang, key, escaped, gender);
+}
+
 // עטיפת HTML אחידה לכל המיילים - כרטיס לבן ממורכז על רקע בהיר (לא הרקע הכהה
 // של האתר עצמו: תוכנות מייל רבות מתעלמות/דורסות CSS מורכב, ורקע כהה עם טקסט
 // שחזוי-אוטומטית עלול להיראות שבור אצל חלק מהנמענים) עם באנר עליון כהה+זהב
@@ -197,8 +207,10 @@ export function safeHref(url: string | null | undefined): string | null {
 // וכפתור קריאה-לפעולה בגרדיאנט הזהב של goldButtonStyle - כדי שהמייל ירגיש
 // כהמשך ישיר של חוויית האתר, לא כמו מייל אוטומטי גנרי.
 // headerText/ctaText הם טקסט רגיל (מנוטרלים כאן), bodyHtml הוא HTML שכל
-// ערך דינמי בו כבר עבר escapeHtml אצל הקורא.
-function wrapEmailHtml(params: { headerText: string; bodyHtml: string; ctaText?: string; ctaUrl?: string }): string {
+// ערך דינמי בו כבר עבר escapeHtml אצל הקורא. lang קובע dir/lang ואת שורת
+// התחתית (ברירת מחדל עברית - כל המיילים לצלמת).
+function wrapEmailHtml(params: { headerText: string; bodyHtml: string; ctaText?: string; ctaUrl?: string; lang?: Lang }): string {
+  const lang = params.lang ?? DEFAULT_LANG;
   const href = safeHref(params.ctaUrl);
   const cta =
     params.ctaText && href
@@ -216,7 +228,7 @@ function wrapEmailHtml(params: { headerText: string; bodyHtml: string; ctaText?:
       : '';
 
   return `
-    <div dir="rtl" style="font-family: sans-serif; background: #f4f1ec; padding: 32px 16px;">
+    <div dir="${langDir(lang)}" lang="${lang}" style="font-family: sans-serif; background: #f4f1ec; padding: 32px 16px;">
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e7e0d5;">
         <tr>
           <td style="background: #0f1626; padding: 20px 28px; text-align: center;">
@@ -231,7 +243,7 @@ function wrapEmailHtml(params: { headerText: string; bodyHtml: string; ctaText?:
         </tr>
         <tr>
           <td style="padding: 16px 28px; text-align: center; border-top: 1px solid #eee6d8; color: #9a8f7d; font-size: 12px;">
-            נשלח דרך אזור צלמים ✨
+            ${escapeHtml(t(lang, 'mail.footer'))}
           </td>
         </tr>
       </table>
@@ -245,17 +257,23 @@ function wrapEmailHtml(params: { headerText: string; bodyHtml: string; ctaText?:
 // על הקוד: הקשה/לחיצה ארוכה בוחרת את כל הקוד בבת אחת. בלי רווחים בתוך ה-span
 // כדי שהטקסט המועתק יהיה בדיוק הקוד. הקוד בכוונה לא בתוך הקישור (בקשת הצלמת,
 // וגם כדי שלא ידלוף ל-URL/לוגים).
-function accessCodeBadge(code: string): string {
+function accessCodeBadge(code: string, lang: Lang = DEFAULT_LANG): string {
   return `
     <div style="margin: 18px 0; padding: 12px 20px; background: #f4f1ec; border: 1px dashed #c98f89; border-radius: 8px; display: inline-block;">
-      <span style="font-size: 12px; color: #9a8f7d;">קוד גישה</span><br />
+      <span style="font-size: 12px; color: #9a8f7d;">${escapeHtml(t(lang, 'mail.codeLabel'))}</span><br />
       <span dir="ltr" style="font-size: 22px; font-weight: 700; letter-spacing: 2px; color: #a06a63; font-family: monospace; user-select: all; -webkit-user-select: all;">${escapeHtml(code)}</span><br />
-      <span style="font-size: 11px; color: #9a8f7d;">לחיצה ארוכה על הקוד להעתקה</span>
+      <span style="font-size: 11px; color: #9a8f7d;">${escapeHtml(t(lang, 'mail.codeHint'))}</span>
     </div>
   `;
 }
 
-interface ExpiryReminderParams {
+// שפת המיילים ללקוח/ה = galleries.language (lib/i18n/galleryLanguage.ts);
+// חסר = עברית. מיילים לצלמת תמיד בעברית.
+interface ClientLanguageParam {
+  language?: Lang | null;
+}
+
+interface ExpiryReminderParams extends ClientLanguageParam {
   to: string;
   clientName: string;
   businessName: string;
@@ -266,27 +284,29 @@ interface ExpiryReminderParams {
 }
 
 export async function sendExpiryReminderEmail(params: ExpiryReminderParams): Promise<SendResult> {
-  const expiresDate = toHebrewDateString(new Date(params.expiresAt));
+  const lang = params.language ?? DEFAULT_LANG;
+  const expiresDate = formatGalleryDate(lang, params.expiresAt);
 
   const html = wrapEmailHtml({
+    lang,
     headerText: params.businessName,
     bodyHtml: `
-      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
-      <p style="margin: 0 0 8px;">הגלריה שלך אצל <b>${escapeHtml(params.businessName)}</b> עומדת לפוג בתאריך <b>${escapeHtml(expiresDate)}</b>.</p>
-      <p style="margin: 0;">אם עוד לא סיימת לבחור תמונות, זה הזמן 💛</p>
-      ${accessCodeBadge(params.accessCode)}
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.hi', { name: params.clientName })}</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.reminder.expires', { business: params.businessName, date: expiresDate })}</p>
+      <p style="margin: 0;">${tm(lang, 'mail.reminder.nudge')}</p>
+      ${accessCodeBadge(params.accessCode, lang)}
     `,
-    ctaText: 'כניסה לגלריה',
+    ctaText: t(lang, 'mail.enterCta'),
     ctaUrl: params.galleryUrl,
   });
 
-  return sendEmail(params.to, `תזכורת: הגלריה שלך אצל ${params.businessName} עומדת לפוג`, html, {
+  return sendEmail(params.to, t(lang, 'mail.reminder.subject', { business: params.businessName }), html, {
     fromName: params.businessName,
     replyTo: params.replyTo,
   });
 }
 
-interface GalleryInviteParams {
+interface GalleryInviteParams extends ClientLanguageParam {
   to: string;
   clientName: string;
   businessName: string;
@@ -296,21 +316,23 @@ interface GalleryInviteParams {
 }
 
 export async function sendGalleryInviteEmail(params: GalleryInviteParams): Promise<SendResult> {
+  const lang = params.language ?? DEFAULT_LANG;
   const html = wrapEmailHtml({
+    lang,
     headerText: params.businessName,
     bodyHtml: `
-      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
-      <p style="margin: 0 0 8px;">הגלריה שלך אצל <b>${escapeHtml(params.businessName)}</b> מוכנה לבחירת תמונות! ✨</p>
-      ${accessCodeBadge(params.accessCode)}
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.hi', { name: params.clientName })}</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.invite.ready', { business: params.businessName })}</p>
+      ${accessCodeBadge(params.accessCode, lang)}
       <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">
-        אפשר לסמן "אולי"/"נבחר" על כל תמונה, ולהוסיף הערות. בסיום, ללחוץ "סיימתי לבחור" כדי לשלוח את הבחירה.
+        ${tm(lang, 'mail.invite.howto')}
       </p>
     `,
-    ctaText: 'כניסה לגלריה',
+    ctaText: t(lang, 'mail.enterCta'),
     ctaUrl: params.galleryUrl,
   });
 
-  return sendEmail(params.to, `הגלריה שלך אצל ${params.businessName} מוכנה!`, html, {
+  return sendEmail(params.to, t(lang, 'mail.invite.subject', { business: params.businessName }), html, {
     fromName: params.businessName,
     replyTo: params.replyTo,
   });
@@ -376,7 +398,7 @@ export async function sendQuotaReachedEmail(params: QuotaReachedParams): Promise
   return sendEmail(params.to, `${params.clientName} ${gt(gender, 'הגיעה', 'הגיע')} למכסת התמונות בחבילה`, html, { fromName: 'אזור צלמים ✨' });
 }
 
-interface FinalPhotosReadyParams {
+interface FinalPhotosReadyParams extends ClientLanguageParam {
   to: string;
   clientName: string;
   businessName: string;
@@ -390,18 +412,20 @@ interface FinalPhotosReadyParams {
 // התראה" ב-app/dashboard/galleries/[id]/edit/page.tsx), לא אוטומטית בכל
 // העלאה, כי הצלמת בדרך כלל מעלה כמה תמונות בכמה פעימות ולא רוצה הצפה של מיילים.
 export async function sendFinalPhotosReadyEmail(params: FinalPhotosReadyParams): Promise<SendResult> {
+  const lang = params.language ?? DEFAULT_LANG;
   const html = wrapEmailHtml({
+    lang,
     headerText: params.businessName,
     bodyHtml: `
-      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
-      <p style="margin: 0 0 8px;">התמונות הערוכות הסופיות שלך אצל <b>${escapeHtml(params.businessName)}</b> מוכנות! ✨</p>
-      <p style="margin: 0; font-size: 13px; color: #6b6156;">${escapeHtml(params.count)} תמונות מחכות לך לצפייה ולהורדה, באותו קישור וקוד גישה שכבר יש לך.</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.hi', { name: params.clientName })}</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.final.ready', { business: params.businessName })}</p>
+      <p style="margin: 0; font-size: 13px; color: #6b6156;">${tm(lang, 'mail.final.count', { count: params.count })}</p>
     `,
-    ctaText: 'כניסה לגלריה',
+    ctaText: t(lang, 'mail.enterCta'),
     ctaUrl: params.galleryUrl,
   });
 
-  return sendEmail(params.to, `התמונות הסופיות שלך אצל ${params.businessName} מוכנות!`, html, {
+  return sendEmail(params.to, t(lang, 'mail.final.subject', { business: params.businessName }), html, {
     fromName: params.businessName,
     replyTo: params.replyTo,
   });
@@ -434,7 +458,7 @@ export async function sendOriginalsDeletionWarningEmail(params: OriginalsDeletio
   return sendEmail(params.to, `תמונות המקור של ${params.clientName} יימחקו בקרוב`, html, { fromName: 'אזור צלמים ✨' });
 }
 
-interface ClientSelectionSummaryParams {
+interface ClientSelectionSummaryParams extends ClientLanguageParam {
   to: string;
   clientName: string;
   businessName: string;
@@ -446,27 +470,31 @@ interface ClientSelectionSummaryParams {
 // בדיוק כמו sendSelectionCompleteEmail (לצלמת), רק תוכן שונה. נשלחת רק
 // ללקוחה עצמה (הבעלים) - לא לבני משפחה אחרים שרק תרמו קלט.
 export async function sendClientSelectionSummaryEmail(params: ClientSelectionSummaryParams): Promise<SendResult> {
+  const lang = params.language ?? DEFAULT_LANG;
+  // יישור הרשימה לפי כיוון השפה (תוכנות מייל לא תמיד מכירות padding-inline)
+  const side = langDir(lang) === 'rtl' ? 'right' : 'left';
   const list = params.filenames
-    .map((name) => `<li style="text-align: right; margin: 2px 0;">${escapeHtml(name)}</li>`)
+    .map((name) => `<li style="text-align: ${side}; margin: 2px 0;">${escapeHtml(name)}</li>`)
     .join('');
 
   const html = wrapEmailHtml({
+    lang,
     headerText: params.businessName,
     bodyHtml: `
-      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
-      <p style="margin: 0 0 8px;">הבחירה שלך אצל <b>${escapeHtml(params.businessName)}</b> נשלחה בהצלחה ✓ - ${params.filenames.length} תמונות:</p>
-      <ul style="margin: 12px auto; padding-right: 20px; text-align: right; display: inline-block; font-size: 13px; color: #4a4238;">${list}</ul>
-      <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">אין צורך לעשות עוד כלום, הצלמת תיצור איתך קשר להמשך.</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.hi', { name: params.clientName })}</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.summary.sent', { business: params.businessName, count: params.filenames.length })}</p>
+      <ul style="margin: 12px auto; padding-${side}: 20px; text-align: ${side}; display: inline-block; font-size: 13px; color: #4a4238;">${list}</ul>
+      <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">${tm(lang, 'mail.summary.next')}</p>
     `,
   });
 
-  return sendEmail(params.to, `הבחירה שלך אצל ${params.businessName} נשלחה בהצלחה`, html, {
+  return sendEmail(params.to, t(lang, 'mail.summary.subject', { business: params.businessName }), html, {
     fromName: params.businessName,
     replyTo: params.replyTo,
   });
 }
 
-interface ReviewRequestParams {
+interface ReviewRequestParams extends ClientLanguageParam {
   to: string;
   clientName: string;
   clientGender?: Gender | null;
@@ -480,20 +508,23 @@ interface ReviewRequestParams {
 // באמת יצאו, לא במתי הלקוחה סיימה לבחור. reviewLink מוגדר פעם אחת בהגדרות
 // (photographers.review_link) - ראו app/api/galleries/[id]/send-review-request.
 export async function sendReviewRequestEmail(params: ReviewRequestParams): Promise<SendResult> {
+  const lang = params.language ?? DEFAULT_LANG;
+  const gender = params.clientGender ?? DEFAULT_CLIENT_GENDER;
   const html = wrapEmailHtml({
+    lang,
     headerText: params.businessName,
     bodyHtml: `
-      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
-      <p style="margin: 0 0 8px;">מקווה ${gt(params.clientGender ?? DEFAULT_CLIENT_GENDER, 'שאת נהנית', 'שאתה נהנה')} מהתמונות! 💛</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.hi', { name: params.clientName })}</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.review.hope', {}, gender)}</p>
       <p style="margin: 0; font-size: 13px; color: #6b6156;">
-        אם יש לך רגע, ביקורת קצרה ממך תעזור לי המון להמשיך לצלם עוד אירועים כמו שלך.
+        ${tm(lang, 'mail.review.ask')}
       </p>
     `,
-    ctaText: 'כתיבת ביקורת',
+    ctaText: t(lang, 'mail.review.cta'),
     ctaUrl: params.reviewLink,
   });
 
-  return sendEmail(params.to, `אפשר לבקש ממך טובה קטנה, ${params.clientName}?`, html, {
+  return sendEmail(params.to, t(lang, 'mail.review.subject', { name: params.clientName }), html, {
     fromName: params.businessName,
     replyTo: params.replyTo,
   });
@@ -653,7 +684,7 @@ export async function sendExtensionRequestedEmail(params: ExtensionRequestedPara
   return sendEmail(params.to, `${who} ${params.clientName} ${asked} הארכה של ${daysText}`, html, { fromName: 'אזור צלמים ✨' });
 }
 
-interface ExtensionDecisionParams {
+interface ExtensionDecisionParams extends ClientLanguageParam {
   to: string;
   clientName: string;
   businessName: string;
@@ -666,26 +697,31 @@ interface ExtensionDecisionParams {
 // מודיעה ללקוחה על ההחלטה של הצלמת לגבי בקשת ההארכה - נשלחת מ-
 // app/api/galleries/[id]/extension-requests/[requestId] (אישור או דחייה).
 export async function sendExtensionDecisionEmail(params: ExtensionDecisionParams): Promise<SendResult> {
+  const lang = params.language ?? DEFAULT_LANG;
   const approvedWithDate = params.approved && !!params.newExpiresAt;
-  const dateText = approvedWithDate ? extensionDateText(params.newExpiresAt as string) : '';
+  // עברית/יידיש: לועזי + עברי (כמו extensionDateText); אחרות: לועזי לפי השפה
+  const dateText = approvedWithDate ? formatDateWithHebrew(lang, params.newExpiresAt as string) : '';
   const html = wrapEmailHtml({
-    headerText: params.businessName || 'אזור צלמים',
+    lang,
+    headerText: params.businessName || t(lang, 'mail.brand'),
     bodyHtml: approvedWithDate
       ? `
-      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
-      <p style="margin: 0 0 8px;">הצלמת האריכה את הבחירה עד <b>${escapeHtml(dateText)}</b> 💛</p>
-      <p style="margin: 0; font-size: 13px; color: #6b6156;">אפשר להמשיך לבחור באותו קישור וקוד גישה.</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.hi', { name: params.clientName })}</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.ext.approved', { date: dateText })}</p>
+      <p style="margin: 0; font-size: 13px; color: #6b6156;">${tm(lang, 'mail.ext.approvedNext')}</p>
     `
       : `
-      <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
-      <p style="margin: 0;">הפעם לא ניתן להאריך את תקופת הבחירה - כדאי לסיים לבחור עד התאריך שנקבע. לשאלות אפשר להשיב למייל הזה.</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.hi', { name: params.clientName })}</p>
+      <p style="margin: 0;">${tm(lang, 'mail.ext.declined')}</p>
     `,
-    ctaText: 'כניסה לגלריה',
+    ctaText: t(lang, 'mail.enterCta'),
     ctaUrl: params.galleryUrl,
   });
 
   const subject = approvedWithDate
-    ? `הצלמת האריכה את הבחירה עד ${dateText}`
-    : `עדכון לגבי בקשת ההארכה שלך${params.businessName ? ` אצל ${params.businessName}` : ''}`;
+    ? t(lang, 'mail.ext.subjectApproved', { date: dateText })
+    : params.businessName
+      ? t(lang, 'mail.ext.subjectDeclinedAt', { business: params.businessName })
+      : t(lang, 'mail.ext.subjectDeclined');
   return sendEmail(params.to, subject, html, { fromName: params.businessName || undefined, replyTo: params.replyTo });
 }

@@ -12,6 +12,7 @@ import {
 } from '@/lib/galleryLifecycle';
 import { applyRowGuard } from '@/lib/rowGuard';
 import { fetchClientGender, parseGenderInput, saveClientGender } from '@/lib/gender';
+import { fetchGalleryLanguageOrDefault, parseLanguageInput, saveGalleryLanguage } from '@/lib/i18n/galleryLanguage';
 
 // עריכה/מחיקה של גלריה קיימת, בדיוק כמו app/api/galleries/route.ts (יצירה) -
 // רץ עם session הצלם (לא service key), כך שה-RLS הקיים כבר דואג שאי אפשר
@@ -58,8 +59,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   // best-effort בנפרד מה-select הראשי - עמודה חסרה = 'f' (lib/gender.ts)
   const clientGender = await fetchClientGender(supabase, gallery.id);
+  // שפת הגלריה והמיילים ללקוח/ה - עמודה חסרה = 'he' (lib/i18n/galleryLanguage.ts)
+  const language = await fetchGalleryLanguageOrDefault(supabase, gallery.id);
 
-  return NextResponse.json({ ...gallery, client_gender: clientGender });
+  return NextResponse.json({ ...gallery, client_gender: clientGender, language });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -88,6 +91,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     reminderDays?: number | null;
     additionalInviteEmails?: unknown;
     clientGender?: unknown;
+    language?: unknown;
   };
   try {
     body = await req.json();
@@ -121,6 +125,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const parsedGender = parseGenderInput(body.clientGender);
   if (!parsedGender.ok) {
     return NextResponse.json({ error: parsedGender.error }, { status: 400 });
+  }
+
+  // שפת הגלריה (lib/i18n) - אופציונלי; חסר = לא משנים
+  const parsedLanguage = parseLanguageInput(body.language);
+  if (!parsedLanguage.ok) {
+    return NextResponse.json({ error: parsedLanguage.error }, { status: 400 });
   }
 
   // גלריה שה-cron סימן כ-expired חוזרת לפעילה כשהתוקף מוארך לעתיד או מוסר
@@ -226,6 +236,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const saved = await saveClientGender(supabase, gallery.id, parsedGender.value);
     if (saved === 'error') {
       return NextResponse.json({ error: 'שמירת לשון הפנייה נכשלה' }, { status: 500 });
+    }
+  }
+
+  // כמו לשון הפנייה - עדכון נפרד, עמודה חסרה ('missing-column') לא מפילה
+  if (parsedLanguage.value) {
+    const saved = await saveGalleryLanguage(supabase, gallery.id, parsedLanguage.value);
+    if (saved === 'error') {
+      return NextResponse.json({ error: 'שמירת שפת הגלריה נכשלה' }, { status: 500 });
     }
   }
 
