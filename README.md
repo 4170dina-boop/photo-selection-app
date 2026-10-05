@@ -16,7 +16,8 @@ middleware.ts                                → מרענן session ומגן ע�
 app/login/page.tsx                           → מסך התחברות/הרשמה לצלם (Supabase Auth)
 app/login/forgot-password/page.tsx           → בקשת קישור לאיפוס סיסמה (resetPasswordForEmail)
 app/login/reset-password/page.tsx            → קביעת סיסמה חדשה (updateUser, אחרי session מסוג recovery)
-app/auth/callback/route.ts                   → יעד לקישור אימות המייל אחרי הרשמה, וגם לקישור איפוס הסיסמה
+app/auth/callback/route.ts                   → יעד לקישור אימות המייל אחרי הרשמה (לוגיקה ב-lib/authCallback.ts)
+app/auth/callback/reset/route.ts             → יעד לקישור איפוס הסיסמה (נתיב קבוע, בלי query string)
 app/dashboard/layout.tsx                     → מעטפת לדפי הצלם (כותרת + כפתור התנתקות)
 app/api/verify-access/route.ts               → אימות קוד גישה של לקוחה (צד שרת, service key) + יצירת session חתום
 app/api/gallery/[id]/route.ts                → טעינת תמונות/בחירות/חבילה של הלקוחה (service key + signed URLs)
@@ -64,26 +65,48 @@ app/api/gallery/[id]/ai-picks/route.ts       → "עזרי לי לבחור" - Cl
 
 **חשוב להגדיר בפרויקט Supabase (Authentication → URL Configuration):**
 - Site URL: `http://localhost:3000` (ובפרודקשן - הדומיין האמיתי)
-- Redirect URLs: להוסיף `http://localhost:3000/auth/callback` (וגם את הדומיין בפרודקשן)
+- Redirect URLs: להוסיף **בדיוק** את שתי הכתובות האלה (וגם את המקבילות בדומיין בפרודקשן):
+  - `http://localhost:3000/auth/callback` - קישור אישור ההרשמה
+  - `http://localhost:3000/auth/callback/reset` - קישור איפוס הסיסמה
+  - בפרודקשן: `https://<הדומיין>/auth/callback` ו-`https://<הדומיין>/auth/callback/reset`
+
+Supabase משווה את כתובת ההפניה לרשימה הזו כולל ה-query string; כתובת שלא
+תואמת "נופלת" בשקט ל-Site URL. לכן הקוד שולח את שתי הכתובות בלי query string
+משלו (היעד אחרי ההרשמה הוא `/dashboard/galleries` כברירת מחדל, ואחרי האיפוס -
+`/login/reset-password`, קבוע בנתיב). כרשת ביטחון, אם בכל זאת מגיע `?code=` לדף
+הבית (`app/page.tsx`), הוא מועבר הלאה ל-`/auth/callback` במקום ללכת לאיבוד.
+
+אם קישור פג תוקף / כבר נוצל / נפתח בדפדפן אחר (PKCE), ה-callback מפנה ל-
+`/login?error=link_expired` (או ל-`/login/forgot-password?error=link_expired`
+בקישור איפוס) ומוצגת הודעה ברורה במקום "כלום לא קרה". צלמת שמנסה להתחבר לפני
+שאישרה את המייל רואה "המייל עוד לא אושר" עם כפתור לשליחה חוזרת של מייל האישור.
+
+כל פרמטר `?next=` (בדף ההתחברות, ב-callback וב-middleware) עובר דרך
+`lib/safeNext.ts` - מפוענח עם `new URL` מול ה-origin של האתר ונדחה אם הוא
+יוצא ממנו (כולל `//evil.com`, `/\evil.com`, `/%09/evil.com` וכו').
 
 אם רוצים לדלג על אימות מייל בזמן פיתוח מקומי, אפשר לכבות "Confirm email" תחת
 Authentication → Providers → Email — אז יש session מיד אחרי הרשמה, בלי הצורך
 בקישור אימות.
 
 **שחזור סיסמה**: קישור "שכחת סיסמה?" במסך ההתחברות מוביל ל-`/login/forgot-password`,
-ששולח `resetPasswordForEmail` עם `redirectTo` שמצביע חזרה ל-`/auth/callback` הקיים
-(עם `?next=/login/reset-password`) - אותו endpoint שכבר משמש לאימות הרשמה, רק עם
-יעד סיום שונה. שם, `/login/reset-password` קובע סיסמה חדשה דרך `updateUser`, כי יש
-כבר session מסוג recovery מהקוד שהוחלף. תמיד מוצגת הודעת הצלחה גנרית גם אם הכתובת
+ששולח `resetPasswordForEmail` עם `redirectTo` שמצביע ל-`/auth/callback/reset` - אותה
+לוגיקה בדיוק כמו `/auth/callback` (`lib/authCallback.ts`), רק עם יעד סיום קבוע
+`/login/reset-password` ובלי query string, כדי שיתאים בדיוק לרשימת ה-Redirect URLs.
+שם, `/login/reset-password` קובע סיסמה חדשה דרך `updateUser`, כי יש כבר session
+מסוג recovery מהקוד שהוחלף. אם אין session (קישור שפג או גלישה ישירה לדף), מוצגת
+הודעה שהקישור פג תוקף עם קישור לבקשת קישור חדש. תמיד מוצגת הודעת הצלחה גנרית גם אם הכתובת
 לא רשומה, כדי לא לחשוף אילו מיילים קיימים במערכת (user enumeration). **שימו לב**:
 Supabase דוחה כתובות בדומיינים שמורים כמו `example.com` עם שגיאת `email_address_invalid`
 (אין להם שרת מייל אמיתי) - זה תקין ולא קשור לקוד; עם דומיין רגיל (gmail.com וכו') זה עובד.
 
 **שינוי סיסמה יזום**: בנוסף לשחזור סיסמה (מעל), צלמת מחוברת יכולה גם לשנות
 סיסמה בלי לעבור דרך המייל - קטע "שינוי סיסמה" בתחתית `app/dashboard/settings/page.tsx`.
-אותה קריאת `updateUser({ password })` בדיוק כמו ב-`/login/reset-password`, רק
-שכאן ה-session הוא session רגיל (לא "recovery" מקישור במייל) - Supabase מאפשר
-`updateUser` על כל session מאומת, לא רק recovery, כך שאין צורך בסיסמה הישנה.
+Supabase מאפשר `updateUser({ password })` על כל session מאומת, בלי הסיסמה
+הישנה - ולכן כאן הטופס דורש גם את **הסיסמה הנוכחית**, ומאמת אותה קודם עם
+`signInWithPassword` לפני העדכון (כדי שמי שתפסה מחשב פתוח לא תוכל להשתלט על
+החשבון). ב-`/login/reset-password` אין דרישה כזו - שם ה-session הוא "recovery"
+מקישור במייל, שהוא עצמו ההוכחה לבעלות.
 
 ## יצירת גלריה חדשה
 
@@ -204,7 +227,9 @@ npm run dev
 לגמרי משני הטריגרים למעלה. מסומן ידנית ב-`/dashboard/admin` (עמוד ניהול
 פנימי, לא מקושר מהתפריט - גישה רק דרך URL ישיר) אחרי שצלמת שילמה על מנוי
 (Grow) - ראו `app/api/admin/*`. מוגן משני כיוונים: ה-API של הניהול בודק
-`ADMIN_EMAIL` (משתנה סביבה, לא טבלה ב-DB), וטריגר `protect_is_unlimited`
+`ADMIN_EMAIL` (משתנה סביבה, לא טבלה ב-DB; השוואה בלי רישיות/רווחים, ורק
+למייל מאומת - `email_confirmed_at`. אופציונלית גם `ADMIN_USER_ID`, שכשהוא
+מוגדר חייב להתאים ל-id של המשתמשת - ראו `lib/adminCheck.ts`), וטריגר `protect_is_unlimited`
 מוודא שרק חיבור עם `service_role` (לא הצלמת עצמה דרך session רגיל) יכול
 לשנות את השדה - אחרת כל צלמת הייתה יכולה לפתוח את קונסולת הדפדפן ולסמן את
 עצמה כ"ללא הגבלה" בעצמה.

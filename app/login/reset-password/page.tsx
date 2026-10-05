@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { theme, inputStyle, goldButtonStyle } from '@/lib/theme';
 
@@ -11,6 +12,13 @@ export default function ResetPasswordPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // null = עוד בודקים; false = אין session (קישור שפג/נפתח בדפדפן אחר/גלישה ישירה)
+  const [hasSession, setHasSession] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => setHasSession(Boolean(data.user)));
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -44,6 +52,20 @@ export default function ResetPasswordPage() {
       <div style={{ maxWidth: 360, width: '100%', direction: 'rtl', textAlign: 'center', padding: '2rem' }}>
         <h1 style={{ fontSize: 22, marginBottom: '1.5rem', color: theme.gold }}>קביעת סיסמה חדשה</h1>
 
+        {hasSession === null && <p style={{ color: theme.textMuted }}>רגע...</p>}
+
+        {hasSession === false && (
+          <>
+            <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.75rem 1rem', borderRadius: 8 }}>
+              קישור האיפוס פג תוקף או שכבר נעשה בו שימוש. בקשי קישור חדש ונסי שוב.
+            </p>
+            <Link href="/login/forgot-password" style={{ display: 'block', marginTop: '1.25rem', color: theme.gold }}>
+              שליחת קישור איפוס חדש
+            </Link>
+          </>
+        )}
+
+        {hasSession && (
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
           <input
             type="password"
@@ -67,6 +89,7 @@ export default function ResetPasswordPage() {
             {loading ? 'שומרת...' : 'עדכון סיסמה'}
           </button>
         </form>
+        )}
 
         {error && (
           <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1.25rem' }}>

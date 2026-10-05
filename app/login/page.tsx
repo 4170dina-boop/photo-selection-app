@@ -5,6 +5,14 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { theme, inputStyle, goldButtonStyle } from '@/lib/theme';
+import { resolveSafeNext } from '@/lib/safeNext';
+import {
+  callbackErrorMessage,
+  classifySignInError,
+  isRateLimitError,
+  RATE_LIMIT_MESSAGE,
+  SIGN_IN_ERROR_MESSAGES,
+} from '@/lib/authErrors';
 
 export default function LoginPage() {
   return (
@@ -14,39 +22,69 @@ export default function LoginPage() {
   );
 }
 
-const SAFE_DEFAULT_NEXT = '/dashboard/galleries';
-
-// מוודא ש-next הוא נתיב פנימי יחסי, לא הפניה לאתר חיצוני - אותה בעיה בדיוק
-// כמו ב-app/auth/callback/route.ts (?next=//evil.com או ?next=https://evil.com),
-// רק כאן בצד לקוח: מספיק לבדוק "/" יחיד בהתחלה (לא "//" - protocol-relative).
-function isSafeNext(next: string): boolean {
-  return next.startsWith('/') && !next.startsWith('//');
+// יעד קישור האישור במייל אחרי הרשמה. בלי query string משלנו במכוון: Supabase
+// בודק את emailRedirectTo מול רשימת ה-Redirect URLs המורשים (ראו README), ו-
+// /auth/callback ממילא ממשיך ל-/dashboard/galleries כברירת מחדל.
+function signupRedirectUrl(): string {
+  return `${window.location.origin}/auth/callback`;
 }
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const rawNext = searchParams.get('next');
-  const next = rawNext && isSafeNext(rawNext) ? rawNext : SAFE_DEFAULT_NEXT;
+  const linkError = callbackErrorMessage(searchParams.get('error'));
+
+  // מחושב רק בזמן לחיצה (בדפדפן) - lib/safeNext.ts צריך את ה-origin האמיתי
+  function safeNext(): string {
+    return resolveSafeNext(rawNext, window.location.origin);
+  }
 
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [businessName, setBusinessName] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(linkError ?? '');
   const [confirmMessage, setConfirmMessage] = useState('');
+  // מתמלא כשההתחברות נכשלה כי המייל עוד לא אושר - מציג כפתור "שליחה חוזרת"
+  const [unconfirmedEmail, setUnconfirmedEmail] = useState('');
+  const [resending, setResending] = useState(false);
 
   function switchMode(newMode: 'login' | 'signup') {
     setMode(newMode);
     setError('');
     setConfirmMessage('');
+    setUnconfirmedEmail('');
+  }
+
+  async function handleResendConfirmation() {
+    if (!unconfirmedEmail) return;
+    setResending(true);
+    setError('');
+    const supabase = createClient();
+    const { error: resendError } = await supabase.auth.resend({
+      type: 'signup',
+      email: unconfirmedEmail,
+      options: { emailRedirectTo: signupRedirectUrl() },
+    });
+    setResending(false);
+
+    if (resendError) {
+      console.error('resend confirmation failed', resendError);
+      setError(isRateLimitError(resendError) ? RATE_LIMIT_MESSAGE : 'שליחת מייל האישור נכשלה, נסי שוב בעוד רגע');
+      return;
+    }
+
+    setUnconfirmedEmail('');
+    setConfirmMessage('שלחנו שוב את מייל האישור. בדקי את תיבת הדואר (וגם את תיקיית הספאם).');
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
     setConfirmMessage('');
+    setUnconfirmedEmail('');
     setLoading(true);
 
     const supabase = createClient();
@@ -56,11 +94,14 @@ function LoginForm() {
       setLoading(false);
 
       if (signInError) {
-        setError('אימייל או סיסמה שגויים');
+        const kind = classifySignInError(signInError);
+        if (kind === 'generic') console.error('signInWithPassword failed', signInError);
+        if (kind === 'email_not_confirmed') setUnconfirmedEmail(email);
+        setError(SIGN_IN_ERROR_MESSAGES[kind]);
         return;
       }
 
-      router.push(next);
+      router.push(safeNext());
       router.refresh();
       return;
     }
@@ -70,18 +111,29 @@ function LoginForm() {
     const { data, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { business_name: businessName || 'ללא שם' } },
+      options: {
+        data: { business_name: businessName || 'ללא שם' },
+        // בלי זה Supabase שולח את הקישור ל-Site URL, ולא ל-/auth/callback שמחליף את הקוד ל-session
+        emailRedirectTo: signupRedirectUrl(),
+      },
     });
     setLoading(false);
 
     if (signUpError) {
-      setError(signUpError.message === 'User already registered' ? 'כתובת המייל כבר רשומה' : 'שגיאה בהרשמה');
+      if (signUpError.code === 'user_already_exists' || signUpError.message === 'User already registered') {
+        setError('כתובת המייל כבר רשומה');
+      } else if (isRateLimitError(signUpError)) {
+        setError(RATE_LIMIT_MESSAGE);
+      } else {
+        console.error('signUp failed', signUpError);
+        setError('שגיאה בהרשמה');
+      }
       return;
     }
 
     if (data.session) {
       // אימות מייל כבוי בפרויקט - יש session מיד
-      router.push(next);
+      router.push(safeNext());
       router.refresh();
       return;
     }
@@ -170,6 +222,20 @@ function LoginForm() {
           <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1.25rem' }}>
             {error}
           </p>
+        )}
+        {unconfirmedEmail && (
+          <button
+            type="button"
+            onClick={handleResendConfirmation}
+            disabled={resending}
+            style={{
+              marginTop: '0.75rem', background: 'transparent', border: `1px solid ${theme.border}`,
+              color: theme.text, borderRadius: 8, padding: '0.5rem 1rem', cursor: 'pointer',
+              opacity: resending ? 0.6 : 1,
+            }}
+          >
+            {resending ? 'שולחת...' : 'שליחה חוזרת של מייל האישור'}
+          </button>
         )}
         {confirmMessage && (
           <p style={{ background: theme.successBg, color: theme.successText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1.25rem' }}>
