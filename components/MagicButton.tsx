@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import JSZip from 'jszip';
 import { theme, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
+import { makeUniqueFilenames, resolveStatusByFilename, downloadSummaryMessage, type SortStatus } from '@/lib/downloadNames';
 
 // הרחבת טיפוסים - File System Access API עוד לא בטיפוסי TS הרשמיים באופן מלא
 declare global {
@@ -16,6 +17,7 @@ interface MagicButtonProps {
 }
 
 interface SelectedPhoto {
+  id: string;
   filename: string;
   url: string;
   // תמונת מתנה (lib/gifts.ts) - כלולה אוטומטית, נכנסת לתיקיית Gift ב-ZIP
@@ -23,6 +25,7 @@ interface SelectedPhoto {
 }
 
 interface PhotoWithStatus {
+  id: string;
   filename: string;
   status: 'selected' | 'maybe' | 'gift' | null;
 }
@@ -40,14 +43,17 @@ export default function MagicButton({ galleryId }: MagicButtonProps) {
   const [status, setStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [copiedCount, setCopiedCount] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
+  // הודעת סיכום ל-ZIP ("הורדו X מתוך Y...") ואזהרה על שמות כפולים בכפתור הקסם
+  const [doneMsg, setDoneMsg] = useState('');
+  const [lastAction, setLastAction] = useState<'magic' | 'zip'>('magic');
 
   const isSupported = typeof window !== 'undefined' && !!window.showDirectoryPicker;
 
-  async function fetchSelectedPhotos(): Promise<SelectedPhoto[]> {
+  async function fetchSelectedPhotos(): Promise<{ photos: SelectedPhoto[]; missingCount: number }> {
     const res = await fetch(`/api/galleries/${galleryId}/selected-photos`);
     if (!res.ok) throw new Error('שליפת התמונות שנבחרו נכשלה');
     const data = await res.json();
-    return data.photos ?? [];
+    return { photos: data.photos ?? [], missingCount: data.missingCount ?? 0 };
   }
 
   async function fetchPhotosByStatus(): Promise<PhotoWithStatus[]> {
@@ -69,12 +75,18 @@ export default function MagicButton({ galleryId }: MagicButtonProps) {
 
     try {
       setStatus('running');
+      setLastAction('magic');
+      setDoneMsg('');
 
       const sourceDirHandle = await window.showDirectoryPicker({ mode: 'read' });
       const destDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
 
       const photos = await fetchPhotosByStatus();
-      const statusByFilename = new Map(photos.map((p) => [p.filename, p.status ?? 'extras']));
+      // סטטוס ממופה לפי photo id; כשכמה תמונות חולקות שם קובץ נבחר הסטטוס
+      // ה"חזק" ביותר (ההתאמה לקובץ המקומי היא לפי שם בלבד) ומציגים אזהרה.
+      const { statusByFilename, duplicateFilenames } = resolveStatusByFilename(
+        photos.map((p) => ({ id: p.id, filename: p.filename, status: p.status }))
+      );
 
       // נוצרות רק לפי צורך (create: true) כדי לא להשאיר תיקיות ריקות אם קטגוריה כלשהי לא רלוונטית
       const subDirHandles = new Map<string, any>();
@@ -93,7 +105,7 @@ export default function MagicButton({ galleryId }: MagicButtonProps) {
         const matchedStatus = statusByFilename.get(entry.name);
         if (!matchedStatus) continue;
 
-        const folderName = FOLDER_BY_STATUS[matchedStatus as 'selected' | 'maybe' | 'gift' | 'extras'];
+        const folderName = FOLDER_BY_STATUS[matchedStatus as SortStatus];
         const subDirHandle = await getSubDirHandle(folderName);
 
         const file = await entry.getFile();
@@ -105,6 +117,11 @@ export default function MagicButton({ galleryId }: MagicButtonProps) {
       }
 
       setCopiedCount(count);
+      setDoneMsg(
+        duplicateFilenames.length > 0
+          ? `שימי לב: ${duplicateFilenames.length} שמות קבצים מופיעים יותר מפעם אחת בגלריה (למשל ${duplicateFilenames[0]}) - כדאי לבדוק אותם ידנית.`
+          : ''
+      );
       setStatus('done');
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -122,19 +139,70 @@ export default function MagicButton({ galleryId }: MagicButtonProps) {
   async function handleZipDownload() {
     try {
       setStatus('running');
+      setLastAction('zip');
+      setDoneMsg('');
 
-      const selectedPhotos = await fetchSelectedPhotos();
+      const { photos: selectedPhotos, missingCount } = await fetchSelectedPhotos();
       if (selectedPhotos.length === 0) {
         setStatus('error');
-        setErrorMsg('אין עדיין תמונות שנבחרו בגלריה הזו.');
+        setErrorMsg(
+          missingCount > 0
+            ? `${missingCount} התמונות שנבחרו כבר לא קיימות באחסון (המקור נמחק) - אין מה להוריד.`
+            : 'אין עדיין תמונות שנבחרו בגלריה הזו.'
+        );
         return;
       }
 
+      // שמות ייחודיים בתוך ה-ZIP - שני קבצים עם אותו original_filename היו דורסים זה את זה
+      const zipPaths = makeUniqueFilenames(
+        selectedPhotos.map((p) => (p.isGift ? `${FOLDER_BY_STATUS.gift}/${p.filename}` : p.filename))
+      );
+
+      // URLs טריים לפי photo id, אם החתימות פגו באמצע ההורדה (403 מ-R2).
+      // מוגבל לכמה רענונים כדי לא להיכנס ללולאה אם משהו אחר שבור.
+      const urlById = new Map(selectedPhotos.map((p) => [p.id, p.url]));
+      let refreshesLeft = 3;
+      async function refreshUrls() {
+        refreshesLeft--;
+        const fresh = await fetchSelectedPhotos();
+        for (const p of fresh.photos) urlById.set(p.id, p.url);
+      }
+
+      async function tryFetch(url: string | undefined): Promise<Response | null> {
+        if (!url) return null;
+        try {
+          return await fetch(url);
+        } catch {
+          return null; // שגיאת רשת - נספר ככישלון
+        }
+      }
+
       const zip = new JSZip();
-      for (const photo of selectedPhotos) {
-        const res = await fetch(photo.url);
-        if (!res.ok) continue;
-        zip.file(photo.isGift ? `${FOLDER_BY_STATUS.gift}/${photo.filename}` : photo.filename, await res.blob());
+      let downloaded = 0;
+      let failed = 0;
+      for (let i = 0; i < selectedPhotos.length; i++) {
+        const photo = selectedPhotos[i];
+        let res = await tryFetch(urlById.get(photo.id));
+        if (res && res.status === 403 && refreshesLeft > 0) {
+          try {
+            await refreshUrls();
+            res = await tryFetch(urlById.get(photo.id));
+          } catch {
+            // הרענון עצמו נכשל - נשארים עם התשובה המקורית (403) ונספור ככישלון
+          }
+        }
+        if (!res || !res.ok) {
+          failed++;
+          continue;
+        }
+        zip.file(zipPaths[i], await res.blob());
+        downloaded++;
+      }
+
+      if (downloaded === 0) {
+        setStatus('error');
+        setErrorMsg(`אף תמונה לא הורדה (${downloadSummaryMessage(0, failed, missingCount)}). נסי שוב.`);
+        return;
       }
 
       const blob = await zip.generateAsync({ type: 'blob' });
@@ -145,9 +213,12 @@ export default function MagicButton({ galleryId }: MagicButtonProps) {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(blobUrl);
+      // ביטול מיידי אחרי click() יכול לבטל את ההורדה לפני שהדפדפן התחיל לקרוא
+      // את ה-blob (נצפה ב-Safari/Firefox) - דוחים כדי לתת להורדה להתחיל.
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
 
-      setCopiedCount(selectedPhotos.length);
+      setCopiedCount(downloaded);
+      setDoneMsg(downloadSummaryMessage(downloaded, failed, missingCount));
       setStatus('done');
     } catch (err) {
       console.error(err);
@@ -165,7 +236,7 @@ export default function MagicButton({ galleryId }: MagicButtonProps) {
         <p style={{ fontSize: 12, color: theme.textFaint, marginTop: '0.5rem' }}>
           "כפתור הקסם" (מיון אוטומטי מול תיקייה מקומית) זמין רק ב-Chrome או Edge.
         </p>
-        {status === 'done' && <p style={{ color: theme.successText, marginTop: '0.5rem' }}>הורדו {copiedCount} תמונות!</p>}
+        {status === 'done' && <p style={{ color: theme.successText, marginTop: '0.5rem' }}>{doneMsg || `הורדו ${copiedCount} תמונות!`}</p>}
         {status === 'error' && <p style={{ color: theme.errorText, marginTop: '0.5rem' }}>{errorMsg}</p>}
       </div>
     );
@@ -181,10 +252,14 @@ export default function MagicButton({ galleryId }: MagicButtonProps) {
           📦 הורדה כ-ZIP
         </button>
       </div>
-      {status === 'done' && (
-        <p style={{ color: theme.successText }}>
-          הועברו {copiedCount} תמונות בהצלחה, ממוינות לתיקיות Selected / Maybe / Gift / Extras!
-        </p>
+      {status === 'done' && lastAction === 'zip' && <p style={{ color: theme.successText }}>{doneMsg}</p>}
+      {status === 'done' && lastAction === 'magic' && (
+        <>
+          <p style={{ color: theme.successText }}>
+            הועברו {copiedCount} תמונות בהצלחה, ממוינות לתיקיות Selected / Maybe / Gift / Extras!
+          </p>
+          {doneMsg && <p style={{ color: theme.textFaint, fontSize: 13 }}>{doneMsg}</p>}
+        </>
       )}
       {status === 'error' && <p style={{ color: theme.errorText }}>{errorMsg}</p>}
     </div>

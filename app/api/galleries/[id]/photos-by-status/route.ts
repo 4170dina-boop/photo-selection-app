@@ -59,7 +59,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // 'gift' נפרד (תיקיית Gift בכפתור הקסם) במקום להיעלם ב-Extras.
   const giftIds = new Set((await fetchGiftPhotos(supabaseAdmin, [params.id])).map((g) => g.id));
 
+  // id נשלח כדי ש-MagicButton ימפה סטטוס לפי תמונה ולא לפי שם קובץ (שמות כפולים
+  // בגלריה היו דורסים זה את זה בשקט).
   const photos = (photosData ?? []).map((photo) => ({
+    id: photo.id as string,
     filename: photo.original_filename as string,
     status: giftIds.has(photo.id)
       ? ('gift' as const)

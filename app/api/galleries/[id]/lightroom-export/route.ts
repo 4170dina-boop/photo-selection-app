@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { mergeGiftPhotosIntoExport } from '@/lib/gifts';
+import { buildCsv, attachmentContentDisposition } from '@/lib/csv';
 
 // מייצא CSV עם שם קובץ + סטטוס + דירוג כוכבים מספרי (5=נבחר, 3=אולי) - Lightroom
 // ו-Capture One לא קוראים את טבלת ה-selections שלנו, אבל יש להם פלאגינים/סקריפטים
@@ -16,13 +17,6 @@ const RATING_BY_STATUS: Record<string, number> = { selected: 5, maybe: 3 };
 const STATUS_LABEL: Record<string, string> = { selected: 'Selected', maybe: 'Maybe' };
 const GIFT_LABEL = 'Gift';
 const GIFT_RATING = 5;
-
-function escapeCsvField(value: string): string {
-  if (/[",\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient();
@@ -84,19 +78,14 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     r.isGift ? GIFT_RATING : RATING_BY_STATUS[r.status],
   ]);
 
-  const csvLines = [
-    'שם קובץ,סטטוס,דירוג',
-    ...rows.map(([filename, label, rating]) => `${escapeCsvField(filename)},${label},${rating}`),
-  ];
-  // BOM כדי ש-Excel יזהה UTF-8 נכון (בלי זה עברית מוצגת כג'יבריש בפתיחה ישירה)
-  const csv = '﻿' + csvLines.join('\r\n');
+  const csv = buildCsv(['שם קובץ', 'סטטוס', 'דירוג'], rows);
 
   const clientName = (gallery as any).clients?.full_name ?? 'גלריה';
 
   return new NextResponse(csv, {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="lightroom-${encodeURIComponent(clientName)}.csv"`,
+      'Content-Disposition': attachmentContentDisposition(`lightroom-${clientName}.csv`, 'lightroom.csv'),
     },
   });
 }
