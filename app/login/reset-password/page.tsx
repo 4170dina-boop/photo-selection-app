@@ -43,7 +43,7 @@ export default function ResetPasswordPage() {
       return;
     }
 
-    router.push('/dashboard/galleries');
+    router.push('/dashboard/today');
     router.refresh();
   }
 

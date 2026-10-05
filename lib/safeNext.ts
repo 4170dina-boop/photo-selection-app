@@ -5,7 +5,8 @@
 // לפרסר ה-URL של הדפדפן/Node לפענח את המחרוזת בדיוק כמו שהדפדפן יפענח אותה
 // בהפניה, ודורשים שהתוצאה תישאר באותו origin.
 
-export const SAFE_DEFAULT_NEXT = '/dashboard/galleries';
+// מסך "היום" (app/dashboard/today) - דף הנחיתה של הצלמת אחרי התחברות
+export const SAFE_DEFAULT_NEXT = '/dashboard/today';
 
 // יעדים שאסור להפנות אליהם אחרי התחברות - /login עצמו היה יוצר לולאת הפניות
 // ב-middleware (צלמת מחוברת על /login?next=/login).

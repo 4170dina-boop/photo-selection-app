@@ -40,10 +40,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             padding: '1rem 1.5rem', borderBottom: `1px solid ${theme.border}`,
           }}
         >
-          <Link href="/dashboard/galleries" style={{ fontWeight: 'bold', color: theme.gold, textDecoration: 'none' }}>
+          <Link href="/dashboard/today" style={{ fontWeight: 'bold', color: theme.gold, textDecoration: 'none' }}>
             ✨ אזור צלמים
           </Link>
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <Link href="/dashboard/today" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+              היום
+            </Link>
             <Link href="/dashboard/galleries" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
               הגלריות שלי
             </Link>

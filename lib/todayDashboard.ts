@@ -42,6 +42,21 @@ export interface TodayGallery {
   pendingExtension: { id: string; days: number; createdAt: string | null } | null;
 }
 
+// שורה כפי שמגיעה מ-app/api/dashboard/today (עם פרטי תצוגה)
+export interface TodayGalleryRow extends TodayGallery {
+  clientName: string;
+  includedPhotos: number;
+}
+
+export interface TodayShoot {
+  id: string;
+  shoot_date: string;
+  start_time: string;
+  location: string;
+  gallery_id: string | null;
+  clientName: string;
+}
+
 function timeOf(iso: string | null | undefined): number | null {
   if (!iso) return null;
   const t = new Date(iso).getTime();
