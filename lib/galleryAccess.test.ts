@@ -4,6 +4,8 @@ import {
   checkGalleryWritable,
   decideIdentify,
   evaluateGalleryWritable,
+  evaluateOwnerClaim,
+  ownerEmailMatches,
   isGalleryExpired,
   resolveGalleryViewAccess,
 } from './galleryAccess';
@@ -87,6 +89,76 @@ describe('decideIdentify', () => {
       kind: 'reject',
       status: 500,
     });
+  });
+});
+
+describe('ownerEmailMatches', () => {
+  it('matches case-insensitively and ignores surrounding whitespace', () => {
+    expect(ownerEmailMatches('Dina@Gmail.com', '  dina@gmail.COM ')).toBe(true);
+  });
+
+  it('rejects a different email', () => {
+    expect(ownerEmailMatches('dina@gmail.com', 'dina@gmail.co')).toBe(false);
+    expect(ownerEmailMatches('dina@gmail.com', 'other@gmail.com')).toBe(false);
+  });
+
+  it('never matches when either side is empty/missing', () => {
+    expect(ownerEmailMatches('', '')).toBe(false);
+    expect(ownerEmailMatches(null, null)).toBe(false);
+    expect(ownerEmailMatches('dina@gmail.com', '   ')).toBe(false);
+    expect(ownerEmailMatches('  ', 'dina@gmail.com')).toBe(false);
+  });
+});
+
+describe('evaluateOwnerClaim', () => {
+  const now = new Date('2026-10-05T12:00:00Z');
+  const noLock = { failed_access_attempts: 0, locked_until: null };
+
+  it('accepts the registered email', () => {
+    expect(
+      evaluateOwnerClaim({ lockout: noLock, registeredEmail: 'dina@gmail.com', providedEmail: 'DINA@gmail.com', now })
+    ).toEqual({ kind: 'ok' });
+  });
+
+  it('reports a wrong email as mismatch (to be counted as a failed attempt)', () => {
+    expect(
+      evaluateOwnerClaim({ lockout: noLock, registeredEmail: 'dina@gmail.com', providedEmail: 'x@gmail.com', now })
+    ).toEqual({ kind: 'mismatch' });
+  });
+
+  it('blocks even the correct email while locked out', () => {
+    const locked = { failed_access_attempts: 5, locked_until: '2026-10-05T12:10:00Z' };
+    expect(
+      evaluateOwnerClaim({ lockout: locked, registeredEmail: 'dina@gmail.com', providedEmail: 'dina@gmail.com', now })
+    ).toEqual({ kind: 'locked' });
+  });
+
+  it('allows again after the lockout ended', () => {
+    const ended = { failed_access_attempts: 5, locked_until: '2026-10-05T11:50:00Z' };
+    expect(
+      evaluateOwnerClaim({ lockout: ended, registeredEmail: 'dina@gmail.com', providedEmail: 'dina@gmail.com', now })
+    ).toEqual({ kind: 'ok' });
+  });
+
+  it('treats a missing/blank email as missing, not as a failed attempt', () => {
+    expect(evaluateOwnerClaim({ lockout: noLock, registeredEmail: 'dina@gmail.com', providedEmail: undefined, now })).toEqual({
+      kind: 'missing',
+    });
+    expect(evaluateOwnerClaim({ lockout: noLock, registeredEmail: 'dina@gmail.com', providedEmail: '  ', now })).toEqual({
+      kind: 'missing',
+    });
+  });
+
+  it('fails closed when the client has no registered email', () => {
+    expect(evaluateOwnerClaim({ lockout: noLock, registeredEmail: '', providedEmail: 'dina@gmail.com', now })).toEqual({
+      kind: 'no_registered_email',
+    });
+  });
+
+  it('treats a non-string email (malformed body) as missing', () => {
+    expect(
+      evaluateOwnerClaim({ lockout: null, registeredEmail: 'dina@gmail.com', providedEmail: 42 as unknown as string, now })
+    ).toEqual({ kind: 'missing' });
   });
 });
 

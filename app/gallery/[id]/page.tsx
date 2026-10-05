@@ -461,6 +461,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [joiningAsGuest, setJoiningAsGuest] = useState(false);
   const [guestNameInput, setGuestNameInput] = useState('');
+  // "כן, זאת אני" דורש גם את המייל שהצלמת רשמה (נבדק בשרת, identify/route.ts)
+  const [confirmingOwner, setConfirmingOwner] = useState(false);
+  const [ownerEmailInput, setOwnerEmailInput] = useState('');
   const [identifying, setIdentifying] = useState(false);
   const [identityError, setIdentityError] = useState('');
 
@@ -836,7 +839,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
   }
 
-  async function confirmIdentity(body: { asOwner: true } | { displayName: string }) {
+  async function confirmIdentity(body: { asOwner: true; ownerEmail: string } | { displayName: string }) {
     setIdentityError('');
     setIdentifying(true);
 
@@ -914,17 +917,74 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             👋 היי{registeredName ? `, ${registeredName}` : ''}!
           </p>
 
-          {!joiningAsGuest ? (
+          {confirmingOwner ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (ownerEmailInput.trim()) confirmIdentity({ asOwner: true, ownerEmail: ownerEmailInput });
+              }}
+            >
+              <label htmlFor="owner-email" style={{ display: 'block', color: theme.textMuted, marginBottom: '0.75rem', fontSize: 14 }}>
+                רק לאימות - מה כתובת המייל שלך? (זו שאליה הצלמת שלחה את ההזמנה)
+              </label>
+              <input
+                id="owner-email"
+                type="email"
+                inputMode="email"
+                value={ownerEmailInput}
+                onChange={(e) => setOwnerEmailInput(e.target.value)}
+                placeholder="name@example.com"
+                style={{ ...inputStyle, width: '100%', marginBottom: '0.75rem', textAlign: 'center' }}
+                aria-describedby={identityError ? 'identity-error' : undefined}
+                aria-invalid={identityError ? true : undefined}
+                autoComplete="email"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                dir="ltr"
+                maxLength={254}
+                disabled={identifying}
+                autoFocus
+              />
+              <button
+                type="submit"
+                disabled={identifying || !ownerEmailInput.trim()}
+                aria-busy={identifying}
+                style={{ ...goldButtonStyle, width: '100%', opacity: identifying || !ownerEmailInput.trim() ? 0.6 : 1, marginBottom: '0.6rem' }}
+              >
+                {identifying ? 'בודקת...' : 'אישור וכניסה'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmingOwner(false);
+                  setIdentityError('');
+                }}
+                style={{ ...outlineButtonStyle, width: '100%' }}
+              >
+                חזרה
+              </button>
+            </form>
+          ) : !joiningAsGuest ? (
             <>
               <p style={{ color: theme.textMuted, marginBottom: '1.25rem', fontSize: 14 }}>מי נכנס/ת עכשיו לגלריה?</p>
               <button
-                onClick={() => confirmIdentity({ asOwner: true })}
+                onClick={() => {
+                  setIdentityError('');
+                  setConfirmingOwner(true);
+                }}
                 disabled={identifying}
                 style={{ ...goldButtonStyle, width: '100%', opacity: identifying ? 0.6 : 1, marginBottom: '0.6rem' }}
               >
-                {identifying ? 'רגע...' : `כן, זאת אני${registeredName ? ` (${registeredName})` : ''}`}
+                {`כן, זאת אני${registeredName ? ` (${registeredName})` : ''}`}
               </button>
-              <button onClick={() => setJoiningAsGuest(true)} style={{ ...outlineButtonStyle, width: '100%' }}>
+              <button
+                onClick={() => {
+                  setIdentityError('');
+                  setJoiningAsGuest(true);
+                }}
+                style={{ ...outlineButtonStyle, width: '100%' }}
+              >
                 לא, אני מישהי אחרת
               </button>
             </>
@@ -957,7 +1017,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           )}
 
           {identityError && (
-            <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.6rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
+            <p id="identity-error" role="alert" style={{ background: theme.errorBg, color: theme.errorText, padding: '0.6rem 1rem', borderRadius: 8, marginTop: '1rem' }}>
               {identityError}
             </p>
           )}

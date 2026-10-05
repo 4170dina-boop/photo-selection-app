@@ -59,6 +59,10 @@ create table clients (
   access_code text unique not null,
   failed_access_attempts int default 0,
   locked_until timestamptz,
+  -- מונה נפרד לניסיונות שגויים באימות "זאת אני" (מייל הלקוחה) - ראו
+  -- register_failed_owner_claim למטה ו-app/api/gallery/[id]/identify/route.ts
+  owner_claim_failed_attempts int default 0,
+  owner_claim_locked_until timestamptz,
   created_at timestamptz default now()
 );
 
@@ -961,6 +965,55 @@ begin
 end;
 $$ language plpgsql;
 
+-- אותה לוגיקה בדיוק (afterFailedAttempt ב-lib/accessLockout.ts), אבל על מונה
+-- נפרד: ניסיונות שגויים באימות "זאת אני" - הקלדת המייל של הלקוחה הרשומה
+-- (app/api/gallery/[id]/identify/route.ts). נפרד מ-failed_access_attempts כי
+-- verify-access מאפס את המונה ההוא בכל קוד נכון, ומי שמחזיק בקוד היה יכול
+-- לנחש מיילים בלי הגבלה ע"י הקלדה חוזרת של הקוד בין ניחוש לניחוש.
+create or replace function register_failed_owner_claim(p_client_id uuid)
+returns table (already_locked_out boolean, failed_attempts int, locked_until timestamptz) as $$
+declare
+  current_attempts int;
+  current_locked_until timestamptz;
+  new_attempts int;
+  new_locked_until timestamptz;
+begin
+  select c.owner_claim_failed_attempts, c.owner_claim_locked_until
+  into current_attempts, current_locked_until
+  from clients c
+  where c.id = p_client_id
+  for update;
+
+  if not found then
+    return query select false, 0, null::timestamptz;
+    return;
+  end if;
+
+  if current_locked_until is not null and current_locked_until > now() then
+    return query select true, coalesce(current_attempts, 0), current_locked_until;
+    return;
+  end if;
+
+  if current_locked_until is not null and current_locked_until <= now() then
+    current_attempts := 0;
+  end if;
+
+  new_attempts := coalesce(current_attempts, 0) + 1;
+  if new_attempts >= 5 then -- MAX_ATTEMPTS, ראו lib/accessLockout.ts
+    new_locked_until := now() + interval '15 minutes'; -- LOCKOUT_MINUTES
+  else
+    new_locked_until := null;
+  end if;
+
+  update clients
+  set owner_claim_failed_attempts = new_attempts,
+      owner_claim_locked_until = new_locked_until
+  where id = p_client_id;
+
+  return query select false, new_attempts, new_locked_until;
+end;
+$$ language plpgsql;
+
 -- אותה בעיה בדיוק (read-then-write על מונה ב-JS, בלי נעילה), אבל על מוני
 -- השימוש היומיים ב-AI (theme_gen_count/date ב-app/api/photographer/design-theme,
 -- ai_picks_count/date ב-app/api/gallery/[id]/ai-picks) - שם המרוץ הוא בין
@@ -1082,6 +1135,8 @@ revoke execute on function release_ai_picks_quota(uuid) from public, anon, authe
 revoke execute on function increment_gallery_view_count(uuid) from public, anon, authenticated;
 grant execute on function release_ai_picks_quota(uuid) to service_role;
 grant execute on function increment_gallery_view_count(uuid) to service_role;
+revoke execute on function register_failed_owner_claim(uuid) from public, anon, authenticated;
+grant execute on function register_failed_owner_claim(uuid) to service_role;
 -- ===== סוף הרשאות הרצה =====
 
 -- אם כבר הרצת גרסה קודמת של הסכמה בלי שלוש הפונקציות האטומיות למעלה
@@ -1827,3 +1882,59 @@ create policy "photographers read own logo" on storage.objects
 -- grant execute on function release_ai_picks_quota(uuid) to service_role;
 -- grant execute on function increment_gallery_view_count(uuid) to service_role;
 -- ===== סוף מיגרציה: API גלריית הלקוחה =====
+
+-- ===== מיגרציה: גורם אימות שני ל"זאת אני" (בעלת הגלריה) =====
+-- אם כבר הרצת גרסה קודמת בלי אימות המייל של הלקוחה הרשומה ב-"זאת אני"
+-- (app/api/gallery/[id]/identify/route.ts), מריצים גם את זה (הכל idempotent).
+-- בלי המיגרציה הזו אי אפשר להיכנס כבעלים מדפדפן חדש (השרת מחזיר 503), אבל
+-- כניסה כאורחת ודפדפנים שכבר מזוהים כבעלים ממשיכים לעבוד.
+-- alter table clients add column if not exists owner_claim_failed_attempts int default 0;
+-- alter table clients add column if not exists owner_claim_locked_until timestamptz;
+--
+-- create or replace function register_failed_owner_claim(p_client_id uuid)
+-- returns table (already_locked_out boolean, failed_attempts int, locked_until timestamptz) as $$
+-- declare
+--   current_attempts int;
+--   current_locked_until timestamptz;
+--   new_attempts int;
+--   new_locked_until timestamptz;
+-- begin
+--   select c.owner_claim_failed_attempts, c.owner_claim_locked_until
+--   into current_attempts, current_locked_until
+--   from clients c
+--   where c.id = p_client_id
+--   for update;
+--
+--   if not found then
+--     return query select false, 0, null::timestamptz;
+--     return;
+--   end if;
+--
+--   if current_locked_until is not null and current_locked_until > now() then
+--     return query select true, coalesce(current_attempts, 0), current_locked_until;
+--     return;
+--   end if;
+--
+--   if current_locked_until is not null and current_locked_until <= now() then
+--     current_attempts := 0;
+--   end if;
+--
+--   new_attempts := coalesce(current_attempts, 0) + 1;
+--   if new_attempts >= 5 then
+--     new_locked_until := now() + interval '15 minutes';
+--   else
+--     new_locked_until := null;
+--   end if;
+--
+--   update clients
+--   set owner_claim_failed_attempts = new_attempts,
+--       owner_claim_locked_until = new_locked_until
+--   where id = p_client_id;
+--
+--   return query select false, new_attempts, new_locked_until;
+-- end;
+-- $$ language plpgsql;
+--
+-- revoke execute on function register_failed_owner_claim(uuid) from public, anon, authenticated;
+-- grant execute on function register_failed_owner_claim(uuid) to service_role;
+-- ===== סוף מיגרציה: גורם אימות שני ל"זאת אני" =====
