@@ -5,6 +5,7 @@ import JSZip from 'jszip';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import { computePackageUsage } from '@/lib/gifts';
 import ExtensionCountdownBanner from '@/components/ExtensionCountdownBanner';
+import GiftCollage from '@/components/GiftCollage';
 import {
   type PendingAction,
   NOTE_MAX_LENGTH,
@@ -2406,6 +2407,18 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           <p style={{ color: theme.textFaint, fontSize: 12, marginTop: '1rem' }}>
             ✓ אפשר עדיין לצפות בתמונות למטה, אבל לא לשנות את הבחירה.
           </p>
+          {/* קולאז' מתנה אוטומטי (components/GiftCollage.tsx) - נשאר זמין במסך
+              הזה כל עוד הגלריה פתוחה לצפייה, לא רק מיד אחרי הסיום */}
+          <GiftCollage
+            photos={photos}
+            statuses={myStatuses}
+            photographerName={photographerName}
+            photographerLogo={photographerLogo}
+            accent={accent}
+            buttonStyle={primaryButtonStyle}
+            fileLabel={myParticipant?.displayName ?? photographerName}
+            refreshPhotos={async () => (await refreshGallerySilently())?.photos ?? null}
+          />
         </div>
       )}
 
