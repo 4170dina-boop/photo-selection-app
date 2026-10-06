@@ -54,6 +54,10 @@ create table photographers (
   payment_bit_url text,
   payment_paybox_url text,
   payment_bank_details text,
+  -- "אמצעי תשלום שאת מקבלת" (lib/paymentMethods.ts): מערך {type, enabled, text}
+  -- של bank/cash/check/phone/bit/paybox. null = טרם נשמר - הקוד נגזר אז
+  -- מ-payment_bit_url/payment_paybox_url/payment_bank_details למעלה.
+  payment_methods jsonb check (payment_methods is null or jsonb_typeof(payment_methods) = 'array'),
   created_at timestamptz default now()
 );
 
@@ -115,6 +119,10 @@ create table galleries (
   -- + (תמונות שנבחרו מעבר ל-included_photos) × extra_photo_price - כך שהסכום
   -- מתעדכן לבד כשהלקוחה בוחרת עוד תמונות. ראו computePaymentSummary ב-lib/payments.ts.
   amount_due_override numeric(10,2) check (amount_due_override is null or amount_due_override >= 0),
+  -- איך הלקוחה בחרה לשלם ("איך נוח לך לשלם?", components/ClientPayButton.tsx,
+  -- app/api/gallery/[id]/payment-choice) - נכתב רק בשרת עם service_role.
+  client_payment_choice text check (client_payment_choice is null or client_payment_choice in ('bank', 'cash', 'check', 'phone', 'bit', 'paybox')),
+  client_payment_choice_at timestamptz,
   -- מתי עבודת הרקע היומית (app/api/cron/tick/route.ts) מחקה את קבצי המקור
   -- (הלא-ערוכים) של הגלריה הזו מ-Storage, כדי לפנות מקום 30 יום אחרי מסירה -
   -- null = עדיין לא נוקתה (או שעדיין לא עברו 30 יום מ-delivered_at). לא
@@ -3024,3 +3032,19 @@ create policy "photographers read own logo" on storage.objects
 --
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: הקשחת מגבלות קצב, עמודות פנימיות ומגבלות חשבון חינמי =====
+
+-- ===== מיגרציה: אמצעי תשלום ובחירת הלקוחה (payment_methods / client_payment_choice) =====
+-- להריץ פעם אחת על פרויקט קיים (הכל idempotent). עד שמריצים - הקוד לא נשבר:
+-- ההגדרות נקראות מהעמודות הישנות (ביט/PayBox/העברה בנקאית) ונשמרות אליהן,
+-- ובחירת הלקוחה פשוט לא נשמרת (היא עדיין רואה את פרטי התשלום).
+-- alter table photographers add column if not exists payment_methods jsonb;
+-- alter table photographers drop constraint if exists photographers_payment_methods_check;
+-- alter table photographers add constraint photographers_payment_methods_check
+--   check (payment_methods is null or jsonb_typeof(payment_methods) = 'array');
+-- alter table galleries add column if not exists client_payment_choice text;
+-- alter table galleries add column if not exists client_payment_choice_at timestamptz;
+-- alter table galleries drop constraint if exists galleries_client_payment_choice_check;
+-- alter table galleries add constraint galleries_client_payment_choice_check
+--   check (client_payment_choice is null or client_payment_choice in ('bank', 'cash', 'check', 'phone', 'bit', 'paybox'));
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: אמצעי תשלום ובחירת הלקוחה =====
