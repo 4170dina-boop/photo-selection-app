@@ -24,6 +24,8 @@ export const welcome: Section<typeof he> = {
   'hdr.exitCompare': '✕ ארויס פון פארגלייכן',
   'hdr.swipe': '⚡ שנעלע אויסוואל',
   'hdr.exitSwipe': '✕ ארויס פון שנעלע אויסוואל',
+  'hdr.more': '⋯ נאך',
+  'hdr.moreAria': 'נאך אקציעס',
   'hdr.selectedInPackage': 'אויסגעקליבן אינעם פעקעדזש',
   'hdr.viewed': 'איר האט דורכגעקוקט {seen} פון {total} בילדער',
   'hdr.viewedAria': 'בילדער וואס איר האט דורכגעקוקט',

@@ -13,6 +13,7 @@ import GalleryNavBar, { BurstBadge, BurstChooser } from '@/components/GalleryNav
 import { applyNavFilters, burstMembers } from '@/lib/galleryNav';
 import type { Chapter } from '@/lib/chapters';
 import LanguagePicker from '@/components/LanguagePicker';
+import GalleryMoreMenu, { type MoreMenuItem } from '@/components/GalleryMoreMenu';
 import {
   type Lang,
   type MessageKey,
@@ -2237,6 +2238,30 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // (לתצוגה המוגדלת יש פס משלה).
   const showBottomBar = isOwner && !isLocked && !enlargedId && !slideshowActive && !swipeMode && !compareViewOpen;
 
+  // "🪄 עזרי לי לבחור" - רק לבעלים כשהבחירה פתוחה (ראו handleAiPicks)
+  const aiPicksAvailable = !isLocked && isOwner && photos.length > 0;
+  // תפריט "⋯ עוד" (components/GalleryMoreMenu.tsx) - פעולות משניות במקום
+  // שורת כפתורים; השפה נוספת בתוך התפריט עצמו
+  const moreMenuItems: MoreMenuItem[] = [
+    {
+      key: 'compare',
+      label: compareMode ? tr('hdr.exitCompare') : tr('hdr.compare'),
+      onSelect: () => {
+        setCompareMode((prev) => !prev);
+        setCompareIds([]);
+        setCompareViewOpen(false);
+      },
+    },
+    ...(photos.length > 0 ? [{ key: 'slideshow', label: tr('act.slideshow'), onSelect: openSlideshow }] : []),
+    ...(aiPicksAvailable && ownerSelectedCount > 0
+      ? [{ key: 'ai', label: aiPicksRunning ? tr('act.aiRunning') : tr('act.aiHelp'), onSelect: handleAiPicks, disabled: aiPicksRunning }]
+      : []),
+    // האישור (window.confirm) נשאר בתוך clearAllSelections
+    ...(!isLocked && (mySelectedCount > 0 || maybeCount > 0)
+      ? [{ key: 'clear', label: clearingAll ? tr('act.clearing') : tr('act.clearAll'), onSelect: () => { clearAllSelections(); }, disabled: clearingAll, danger: true }]
+      : []),
+  ];
+
   // "צבע מותג": אם הצלמת לא הגדירה אחד בהגדרות, נשארים עם הפלטה המקורית
   // (theme.gold/goldBright) - ראו app/api/gallery/[id]/route.ts.
   const accent = brandColor ?? theme.goldBright;
@@ -2345,13 +2370,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           width: 34px; height: 34px; border-radius: 50%; background: ${theme.bg};
           display: flex; align-items: center; justify-content: center; transition: width 0.2s ease, height 0.2s ease;
         }
-        .gh-narrow { display: none; }
         @media (max-width: 640px) {
-          .gh { flex-wrap: nowrap; padding: 0.45rem 0.75rem; gap: 0.5rem; }
+          .gh { padding: 0.45rem 0.75rem; gap: 0.3rem 0.5rem; }
           .gh-start { flex-wrap: nowrap; gap: 0.4rem; }
-          .gh-who, .gh-wide { display: none; }
+          .gh-who { display: none; }
           .gh-count-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-          .gh-narrow { display: inline; }
           .gh-btn { min-height: 40px; min-width: 40px; padding: 0.3rem 0.6rem !important; font-size: 13px !important; }
           .gh[data-compact="true"] { padding: 0.2rem 0.75rem; }
           .gh[data-compact="true"] .gh-btn { min-height: 34px; min-width: 34px; padding: 0.15rem 0.5rem !important; }
@@ -2369,38 +2392,32 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               {tr('hdr.connectedAs', { name: myParticipant.displayName })}{isOwner ? '' : tr('hdr.family')}
             </span>
           )}
-          <button
-            className="gh-btn"
-            onClick={() => {
-              setCompareMode((prev) => !prev);
-              setCompareIds([]);
-            }}
-            aria-label={compareMode ? tr('hdr.exitCompare') : tr('hdr.compare')}
-            style={{
-              ...outlineButtonStyle,
-              borderColor: compareMode ? accent : theme.border, color: compareMode ? accent : theme.textMuted,
-            }}
-          >
-            <span className="gh-wide">{compareMode ? tr('hdr.exitCompare') : tr('hdr.compare')}</span>
-            <span className="gh-narrow" aria-hidden="true">{compareMode ? '✕' : '⇄'}</span>
-          </button>
+          {/* "⚡ בחירה מהירה" נשארת גלויה; כל השאר (השוואה, סקירה ברצף, ביטול
+              הכל, שפה) בתפריט "⋯ עוד" אחד - components/GalleryMoreMenu.tsx */}
           {!readOnly && (
           <button
             className="gh-btn"
             onClick={() => (swipeMode ? exitSwipeMode() : startSwipeMode(1))}
             disabled={isLocked || photos.length === 0}
-            aria-label={swipeMode ? tr('hdr.exitSwipe') : tr('hdr.swipe')}
             style={{
               ...outlineButtonStyle,
               borderColor: swipeMode ? accent : theme.border, color: swipeMode ? accent : theme.textMuted,
               opacity: isLocked || photos.length === 0 ? 0.5 : 1,
             }}
           >
-            <span className="gh-wide">{swipeMode ? tr('hdr.exitSwipe') : tr('hdr.swipe')}</span>
-            <span className="gh-narrow" aria-hidden="true">⚡</span>
+            {swipeMode ? tr('hdr.exitSwipe') : tr('hdr.swipe')}
           </button>
           )}
-          <LanguagePicker lang={lang} onChange={changeLang} accent={accent} />
+          <GalleryMoreMenu
+            label={tr('hdr.more')}
+            ariaLabel={tr('hdr.moreAria')}
+            items={moreMenuItems}
+            lang={lang}
+            onLangChange={changeLang}
+            languageLabel={tr('common.language')}
+            accent={accent}
+            buttonClassName="gh-btn"
+          />
         </div>
 
         {/* מונה אחד בלבד: "X/Y בחבילה" + טבעת אחוזים. הספירות "נבחר/אולי" של
@@ -2423,6 +2440,34 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             <div className="gh-ring-inner">{progressPct}%</div>
           </div>
         </div>
+
+        {/* מצב השוואה (נפתח מתפריט "⋯ עוד") - השורה בתוך הכותרת הדביקה, כדי
+            ש"השוואה כעת" ו"יציאה" יהיו זמינים מכל מקום בגריד */}
+        {compareMode && (
+          <div style={{ flexBasis: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: 13 }}>
+            <span role="status" style={{ color: theme.textMuted }}>
+              {tr('act.compareHint', { max: MAX_COMPARE, count: compareIds.length })}
+            </span>
+            {compareIds.length >= 2 && (
+              <button
+                onClick={() => setCompareViewOpen(true)}
+                style={{ ...primaryButtonStyle, padding: '0.4rem 1rem', minHeight: 40 }}
+              >
+                {tr('act.compareNow', { count: compareIds.length })}
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setCompareMode(false);
+                setCompareIds([]);
+                setCompareViewOpen(false);
+              }}
+              style={{ ...outlineButtonStyle, padding: '0.4rem 0.9rem', minHeight: 40 }}
+            >
+              {tr('act.exitCompare')}
+            </button>
+          </div>
+        )}
       </header>
 
       {(isOffline || pendingCount > 0) && (
@@ -2722,53 +2767,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       </p>
 
       <div style={{ padding: '0 1.5rem 1rem', textAlign: 'center' }}>
-        <button
-          onClick={() => {
-            setCompareMode((prev) => !prev);
-            setCompareIds([]);
-            setCompareViewOpen(false);
-          }}
-          style={{ ...outlineButtonStyle, marginTop: '0.5rem' }}
-        >
-          {compareMode ? tr('act.exitCompare') : tr('act.compareMany')}
-        </button>
-        {compareMode && (
-          <span style={{ marginInlineStart: '0.5rem', fontSize: 13, color: theme.textMuted }}>
-            {tr('act.compareHint', { max: MAX_COMPARE, count: compareIds.length })}
-          </span>
-        )}
-        {compareMode && compareIds.length >= 2 && (
-          <button
-            onClick={() => setCompareViewOpen(true)}
-            style={{ ...primaryButtonStyle, marginTop: '0.5rem', marginInlineStart: '0.5rem', padding: '0.5rem 1.1rem' }}
-          >
-            {tr('act.compareNow', { count: compareIds.length })}
-          </button>
-        )}
-
-        {photos.length > 0 && (
-          <button onClick={openSlideshow} style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginInlineStart: '0.5rem' }}>
-            {tr('act.slideshow')}
-          </button>
-        )}
-
-        {!isLocked && (mySelectedCount > 0 || maybeCount > 0) && (
-          <button
-            onClick={clearAllSelections}
-            disabled={clearingAll}
-            style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginInlineStart: '0.5rem', color: theme.errorText, opacity: clearingAll ? 0.6 : 1 }}
-          >
-            {clearingAll ? tr('act.clearing') : tr('act.clearAll')}
-          </button>
-        )}
-
-        {/* רק לבעלים - השרת מחזיר 403 לאורחים (עלות AI לצלמת), ראו app/api/gallery/[id]/ai-picks */}
-        {!isLocked && isOwner && photos.length > 0 && (
+        {/* "🪄 עזרי לי לבחור" גלוי רק כל עוד לבעלים אין אף בחירה - אחר כך הוא
+            בתפריט "⋯ עוד". רק לבעלים - השרת מחזיר 403 לאורחים (עלות AI לצלמת),
+            ראו app/api/gallery/[id]/ai-picks */}
+        {aiPicksAvailable && ownerSelectedCount === 0 && (
           <button
             onClick={handleAiPicks}
             disabled={aiPicksRunning}
             title={tr('act.aiTitle')}
-            style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginInlineStart: '0.5rem', borderColor: theme.gold, color: theme.gold, opacity: aiPicksRunning ? 0.6 : 1 }}
+            style={{ ...outlineButtonStyle, marginTop: '0.5rem', borderColor: theme.gold, color: theme.gold, opacity: aiPicksRunning ? 0.6 : 1 }}
           >
             {aiPicksRunning ? tr('act.aiRunning') : tr('act.aiHelp')}
           </button>

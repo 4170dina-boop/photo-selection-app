@@ -28,6 +28,8 @@ export const welcome: Section<typeof he> = {
   'hdr.exitCompare': '✕ Quitter la comparaison',
   'hdr.swipe': '⚡ Choix rapide',
   'hdr.exitSwipe': '✕ Quitter le choix rapide',
+  'hdr.more': '⋯ Plus',
+  'hdr.moreAria': 'Plus d’actions',
   'hdr.selectedInPackage': 'Choisies dans le forfait',
   'hdr.viewed': 'Vous avez vu {seen} photos sur {total}',
   'hdr.viewedAria': 'Photos déjà vues',

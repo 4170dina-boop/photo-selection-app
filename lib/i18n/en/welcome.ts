@@ -24,6 +24,8 @@ export const welcome: Section<typeof he> = {
   'hdr.exitCompare': '✕ Exit compare',
   'hdr.swipe': '⚡ Quick pick',
   'hdr.exitSwipe': '✕ Exit quick pick',
+  'hdr.more': '⋯ More',
+  'hdr.moreAria': 'More actions',
   'hdr.selectedInPackage': 'Selected in package',
   'hdr.viewed': "You've looked at {seen} of {total} photos",
   'hdr.viewedAria': "Photos you've looked at",

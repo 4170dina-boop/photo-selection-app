@@ -27,6 +27,8 @@ export const welcome = {
   'hdr.exitCompare': { f: '✕ צאי ממצב השוואה', m: '✕ צא ממצב השוואה', n: '✕ צא/י ממצב השוואה' },
   'hdr.swipe': '⚡ בחירה מהירה',
   'hdr.exitSwipe': { f: '✕ צאי מבחירה מהירה', m: '✕ צא מבחירה מהירה', n: '✕ צא/י מבחירה מהירה' },
+  'hdr.more': '⋯ עוד',
+  'hdr.moreAria': 'פעולות נוספות',
   'hdr.selectedInPackage': 'נבחרו במסגרת החבילה',
   'hdr.viewed': 'עברת על {seen} מתוך {total} תמונות',
   'hdr.viewedAria': 'תמונות שעברת עליהן',

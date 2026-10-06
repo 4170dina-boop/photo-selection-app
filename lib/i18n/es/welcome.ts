@@ -24,6 +24,8 @@ export const welcome: Section<typeof he> = {
   'hdr.exitCompare': '✕ Salir de comparar',
   'hdr.swipe': '⚡ Elección rápida',
   'hdr.exitSwipe': '✕ Salir de elección rápida',
+  'hdr.more': '⋯ Más',
+  'hdr.moreAria': 'Más acciones',
   'hdr.selectedInPackage': 'Elegidas del paquete',
   'hdr.viewed': 'Has visto {seen} de {total} fotos',
   'hdr.viewedAria': 'Fotos que ya viste',
