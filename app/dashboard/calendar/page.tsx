@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import { israelDateString, daysBetweenDateStrings } from '@/lib/israelTime';
@@ -113,6 +113,7 @@ export default function CalendarPage() {
     loadUpcoming();
   }, []);
 
+  const monthRequestRef = useRef(0);
   useEffect(() => {
     loadMonth(year, month);
   }, [year, month]);
@@ -157,11 +158,17 @@ export default function CalendarPage() {
   }
 
   async function loadMonth(y: number, m: number) {
+    // מעבר מהיר בין חודשים - תשובה ישנה שמגיעה אחרי החדשה לא דורסת אותה
+    const requestId = ++monthRequestRef.current;
     const { from, to } = monthRange(y, m);
-    const res = await fetch(`/api/shoots?from=${from}&to=${to}`);
-    if (res.ok) {
+    try {
+      const res = await fetch(`/api/shoots?from=${from}&to=${to}`);
+      if (!res.ok) return;
       const data = await res.json();
+      if (requestId !== monthRequestRef.current) return;
       setMonthShoots(data.shoots ?? []);
+    } catch {
+      // שגיאת רשת - החודש פשוט נשאר כמו שהוא
     }
   }
 

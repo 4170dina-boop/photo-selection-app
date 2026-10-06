@@ -184,6 +184,8 @@ export async function deleteObjects(keys: string[]): Promise<DeleteObjectsResult
 export interface R2Object {
   key: string;
   size: number;
+  // לניקוי מקור יתום ב-cron (רק אובייקטים ישנים מ-24 שעות)
+  lastModified?: Date;
 }
 
 // רשימת כל האובייקטים תחת prefix נתון - pagination אמיתי עם ContinuationToken
@@ -203,7 +205,7 @@ export async function listAllKeys(prefix?: string): Promise<R2Object[]> {
       new ListObjectsV2Command({ Bucket: R2_BUCKET_NAME, Prefix: prefix, ContinuationToken: continuationToken })
     );
     for (const obj of result.Contents ?? []) {
-      if (obj.Key) objects.push({ key: obj.Key, size: obj.Size ?? 0 });
+      if (obj.Key) objects.push({ key: obj.Key, size: obj.Size ?? 0, lastModified: obj.LastModified });
     }
     continuationToken = result.IsTruncated ? result.NextContinuationToken : undefined;
   } while (continuationToken);

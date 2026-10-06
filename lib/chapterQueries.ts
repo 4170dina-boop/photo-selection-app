@@ -5,6 +5,7 @@
 
 import { isMissingColumnError } from './gender';
 import { sortChapters, type Chapter } from './chapters';
+import { fetchAllPages } from './fetchAllPages';
 
 // טיפוס מינימלי במכוון - מתאים גם ל-service_role וגם ללקוח עם session (כמו lib/gender.ts).
 interface SupabaseLike {
@@ -43,26 +44,24 @@ export async function fetchPhotoNavFields(
   galleryId: string
 ): Promise<{ available: boolean; byPhoto: Map<string, PhotoNavFields> }> {
   const byPhoto = new Map<string, PhotoNavFields>();
+  let rows: any[];
   try {
-    // עד 10,000 תמונות - מעבר למגבלת ברירת המחדל של PostgREST (1000 שורות)
-    const pageSize = 1000;
-    for (let from = 0; from < 10000; from += pageSize) {
-      const { data, error } = await supabase
+    // כל התמונות, עמוד אחרי עמוד (lib/fetchAllPages) - בלי תקרה קבועה
+    rows = await fetchAllPages((from, to) =>
+      supabase
         .from('photos')
         .select('id, chapter_id, taken_at, phash')
         .eq('gallery_id', galleryId)
         .order('id', { ascending: true })
-        .range(from, from + pageSize - 1);
-      if (error) return { available: !isMissingChapterSchemaError(error), byPhoto };
-      (data ?? []).forEach((row: any) =>
-        byPhoto.set(row.id, { chapterId: row.chapter_id ?? null, takenAt: row.taken_at ?? null, phash: row.phash ?? null })
-      );
-      if (!data || data.length < pageSize) break;
-    }
-    return { available: true, byPhoto };
-  } catch {
-    return { available: false, byPhoto };
+        .range(from, to)
+    );
+  } catch (error) {
+    return { available: !isMissingChapterSchemaError(error as { code?: string; message?: string }), byPhoto };
   }
+  rows.forEach((row) =>
+    byPhoto.set(row.id, { chapterId: row.chapter_id ?? null, takenAt: row.taken_at ?? null, phash: row.phash ?? null })
+  );
+  return { available: true, byPhoto };
 }
 
 export async function fetchChapters(

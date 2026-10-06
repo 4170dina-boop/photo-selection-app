@@ -3,28 +3,33 @@
 // את ההיסט בפועל לכל תאריך נתון, כולל המעבר בין שעון קיץ (+3) לשעון חורף
 // (+2), בלי שנצטרך לשמור בעצמנו טבלת תאריכי מעבר.
 
-// היסט ה-UTC (בשעות, +2 או +3) שישראל נמצאת בו בפועל בתאריך היעד. משתמשים
-// בצהריים UTC של אותו תאריך כ"בדיקה" כדי להיות בטוחים שבודקים את היום
-// האזרחי הנכון בישראל (מעברי שעון קורים לפנות בוקר, רחוק מצהריים).
-function israelUtcOffsetHours(dateStr: string): number {
-  const probe = new Date(`${dateStr}T12:00:00Z`);
+// היסט ה-UTC (בשעות, +2 או +3) שישראל נמצאת בו בפועל ברגע נתון.
+function israelUtcOffsetAt(instant: Date): number {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Jerusalem',
     timeZoneName: 'shortOffset',
-  }).formatToParts(probe);
+  }).formatToParts(instant);
   const label = parts.find((p) => p.type === 'timeZoneName')?.value ?? 'GMT+3';
   const match = label.match(/GMT([+-]\d+)/);
   return match ? Number(match[1]) : 3;
+}
+
+// רגע UTC של תאריך+שעה מקומיים בישראל. ההיסט נבדק לשעה המקומית עצמה (לא
+// לצהריים): ניחוש ראשון לפי ההיסט בצהריים, ואז בדיקה חוזרת ברגע שיצא - כך
+// שביום המעבר (המעבר קורה לפנות בוקר) שעה שלפני המעבר מקבלת את ההיסט הישן.
+function israelLocalToDate(dateStr: string, time: string): Date {
+  const asUtcMs = Date.parse(`${dateStr}T${time}Z`);
+  const noonOffset = israelUtcOffsetAt(new Date(`${dateStr}T12:00:00Z`));
+  const guess = new Date(asUtcMs - noonOffset * 3600 * 1000);
+  const actualOffset = israelUtcOffsetAt(guess);
+  return actualOffset === noonOffset ? guess : new Date(asUtcMs - actualOffset * 3600 * 1000);
 }
 
 // סוף היום (23:59:59) בזמן ישראל האמיתי עבור תאריך "YYYY-MM-DD" (כפי שמגיע
 // מ-<input type="date">), כ-ISO string ב-UTC - במקום היסט קבוע (+03:00) שמניח
 // שעון קיץ כל השנה ומקצר את התוקף בשעה אחת בחצי מהשנה (שעון חורף, +02:00).
 export function israelEndOfDayIso(dateStr: string): string {
-  const offset = israelUtcOffsetHours(dateStr);
-  const sign = offset < 0 ? '-' : '+';
-  const hours = String(Math.abs(offset)).padStart(2, '0');
-  return new Date(`${dateStr}T23:59:59${sign}${hours}:00`).toISOString();
+  return israelLocalToDate(dateStr, '23:59:59').toISOString();
 }
 
 // תאריך "YYYY-MM-DD" לפי הלוח האזרחי בישראל, עבור רגע נתון - לשימוש בהשוואות
@@ -43,15 +48,12 @@ export function daysBetweenDateStrings(a: string, b: string): number {
 
 // רגע מדויק (ISO ב-UTC) של תאריך+שעה מקומיים בישראל - "YYYY-MM-DD" + "HH:MM"
 // (או "HH:MM:SS", כפי ש-Postgres מחזיר עמודת time). אותה גישה בדיוק כמו
-// israelEndOfDayIso למעלה: ההיסט נלקח לפי התאריך עצמו, כך ששעון קיץ/חורף
+// israelEndOfDayIso למעלה: ההיסט נלקח לפי השעה המקומית עצמה, כך ששעון קיץ/חורף
 // מטופל אוטומטית. משמש את lib/shoots.ts כדי לדעת אם צילום כבר התחיל.
 export function israelLocalToUtcIso(dateStr: string, timeStr: string): string {
-  const offset = israelUtcOffsetHours(dateStr);
-  const sign = offset < 0 ? '-' : '+';
-  const offsetHours = String(Math.abs(offset)).padStart(2, '0');
   const [hh = '00', mm = '00', ss = '00'] = timeStr.split(':');
   const time = `${hh.padStart(2, '0')}:${mm.padStart(2, '0')}:${ss.slice(0, 2).padStart(2, '0')}`;
-  return new Date(`${dateStr}T${time}${sign}${offsetHours}:00`).toISOString();
+  return israelLocalToDate(dateStr, time).toISOString();
 }
 
 // הוספת ימים לתאריך "YYYY-MM-DD" - חישוב לוחני טהור (חצות UTC כעזר בלבד,

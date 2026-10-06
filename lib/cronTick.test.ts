@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { isFreshPhotoKey } from './uploadPolicy';
+import { selectOrphanedOriginalKeys } from './cronTick';
+
 import {
   isCronAuthorized,
   resolveExpiryReminderDays,
@@ -194,5 +197,26 @@ describe('fetchAllPages', () => {
   it('returns the error of a failing page', async () => {
     const { error } = await fetchAllPages(async (from) => (from === 0 ? { data: [1, 2], error: null } : { data: null, error: { message: 'boom' } }), 2);
     expect(error).toEqual({ message: 'boom' });
+  });
+});
+
+describe('selectOrphanedOriginalKeys', () => {
+  const gid = '11111111-1111-1111-1111-111111111111';
+  const uuid = (n: number) => `22222222-2222-2222-2222-${String(n).padStart(12, '0')}`;
+  const now = new Date('2026-10-06T08:00:00Z');
+  const old = new Date('2026-10-04T08:00:00Z');
+  const fresh = new Date('2026-10-06T07:00:00Z');
+  it('picks only old, unreferenced original keys', () => {
+    const objects = [
+      { key: `${gid}/${uuid(1)}.jpg`, lastModified: old }, // יתום ישן - נמחק
+      { key: `${gid}/${uuid(2)}.jpg`, lastModified: old }, // רשום
+      { key: `${gid}/${uuid(3)}.jpg`, lastModified: fresh }, // חדש מדי
+      { key: `${gid}/${uuid(4)}.hd.jpg`, lastModified: old }, // לא מקור
+      { key: `${gid}/final/${uuid(5)}.jpg`, lastModified: old }, // מסירה
+      { key: `${gid}/${uuid(6)}.jpg` }, // בלי תאריך
+    ];
+    expect(selectOrphanedOriginalKeys(gid, objects, new Set([`${gid}/${uuid(2)}.jpg`]), now, isFreshPhotoKey)).toEqual([
+      `${gid}/${uuid(1)}.jpg`,
+    ]);
   });
 });

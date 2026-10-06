@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { israelEndOfDayIso, israelDateString, daysBetweenDateStrings, formatIsraelDate } from './israelTime';
+import { israelEndOfDayIso, israelLocalToUtcIso, israelDateString, daysBetweenDateStrings, formatIsraelDate } from './israelTime';
+
+describe('israelLocalToUtcIso on DST transition days', () => {
+  it('uses the offset in effect at the local time, not at noon', () => {
+    // 25.10.2026: שעון קיץ מסתיים ב-02:00 - 00:30 עוד ב-+3, 10:00 כבר ב-+2
+    expect(israelLocalToUtcIso('2026-10-25', '00:30')).toBe('2026-10-24T21:30:00.000Z');
+    expect(israelLocalToUtcIso('2026-10-25', '10:00')).toBe('2026-10-25T08:00:00.000Z');
+  });
+});
 
 describe('formatIsraelDate', () => {
   it('uses the Israel calendar date, not UTC, late in the UTC evening', () => {

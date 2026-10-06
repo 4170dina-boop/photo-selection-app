@@ -280,3 +280,32 @@ export function errorMessage(err: unknown): string {
   if (err && typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message);
   return String(err);
 }
+
+// ---------- ניקוי מקור יתום ב-R2 ----------
+
+// מקור שהועלה ל-R2 (presign-upload) אבל שורת photos לא נרשמה אף פעם (הטאב
+// נסגר, רשת נפלה) - נשאר בדלי לנצח ותופס מקום. אחרי 24 שעות ה-URL החתום
+// (שעה) מזמן פג, אז כבר אין רישום שעוד יכול להגיע.
+export const ORPHAN_MIN_AGE_MS = 24 * 60 * 60 * 1000;
+
+// רק keys בדיוק בפורמט של מקור חדש ({gid}/{uuid}.{ext}, isFreshPhotoKey) -
+// לא thumbs/hd/sm/final - שלא רשומים ב-photos.file_path ושנוצרו לפני 24 שעות לפחות.
+// אובייקט בלי lastModified לא נמחק (אי אפשר לדעת שהוא ישן מספיק).
+export function selectOrphanedOriginalKeys(
+  galleryId: string,
+  objects: { key: string; lastModified?: Date | null }[],
+  referencedPaths: Set<string>,
+  now: Date,
+  isFreshPhotoKey: (galleryId: string, key: unknown) => boolean
+): string[] {
+  const cutoff = now.getTime() - ORPHAN_MIN_AGE_MS;
+  return objects
+    .filter(
+      (o) =>
+        isFreshPhotoKey(galleryId, o.key) &&
+        !referencedPaths.has(o.key) &&
+        o.lastModified instanceof Date &&
+        o.lastModified.getTime() < cutoff
+    )
+    .map((o) => o.key);
+}

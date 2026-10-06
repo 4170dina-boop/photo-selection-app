@@ -26,7 +26,8 @@ import {
   type ClientDateRow,
 } from '@/lib/clientDates';
 import { toHebrewDateString } from '@/lib/hebrewDate';
-import { deleteObjects } from '@/lib/r2';
+import { deleteObjects, listAllKeys } from '@/lib/r2';
+import { isFreshPhotoKey } from '@/lib/uploadPolicy';
 import { applyRowGuard } from '@/lib/rowGuard';
 import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 import {
@@ -52,6 +53,7 @@ import {
   isMissingTableError,
   fetchAllPages,
   errorMessage,
+  selectOrphanedOriginalKeys,
 } from '@/lib/cronTick';
 import { fetchClientGender, isMissingColumnError } from '@/lib/gender';
 
@@ -148,6 +150,7 @@ export async function GET(req: NextRequest) {
   const shootReminders = await runStep(ctx, 'shootReminders', () => sendShootReminders(ctx));
   const shootSummaries = await runStep(ctx, 'shootSummaries', () => sendShootSummaries(ctx));
   const anniversaries = await runStep(ctx, 'anniversaryEmails', () => sendAnniversaryEmails(ctx));
+  const orphans = await runStep(ctx, 'orphanedOriginals', () => cleanupOrphanedOriginals(ctx));
 
   const failed = ctx.stepErrors.length > 0;
   return NextResponse.json(
@@ -160,6 +163,7 @@ export async function GET(req: NextRequest) {
       ...shootReminders,
       ...shootSummaries,
       ...anniversaries,
+      ...orphans,
       todayIsRestDay: ctx.todayIsRestDay,
       stoppedEarly: ctx.stoppedEarly,
       ...(failed ? { stepErrors: ctx.stepErrors } : {}),
@@ -240,6 +244,57 @@ async function clientSendBlockedToday(ctx: RunContext, photographerId: string | 
 // 2. גלריות שמתקרבות לתוקף ועוד לא נשלחה עליהן תזכורת - שולחים אחת (חד-פעמית).
 // כולל גלריות 'completed' שהצלמת פתחה מחדש לבחירה (reopened_for_selection_at) -
 // הלקוחה שוב בוחרת בהן, אז התזכורת רלוונטית.
+// 8. מקור יתום ב-R2: קובץ שעלה (presign-upload) אבל לא נרשם אף פעם ב-photos.
+// רק בגלריות שעוד אפשר להעלות אליהן (פעילות / נפתחו מחדש, המקור לא נוקה) -
+// ListObjects אחד לכל 1000 קבצים בגלריה, זול. רץ אחרון ועוצר בתקציב הזמן.
+async function cleanupOrphanedOriginals(ctx: RunContext) {
+  const { rows: galleries, error } = await fetchAllPages((from, to) =>
+    supabaseAdmin
+      .from('galleries')
+      .select('id')
+      .or(`status.in.(${ACTIVE_STATUSES.join(',')}),reopened_for_selection_at.not.is.null`)
+      .is('originals_cleaned_up_at', null)
+      .order('id', { ascending: true })
+      .range(from, to)
+  , PAGE_SIZE);
+  if (error) throw new Error(`שליפת גלריות לניקוי קבצים יתומים נכשלה: ${errorMessage(error)}`);
+
+  let orphanedOriginalsDeleted = 0;
+  for (const gallery of galleries) {
+    if (Date.now() > ctx.deadline) {
+      ctx.stoppedEarly = true;
+      break;
+    }
+    try {
+      const objects = await listAllKeys(`${gallery.id}/`);
+      if (!objects.some((o) => isFreshPhotoKey(gallery.id, o.key))) continue;
+
+      const { rows: photos, error: photosError } = await fetchAllPages((from, to) =>
+        supabaseAdmin
+          .from('photos')
+          .select('id, file_path')
+          .eq('gallery_id', gallery.id)
+          .order('id', { ascending: true })
+          .range(from, to)
+      , PAGE_SIZE);
+      // בלי רשימת תמונות מלאה לא מוחקים כלום - עדיף יתום מאשר מקור של תמונה אמיתית
+      if (photosError) throw photosError;
+
+      const referenced = new Set(photos.map((p) => p.file_path as string));
+      const orphans = selectOrphanedOriginalKeys(gallery.id, objects, referenced, ctx.now, isFreshPhotoKey);
+      if (orphans.length === 0) continue;
+
+      const result = await deleteObjects(orphans);
+      orphanedOriginalsDeleted += result.deletedCount;
+      if (result.failed.length) itemError(ctx, 'orphanedOriginals', gallery.id, `${result.failed.length} מחיקות נכשלו`);
+    } catch (err) {
+      itemError(ctx, 'orphanedOriginals', gallery.id, err);
+    }
+  }
+
+  return { orphanedOriginalsDeleted };
+}
+
 // גלריות דוגמה (galleries.is_sample, מאשף הפתיחה) - הלקוחה בהן היא הצלמת
 // עצמה, אז לא שולחים להן מיילים "ללקוחה" (תזכורת תפוגה, "לפני שנה").
 // best-effort בשאילתה נפרדת: עמודה חסרה (מיגרציה שלא רצה) = אין גלריות
