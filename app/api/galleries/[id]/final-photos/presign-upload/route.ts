@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getPresignedUploadUrl } from '@/lib/r2';
 import { buildFinalPhotoKey, validateUploadRequest } from '@/lib/uploadPolicy';
 import { canDeliverFinals, SELECTION_NOT_FINAL_MESSAGE } from '@/lib/galleryLifecycle';
+import { remainingDeliveredQuota, DELIVERED_LIMIT_MESSAGE } from '@/lib/deliveredPhotoLimit';
 
 // מקביל ל-.../photos/presign-upload/route.ts, אבל לתת-התיקייה final/ - מחליף
 // את ההעלאה הישירה של תמונות סופיות ב-handleUploadFinalPhotos
@@ -21,7 +22,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: photographer } = await supabase
     .from('photographers')
-    .select('id')
+    .select('id, is_unlimited')
     .eq('auth_user_id', user.id)
     .single();
 
@@ -49,6 +50,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const validation = validateUploadRequest(await req.json().catch(() => null));
   if (!validation.ok) {
     return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
+
+  // מגבלת חשבון חינמי לתמונות סופיות (lib/deliveredPhotoLimit.ts) - כבר כאן,
+  // לפני שהדפדפן מעלה בייטים ל-R2. האכיפה הסופית היא הטריגר
+  // enforce_delivered_photo_limit ב-DB (העלאות מקבילות יכולות לעבור יחד את
+  // הבדיקה הזו, ואז ה-insert נדחה).
+  const { count, error: countError } = await supabase
+    .from('delivered_photos')
+    .select('id', { count: 'exact', head: true })
+    .eq('gallery_id', gallery.id);
+  if (countError) {
+    return NextResponse.json({ error: 'בדיקת מכסת התמונות הסופיות נכשלה' }, { status: 500 });
+  }
+  if (remainingDeliveredQuota(count ?? 0, !!(photographer as { is_unlimited?: boolean }).is_unlimited) === 0) {
+    return NextResponse.json({ error: DELIVERED_LIMIT_MESSAGE }, { status: 403 });
   }
 
   const path = buildFinalPhotoKey(gallery.id, crypto.randomUUID(), validation.ext);

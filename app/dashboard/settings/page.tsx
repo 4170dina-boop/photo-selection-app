@@ -6,6 +6,7 @@ import PriceInput from '@/components/PriceInput';
 import { createClient } from '@/lib/supabase/client';
 import { classifySignInError, isRateLimitError, RATE_LIMIT_MESSAGE } from '@/lib/authErrors';
 import { parsePaymentUrl, PAYMENT_BANK_DETAILS_MAX_LENGTH } from '@/lib/paymentLinks';
+import { numberOrNull, missingNumberFields } from '@/lib/settingsForm';
 
 const DEFAULT_BRAND_COLOR = '#c98f89'; // theme.gold - הגוון הקבוע, מוצג כברירת מחדל בבורר הצבע
 const LOGO_BUCKET = 'photographer-logos';
@@ -183,8 +184,9 @@ export default function SettingsPage() {
     e.target.value = ''; // מאפשר לבחור שוב את אותו קובץ אם רוצים להעלות מחדש
     if (!file || !photographerId) return;
 
-    if (!file.type.startsWith('image/')) {
-      setLogoError('יש להעלות קובץ תמונה');
+    // אותם סוגים כמו allowed_mime_types של ה-bucket (supabase/schema.sql)
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      setLogoError('יש להעלות קובץ PNG, JPEG או WebP');
       return;
     }
     if (file.size > 2 * 1024 * 1024) {
@@ -213,7 +215,9 @@ export default function SettingsPage() {
     const res = await fetch('/api/photographer', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ watermarkText, brandColor, logoUrl: publicUrl }),
+      // רק logoUrl - בלי watermarkText/brandColor מהטופס, שאולי נערכו ועוד לא
+      // נשמרו (העלאת לוגו לא אמורה לשמור בשקט שינויים אחרים בטופס)
+      body: JSON.stringify({ logoUrl: publicUrl }),
     });
 
     setUploadingLogo(false);
@@ -233,7 +237,7 @@ export default function SettingsPage() {
     const res = await fetch('/api/photographer', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ watermarkText, brandColor, logoUrl: null }),
+      body: JSON.stringify({ logoUrl: null }),
     });
 
     setUploadingLogo(false);
@@ -264,6 +268,19 @@ export default function SettingsPage() {
       }
     }
 
+    // שדה מספרי ריק לא נשלח כ-0 (Number('') === 0) - מבקשים למלא אותו
+    const missing = missingNumberFields([
+      { label: 'תמונות כלולות בחבילה', value: defaultIncludedPhotos },
+      { label: 'מחיר החבילה', value: defaultBasePrice },
+      { label: 'מחיר לתמונה נוספת', value: defaultExtraPhotoPrice },
+      { label: 'ימים לפני תפוגה לשליחת תזכורת', value: reminderDaysDefault },
+      { label: 'ימים לפני צילום לשליחת תזכורת', value: shootReminderDays },
+    ]);
+    if (missing.length > 0) {
+      setError(`יש למלא מספר בשדות: ${missing.join(', ')}`);
+      return;
+    }
+
     setSaving(true);
 
     const res = await fetch('/api/photographer', {
@@ -272,12 +289,12 @@ export default function SettingsPage() {
       body: JSON.stringify({
         watermarkText,
         brandColor,
-        defaultIncludedPhotos: Number(defaultIncludedPhotos),
-        defaultBasePrice: Number(defaultBasePrice),
-        defaultExtraPhotoPrice: Number(defaultExtraPhotoPrice),
-        reminderDaysDefault: Number(reminderDaysDefault),
+        defaultIncludedPhotos: numberOrNull(defaultIncludedPhotos),
+        defaultBasePrice: numberOrNull(defaultBasePrice),
+        defaultExtraPhotoPrice: numberOrNull(defaultExtraPhotoPrice),
+        reminderDaysDefault: numberOrNull(reminderDaysDefault),
         reviewLink: reviewLink.trim() || null,
-        shootReminderDays: Number(shootReminderDays),
+        shootReminderDays: numberOrNull(shootReminderDays),
         shootDailySummaryEnabled,
         // נשלחים רק כשהעמודות קיימות - אחרת אין טעם (והשרת ממילא מדלג)
         ...(paymentLinksAvailable

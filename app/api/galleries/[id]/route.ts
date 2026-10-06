@@ -92,6 +92,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     additionalInviteEmails?: unknown;
     clientGender?: unknown;
     language?: unknown;
+    // expires_at כפי שנטען בטופס העריכה - מגן מפני טאב ישן שדורס הארכה שאושרה בינתיים
+    expectedExpiresAt?: string | null;
   };
   try {
     body = await req.json();
@@ -103,6 +105,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   if (!clientName?.trim() || !clientEmail?.trim() || body.includedPhotos == null) {
     return NextResponse.json({ error: 'חסרים פרטים (שם לקוחה, אימייל ומספר תמונות בחבילה)' }, { status: 400 });
+  }
+  if (!isValidEmail(clientEmail.trim())) {
+    return NextResponse.json({ error: 'כתובת המייל של הלקוחה לא תקינה' }, { status: 400 });
   }
 
   // כל המספרים/התאריך נבדקים לפני הכתיבה הראשונה (clients) - כדי ששגיאת
@@ -143,6 +148,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // לסמן expired בין הקריאה לכתיבה, ואז הארכת תוקף הייתה נשמרת בלי להחזיר את
   // הסטטוס - גלריה עם תוקף עתידי שנשארת expired. 0 שורות = הסטטוס השתנה -
   // קוראים מחדש ומחשבים שוב.
+  // תוקף שנטען בטופס (expectedExpiresAt): אם הוא כבר לא התוקף בשורה - מישהו
+  // שינה אותו בינתיים (אישור בקשת הארכה, טאב אחר) - 409 במקום לדרוס. הגנה
+  // נוספת בתוך ה-UPDATE המותנה למטה (expires_at בתוך ה-guard). לקוח ישן
+  // שלא שולח את השדה - בלי הבדיקה (כמו קודם).
+  const hasExpected = Object.prototype.hasOwnProperty.call(body, 'expectedExpiresAt');
+  const expectedExpiresAt = typeof body.expectedExpiresAt === 'string' ? body.expectedExpiresAt : null;
+  const staleResponse = () =>
+    NextResponse.json({ error: 'הגלריה עודכנה במקום אחר - רענני את הדף' }, { status: 409 });
+  if (hasExpected && expiresAtChanged(expectedExpiresAt, gallery.expires_at)) {
+    return staleResponse();
+  }
+
   let current: { status: string | null; expires_at: string | null; owner_participant_id: string | null } = gallery;
   let reactivatedStatus: ReturnType<typeof statusAfterExpiryChange> = null;
   let galleryError: { message?: string } | null = null;
@@ -184,7 +201,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           ...(reactivatedStatus ? { status: reactivatedStatus } : {}),
         })
         .eq('id', gallery.id),
-      statusGuard(current.status)
+      // גם expires_at שנקרא - כך שהארכה שאושרה בין הקריאה לכתיבה לא נדרסת
+      { ...statusGuard(current.status), expires_at: current.expires_at }
     ).select('id');
     if (error) {
       galleryError = error;
@@ -204,6 +222,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
     }
     current = fresh;
+    if (hasExpected && expiresAtChanged(expectedExpiresAt, current.expires_at)) {
+      return staleResponse();
+    }
   }
 
   if (galleryError?.message?.includes('LIMIT_ACTIVE_GALLERY')) {

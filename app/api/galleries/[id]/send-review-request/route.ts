@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { sendReviewRequestEmail } from '@/lib/email';
 import { fetchClientGender } from '@/lib/gender';
-import { getManualEmailCooldown, recordManualEmailSend, cooldownResponse } from '@/lib/manualEmailLog';
+import { reserveManualEmailSend, releaseManualEmailReservations, cooldownResponse } from '@/lib/manualEmailLog';
 import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 
 // שליחת בקשת ביקורת - זמינה רק אחרי שהצלמת סימנה את הגלריה כ"נמסרה"
@@ -53,8 +53,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'חסרים פרטי לקוחה' }, { status: 500 });
   }
 
-  const cooldown = await getManualEmailCooldown(supabase, { galleryId: gallery.id }, 'review');
-  if (!cooldown.allowed) return cooldownResponse(cooldown);
+  // אין עמודת last_* לבקשת ביקורת על galleries, אז לפני המיגרציה (טבלת
+  // היומן חסרה) אין fallback - fallbackSentAts ריק במפורש.
+  const reservation = await reserveManualEmailSend(supabase, photographer.id, { galleryId: gallery.id }, 'review', {
+    fallbackSentAts: [],
+  });
+  if (!reservation.decision.allowed) return cooldownResponse(reservation.decision);
 
   const { sent: emailSent } = await sendReviewRequestEmail({
     // שפת הגלריה (galleries.language) - עמודה חסרה = עברית
@@ -67,8 +71,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     replyTo: user.email,
   });
 
-  if (emailSent) {
-    await recordManualEmailSend(supabase, photographer.id, { galleryId: gallery.id }, 'review');
+  if (!emailSent) {
+    await releaseManualEmailReservations(reservation.reservationIds);
   }
 
   return NextResponse.json({ emailSent });

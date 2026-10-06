@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { sendFinalPhotosReadyEmail } from '@/lib/email';
-import { getManualEmailCooldown, recordManualEmailSend, cooldownResponse } from '@/lib/manualEmailLog';
+import { reserveManualEmailSend, releaseManualEmailReservations, cooldownResponse } from '@/lib/manualEmailLog';
 import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 
 // שליחה ידנית של התראה ללקוחה שהתמונות הסופיות מוכנות - בדיוק כמו
@@ -54,8 +54,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'עדיין לא הועלו תמונות סופיות' }, { status: 400 });
   }
 
-  const cooldown = await getManualEmailCooldown(supabase, { galleryId: gallery.id }, 'delivery');
-  if (!cooldown.allowed) return cooldownResponse(cooldown);
+  // אין עמודת last_* לשליחת "התמונות מוכנות" על galleries, אז לפני המיגרציה
+  // (טבלת היומן חסרה) אין fallback - fallbackSentAts ריק במפורש.
+  const reservation = await reserveManualEmailSend(supabase, photographer.id, { galleryId: gallery.id }, 'delivery', {
+    fallbackSentAts: [],
+  });
+  if (!reservation.decision.allowed) return cooldownResponse(reservation.decision);
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
   const { sent: emailSent } = await sendFinalPhotosReadyEmail({
@@ -69,8 +73,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     replyTo: user.email,
   });
 
-  if (emailSent) {
-    await recordManualEmailSend(supabase, photographer.id, { galleryId: gallery.id }, 'delivery');
+  if (!emailSent) {
+    await releaseManualEmailReservations(reservation.reservationIds);
   }
 
   return NextResponse.json({ emailSent });
