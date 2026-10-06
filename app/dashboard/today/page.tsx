@@ -6,6 +6,7 @@ import { theme, outlineButtonStyle, goldButtonStyle } from '@/lib/theme';
 import { formatShekels } from '@/lib/payments';
 import { toHebrewDateString } from '@/lib/hebrewDate';
 import { formatIsraelDate } from '@/lib/israelTime';
+import SetupChecklist from '@/components/SetupChecklist';
 import {
   buildTodayView,
   daysSince,
@@ -431,6 +432,7 @@ export default function TodayPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      <SetupChecklist />
       {header}
 
       {nothingToDo ? (

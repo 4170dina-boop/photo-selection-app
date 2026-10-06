@@ -10,6 +10,8 @@ import { theme, goldButtonStyle, inputStyle, outlineButtonStyle } from '@/lib/th
 import { computePaymentSummary, formatShekels } from '@/lib/payments';
 import { galleryRevenue, sumShekels } from '@/lib/revenue';
 import { canDeliverFinals, isReminderEligible } from '@/lib/galleryLifecycle';
+import SetupChecklist from '@/components/SetupChecklist';
+import SampleGalleryTag, { useSampleGalleryIds } from '@/components/SampleGalleryTag';
 
 interface GalleryRow {
   id: string;
@@ -52,6 +54,7 @@ export default function GalleriesDashboard() {
   const router = useRouter();
   const [supabase] = useState(() => createClient());
   const [rows, setRows] = useState<GalleryRow[]>([]);
+  const sampleIds = useSampleGalleryIds(rows.length);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'expired'>('all');
@@ -454,6 +457,7 @@ export default function GalleriesDashboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      <SetupChecklist />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
         <div>
           <h1 style={{ fontSize: 20, margin: 0 }}>הגלריות שלי</h1>
@@ -734,7 +738,7 @@ export default function GalleriesDashboard() {
             </div>
 
             <div style={{ textAlign: 'right' }}>
-              <div style={{ fontWeight: 'bold' }}>{row.clients?.full_name ?? 'ללא שם'}</div>
+              <div style={{ fontWeight: 'bold' }}>{row.clients?.full_name ?? 'ללא שם'}{sampleIds.has(row.id) && <SampleGalleryTag />}</div>
               <div style={{ fontSize: 13, color: theme.textMuted }}>{formatActivity(row)}</div>
             </div>
 
