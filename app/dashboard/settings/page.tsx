@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import PriceInput from '@/components/PriceInput';
+import AutomationSettings from '@/components/AutomationSettings';
 import { createClient } from '@/lib/supabase/client';
 import { classifySignInError, isRateLimitError, RATE_LIMIT_MESSAGE } from '@/lib/authErrors';
 import PaymentMethodsSettings from '@/components/PaymentMethodsSettings';
@@ -530,7 +531,7 @@ export default function SettingsPage() {
             לשלוח לי כל יום מייל עם הצילומים של מחר
           </label>
           <span style={{ color: theme.textFaint, fontSize: 12, display: 'block', marginTop: '0.5rem' }}>
-            המייל נשלח רק בימים שבהם יש לך צילומים למחרת.
+            המייל נשלח רק בימים שבהם יש לך צילומים למחרת, או תאריך חשוב של לקוחה (יום הולדת וכו&apos;) בעוד 30 יום.
           </span>
         </div>
 
@@ -547,6 +548,8 @@ export default function SettingsPage() {
           {error}
         </p>
       )}
+
+      <AutomationSettings />
 
       <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
         <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.5rem' }}>עיצוב הגלריה עם AI</h2>

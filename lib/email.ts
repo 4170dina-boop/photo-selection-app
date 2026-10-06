@@ -217,9 +217,15 @@ function tm(lang: Lang, key: MessageKey, params: Record<string, string | number 
 // headerText/ctaText הם טקסט רגיל (מנוטרלים כאן), bodyHtml הוא HTML שכל
 // ערך דינמי בו כבר עבר escapeHtml אצל הקורא. lang קובע dir/lang ואת שורת
 // התחתית (ברירת מחדל עברית - כל המיילים לצלמת).
-function wrapEmailHtml(params: { headerText: string; bodyHtml: string; ctaText?: string; ctaUrl?: string; lang?: Lang }): string {
+// logoUrl (אופציונלי) - photographers.logo_url, מוצג מעל שם העסק בבאנר (רק
+// http/https, ראו safeHref; בלעדיו - רק השם, כמו תמיד).
+function wrapEmailHtml(params: { headerText: string; bodyHtml: string; ctaText?: string; ctaUrl?: string; lang?: Lang; logoUrl?: string | null }): string {
   const lang = params.lang ?? DEFAULT_LANG;
   const href = safeHref(params.ctaUrl);
+  const logoSrc = safeHref(params.logoUrl);
+  const logo = logoSrc
+    ? `<img src="${logoSrc}" alt="" width="56" height="56" style="display: block; margin: 0 auto 8px; width: 56px; height: 56px; border-radius: 50%; object-fit: contain; background: #ffffff;" />`
+    : '';
   const cta =
     params.ctaText && href
       ? `
@@ -240,6 +246,7 @@ function wrapEmailHtml(params: { headerText: string; bodyHtml: string; ctaText?:
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e7e0d5;">
         <tr>
           <td style="background: #0f1626; padding: 20px 28px; text-align: center;">
+            ${logo}
             <span style="font-family: sans-serif; font-size: 18px; font-weight: 700; color: #e3b3ac;">✨ ${escapeHtml(params.headerText)}</span>
           </td>
         </tr>
@@ -538,6 +545,47 @@ export async function sendReviewRequestEmail(params: ReviewRequestParams): Promi
   });
 }
 
+interface AnniversaryParams extends ClientLanguageParam {
+  to: string;
+  clientName: string;
+  clientGender?: Gender | null;
+  businessName: string;
+  logoUrl?: string | null;
+  galleryUrl: string;
+  accessCode?: string | null;
+  replyTo?: string;
+}
+
+// "לפני שנה צילמנו 💛" - נשלח אוטומטית מ-app/api/cron/tick/route.ts כ-11 חודשים
+// אחרי המסירה (photographers.anniversary_emails, opt-in), פעם אחת לגלריה
+// (galleries.anniversary_sent_at). הזמנה לתאם צילום נוסף - התשובה מגיעה ישר
+// לצלמת (replyTo). בלי תמונות מוטמעות בכוונה: התמונות הסופיות הן קבצים מלאים
+// (בלי thumbnail) ב-bucket פרטי, וקישור חתום פג תוך זמן קצר - תמונה שבורה במייל
+// גרועה יותר מבלי תמונה. במקום זה - כפתור לגלריה עצמה (נשארת זמינה אחרי מסירה).
+export async function sendAnniversaryEmail(params: AnniversaryParams): Promise<SendResult> {
+  const lang = params.language ?? DEFAULT_LANG;
+  const gender = params.clientGender ?? DEFAULT_CLIENT_GENDER;
+  const html = wrapEmailHtml({
+    lang,
+    headerText: params.businessName,
+    logoUrl: params.logoUrl,
+    bodyHtml: `
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.hi', { name: params.clientName })}</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.anniv.memory', { business: params.businessName })}</p>
+      <p style="margin: 0 0 8px;">${tm(lang, 'mail.anniv.hope', {}, gender)}</p>
+      <p style="margin: 0; font-size: 13px; color: #6b6156;">${tm(lang, 'mail.anniv.invite', {}, gender)}</p>
+      ${params.accessCode ? accessCodeBadge(params.accessCode, lang) : ''}
+    `,
+    ctaText: t(lang, 'mail.anniv.cta'),
+    ctaUrl: params.galleryUrl,
+  });
+
+  return sendEmail(params.to, t(lang, 'mail.anniv.subject'), html, {
+    fromName: params.businessName,
+    replyTo: params.replyTo,
+  });
+}
+
 // ---------- יומן צילומים (טבלת shoots, ראו lib/shoots.ts) ----------
 
 // "יום ראשון, 11.10.2026 · י״ט בתשרי תשפ״ז" - תאריך לועזי (מה שהצלמת הזינה)
@@ -624,7 +672,36 @@ interface ShootsDailySummaryParams {
   to: string;
   shootDate: string; // "מחר" - YYYY-MM-DD
   shoots: { clientName: string; startTime: string; location: string; notes?: string | null }[];
+  // תזכורות לתאריכים חשובים - הסיכום נשלח גם כשיש רק אותן (בלי צילומים מחר)
+  dateReminders?: DailySummaryDateReminder[];
   dashboardUrl: string;
+  // לאן הכפתור מוביל כשאין צילומים מחר (רק תאריכים) - דף הלקוחות
+  datesDashboardUrl?: string;
+}
+
+// תאריך חשוב של לקוחה (client_dates, lib/clientDates.ts) שחל בעוד daysAhead ימים
+export interface DailySummaryDateReminder {
+  label: string; // "יום ההולדת של יוסי"
+  clientLabel: string; // "משפחת כהן" (familyLabel)
+  daysAhead: number;
+  dateText: string; // "5.11.2026 · כ״ה בחשון תשפ״ז"
+  suggestion: string; // greetingSuggestion
+}
+
+function dateRemindersHtml(reminders: DailySummaryDateReminder[]): string {
+  if (reminders.length === 0) return '';
+  const items = reminders
+    .map(
+      (r) => `
+        <div style="margin: 0 0 10px; padding: 10px 14px; background: #f4f1ec; border-radius: 8px; text-align: right;">
+          <div>📅 בעוד ${escapeHtml(r.daysAhead)} יום: <b>${escapeHtml(r.label)}</b> (${escapeHtml(r.clientLabel)})</div>
+          <div style="font-size: 12px; color: #9a8f7d;">${escapeHtml(r.dateText)}</div>
+          <div style="font-size: 13px; color: #6b6156; margin-top: 4px;">💡 ${escapeHtml(r.suggestion)}</div>
+        </div>
+      `
+    )
+    .join('');
+  return `<p style="margin: 20px 0 8px; font-weight: 700;">תאריכים חשובים של לקוחות</p>${items}`;
 }
 
 // סיכום יומי לצלמת עם הצילומים של מחר - נשלח מ-app/api/cron/tick/route.ts,
@@ -649,19 +726,37 @@ export async function sendShootsDailySummaryEmail(params: ShootsDailySummaryPara
     .join('');
 
   const countText = params.shoots.length === 1 ? 'צילום אחד' : `${params.shoots.length} צילומים`;
+  const reminders = params.dateReminders ?? [];
+  const hasShoots = params.shoots.length > 0;
+
+  const shootsHtml = hasShoots
+    ? `
+      <p style="margin: 0 0 8px;">מחר (${escapeHtml(shootDateText(params.shootDate))}) יש לך ${countText}:</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 12px auto 0; border-collapse: collapse; font-size: 14px;">${rows}</table>
+    `
+    : '';
 
   const html = wrapEmailHtml({
     headerText: 'אזור צלמים',
     bodyHtml: `
       <p style="margin: 0 0 8px;">היי,</p>
-      <p style="margin: 0 0 8px;">מחר (${escapeHtml(shootDateText(params.shootDate))}) יש לך ${countText}:</p>
-      <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 12px auto 0; border-collapse: collapse; font-size: 14px;">${rows}</table>
+      ${shootsHtml}
+      ${dateRemindersHtml(reminders)}
     `,
-    ctaText: 'פתיחת היומן',
-    ctaUrl: params.dashboardUrl,
+    ctaText: hasShoots ? 'פתיחת היומן' : 'לדף הלקוחות',
+    ctaUrl: hasShoots ? params.dashboardUrl : params.datesDashboardUrl ?? params.dashboardUrl,
   });
 
-  return sendEmail(params.to, `הצילומים שלך מחר: ${countText}`, html, { fromName: 'אזור צלמים ✨' });
+  return sendEmail(params.to, dailySummarySubject(params.shoots.length, reminders), html, { fromName: 'אזור צלמים ✨' });
+}
+
+// נושא הסיכום היומי: צילומים (ואם יש - גם מספר התאריכים), או רק תאריכים.
+export function dailySummarySubject(shootCount: number, reminders: Pick<DailySummaryDateReminder, 'label' | 'daysAhead'>[]): string {
+  const countText = shootCount === 1 ? 'צילום אחד' : `${shootCount} צילומים`;
+  const datesText = reminders.length === 1 ? 'תאריך חשוב אחד' : `${reminders.length} תאריכים חשובים`;
+  if (shootCount > 0) return `הצילומים שלך מחר: ${countText}${reminders.length ? ` · ${datesText}` : ''}`;
+  if (reminders.length === 1) return `📅 בעוד ${reminders[0].daysAhead} יום: ${reminders[0].label}`;
+  return `📅 ${datesText} של לקוחות מתקרבים`;
 }
 
 // ---------- בקשת הארכה לתקופת הבחירה (gallery_extension_requests) ----------

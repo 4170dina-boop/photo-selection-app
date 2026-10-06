@@ -58,6 +58,14 @@ create table photographers (
   -- של bank/cash/check/phone/bit/paybox. null = טרם נשמר - הקוד נגזר אז
   -- מ-payment_bit_url/payment_paybox_url/payment_bank_details למעלה.
   payment_methods jsonb check (payment_methods is null or jsonb_typeof(payment_methods) = 'array'),
+  -- אוטומציות (בלוק "אוטומציות" בהגדרות, app/api/photographer/automations):
+  -- respect_shabbat - מיילים אוטומטיים ללקוחות (תזכורת תפוגה, תזכורת צילום,
+  -- מייל "לפני שנה") לא יוצאים בשבת/יום טוב בישראל אלא בריצה של יום החול הבא,
+  -- ותפוגת גלריה שנופלת בשבת/חג נדחית לסוף יום החול הבא (lib/jewishCalendar.ts).
+  respect_shabbat boolean default true not null,
+  -- anniversary_emails - מייל "לפני שנה צילמנו 💛" ללקוחה כ-11 חודשים אחרי
+  -- המסירה (galleries.anniversary_sent_at). opt-in.
+  anniversary_emails boolean default false not null,
   created_at timestamptz default now()
 );
 
@@ -154,6 +162,10 @@ create table galleries (
   -- app/api/gallery/[id]/selection) - null = טרם נשלחה. נתפסת ב-UPDATE מותנה
   -- (is null) כדי שהמייל ייצא פעם אחת בלבד לכל גלריה, גם בבקשות מקבילות.
   quota_notified_at timestamptz,
+  -- מתי נשלח ללקוחה מייל "לפני שנה צילמנו" (cron, photographers.anniversary_emails) -
+  -- null = טרם נשלח. נתפס ב-UPDATE מותנה (is null) לפני השליחה ומשוחרר אם השליחה
+  -- נכשלה - כך המייל יוצא פעם אחת בלבד לכל גלריה.
+  anniversary_sent_at timestamptz,
   -- לשון הפנייה ללקוח/ה הראשי/ת בגלריה ובמיילים (lib/gender.ts): 'f' = נקבה
   -- (ברירת המחדל), 'm' = זכר. נקבע ע"י הצלמת בטופס יצירה/עריכה של הגלריה.
   client_gender text default 'f' not null check (client_gender in ('f', 'm')),
@@ -373,6 +385,40 @@ create policy "photographers see own shoots" on shoots
         select id from photographers where auth_user_id = auth.uid()
       )
     ))
+  );
+
+-- תאריכים חשובים של לקוחות (יום הולדת, יום נישואין...) - ראו lib/clientDates.ts
+-- והבלוק בדף הלקוחות (app/dashboard/clients). חוזר כל שנה: לועזי (date_greg -
+-- היום והחודש, השנה רק לתיעוד) או עברי (hebrew_month 1-13 לפי
+-- HEBREW_MONTH_NAMES_HE ב-lib/hebrewDate.ts: 6 = אדר א׳, 7 = אדר/אדר ב׳).
+-- הצלמת מקבלת תזכורת 30 יום לפני בסיכום היומי (app/api/cron/tick).
+create table client_dates (
+  id uuid primary key default uuid_generate_v4(),
+  client_id uuid references clients(id) on delete cascade not null,
+  photographer_id uuid references photographers(id) on delete cascade not null,
+  label text not null check (char_length(label) between 1 and 80),
+  date_greg date,
+  hebrew_month int,
+  hebrew_day int,
+  created_at timestamptz default now(),
+  constraint client_dates_one_kind check (
+    (date_greg is not null and hebrew_month is null and hebrew_day is null)
+    or (date_greg is null and hebrew_month between 1 and 13 and hebrew_day between 1 and 30)
+  )
+);
+create index idx_client_dates_client on client_dates(client_id);
+create index idx_client_dates_photographer on client_dates(photographer_id);
+alter table client_dates enable row level security;
+-- with check: גם הלקוחה חייבת להיות של אותה צלמת (FK לא עובר דרך RLS) - כמו shoots
+create policy "photographers manage own client dates" on client_dates
+  for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
+  with check (
+    photographer_id in (select id from photographers where auth_user_id = auth.uid())
+    and client_id in (
+      select id from clients where photographer_id in (
+        select id from photographers where auth_user_id = auth.uid()
+      )
+    )
   );
 
 create table packages (
@@ -1122,6 +1168,7 @@ begin
     new.view_count := 0;
     new.last_viewed_at := null;
     new.quota_notified_at := null;
+    new.anniversary_sent_at := null;
     return new;
   end if;
 
@@ -1130,6 +1177,7 @@ begin
   new.view_count := old.view_count;
   new.last_viewed_at := old.last_viewed_at;
   new.quota_notified_at := old.quota_notified_at;
+  new.anniversary_sent_at := old.anniversary_sent_at;
   if new.last_reminder_sent_at is not null then
     new.last_reminder_sent_at := old.last_reminder_sent_at;
   end if;
@@ -3087,3 +3135,90 @@ create policy "photographers read own logo" on storage.objects
 --
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: תבניות גלריה =====
+-- ===== מיגרציה: אוטומציות - שבת/חג, מייל "לפני שנה", תאריכים חשובים של לקוחות =====
+-- להריץ פעם אחת על פרויקט קיים (הכל idempotent). עד שמריצים - הקוד לא נשבר:
+-- respect_shabbat חסרה = true (מכבדים שבת), anniversary_emails/anniversary_sent_at
+-- חסרות = שלב "לפני שנה" ב-cron מדלג, client_dates חסרה = הבלוק בדף הלקוחות
+-- מציג הודעה והסיכום היומי יוצא בלי תאריכים. כולל:
+--  * photographers.respect_shabbat, photographers.anniversary_emails
+--  * galleries.anniversary_sent_at (+ הגנה ב-protect_internal_gallery_columns)
+--  * טבלת client_dates + RLS + אינדקסים
+-- alter table photographers add column if not exists respect_shabbat boolean default true not null;
+-- alter table photographers add column if not exists anniversary_emails boolean default false not null;
+-- alter table galleries add column if not exists anniversary_sent_at timestamptz;
+--
+-- create table if not exists client_dates (
+--   id uuid primary key default uuid_generate_v4(),
+--   client_id uuid references clients(id) on delete cascade not null,
+--   photographer_id uuid references photographers(id) on delete cascade not null,
+--   label text not null check (char_length(label) between 1 and 80),
+--   date_greg date,
+--   hebrew_month int,
+--   hebrew_day int,
+--   created_at timestamptz default now(),
+--   constraint client_dates_one_kind check (
+--     (date_greg is not null and hebrew_month is null and hebrew_day is null)
+--     or (date_greg is null and hebrew_month between 1 and 13 and hebrew_day between 1 and 30)
+--   )
+-- );
+-- create index if not exists idx_client_dates_client on client_dates(client_id);
+-- create index if not exists idx_client_dates_photographer on client_dates(photographer_id);
+-- alter table client_dates enable row level security;
+-- drop policy if exists "photographers manage own client dates" on client_dates;
+-- create policy "photographers manage own client dates" on client_dates
+--   for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
+--   with check (
+--     photographer_id in (select id from photographers where auth_user_id = auth.uid())
+--     and client_id in (
+--       select id from clients where photographer_id in (
+--         select id from photographers where auth_user_id = auth.uid()
+--       )
+--     )
+--   );
+--
+-- -- protect_internal_gallery_columns מחדש, עם anniversary_sent_at ברשימת העמודות
+-- -- שרק השרת (service_role, ה-cron) כותב.
+-- create or replace function protect_internal_gallery_columns()
+-- returns trigger as $$
+-- begin
+--   if current_setting('role', true) = 'service_role'
+--      or coalesce(auth.role(), '') not in ('authenticated', 'anon') then
+--     return new;
+--   end if;
+--
+--   if tg_op = 'INSERT' then
+--     new.last_activity_at := null;
+--     new.last_reminder_sent_at := null;
+--     new.originals_cleaned_up_at := null;
+--     new.originals_deletion_warning_sent_at := null;
+--     new.view_count := 0;
+--     new.last_viewed_at := null;
+--     new.quota_notified_at := null;
+--     new.anniversary_sent_at := null;
+--     return new;
+--   end if;
+--
+--   new.last_activity_at := old.last_activity_at;
+--   new.originals_cleaned_up_at := old.originals_cleaned_up_at;
+--   new.view_count := old.view_count;
+--   new.last_viewed_at := old.last_viewed_at;
+--   new.quota_notified_at := old.quota_notified_at;
+--   new.anniversary_sent_at := old.anniversary_sent_at;
+--   if new.last_reminder_sent_at is not null then
+--     new.last_reminder_sent_at := old.last_reminder_sent_at;
+--   end if;
+--   if new.originals_deletion_warning_sent_at is not null then
+--     new.originals_deletion_warning_sent_at := old.originals_deletion_warning_sent_at;
+--   end if;
+--
+--   return new;
+-- end;
+-- $$ language plpgsql;
+--
+-- drop trigger if exists trg_protect_internal_gallery_columns on galleries;
+-- create trigger trg_protect_internal_gallery_columns
+-- before insert or update on galleries
+-- for each row execute function protect_internal_gallery_columns();
+--
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: אוטומציות =====
