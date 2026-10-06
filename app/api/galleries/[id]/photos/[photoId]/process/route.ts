@@ -11,6 +11,9 @@ import {
 } from '@/lib/uploadPolicy';
 import { createGridThumbnail, createWatermarkedPreview } from '@/lib/watermark';
 import { computeSharpnessScore } from '@/lib/sharpness';
+import { computeDHash } from '@/lib/phash';
+import { takenAtFromExifBlock } from '@/lib/exifDate';
+import sharp from 'sharp';
 
 // יוצרת thumbnail_path אמיתי: מקטינה ומטביעה סימן מים על התמונה שהועלתה.
 // רצה אחרי שהמקור כבר הועלה ישירות מהדפדפן ל-R2 (app/dashboard/UploadProvider.tsx,
@@ -27,6 +30,12 @@ import { computeSharpnessScore } from '@/lib/sharpness';
 // השלמה "עצלה" לתמונות ישנות שעובדו לפני שהיו תמונות גריד: מורידה רק את
 // התצוגה הקיימת (לא את המקור - שאולי כבר נמחק ע"י ה-cron), מקטינה, ומעבירה
 // את thumbnail_path לפורמט החדש. ראו gridThumbKey ב-lib/uploadPolicy.ts.
+//
+// בנוסף, כל עיבוד שומר (best-effort) חתימת דמיון photos.phash מתמונת הגריד
+// (lib/phash.ts - ל"תמונות דומות"), ובעיבוד מלא גם photos.taken_at מה-EXIF של
+// המקור אם עוד אין (קבצים שעלו בלי הקטנה; בהקטנה בדפדפן ה-EXIF נמחק, ושם
+// הדפדפן כבר שלח את שעת הצילום ברישום). ?mode=phash = השלמה "עצלה" של phash
+// בלבד לתמונות ישנות: מורידה רק את תמונת הגריד הקטנה (~50KB).
 
 // הורדה + שינוי גודל + הטבעה של תמונה גדולה לוקחים זמן - ברירת המחדל של
 // Vercel (10 שניות) קצרה מדי לקבצים של עשרות MB.
@@ -124,6 +133,32 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     return null;
   }
 
+  // best-effort ומופרד מהעדכון הראשי: אם העמודה phash עוד לא קיימת (המיגרציה
+  // ב-supabase/schema.sql לא רצה) - שום דבר לא נשבר, פשוט אין תגי "דומות".
+  async function recordPhash(grid: Buffer): Promise<string | null> {
+    try {
+      const phash = await computeDHash(grid);
+      const { error } = await supabase.from('photos').update({ phash }).eq('id', photo!.id);
+      return error ? null : phash;
+    } catch (err) {
+      console.error('[process] חישוב חתימת דמיון נכשל:', photo!.id, err);
+      return null;
+    }
+  }
+
+  if (req.nextUrl.searchParams.get('mode') === 'phash') {
+    const phashGridPath = hasWatermarkedThumbnail(photo) ? gridThumbKey(photo.thumbnail_path) : null;
+    if (!phashGridPath || !isKeyInGallery(params.id, phashGridPath)) {
+      return NextResponse.json({ error: 'אין עדיין תמונת גריד' }, { status: 409 });
+    }
+    const gridBuffer = await downloadToBuffer(phashGridPath);
+    if (!gridBuffer) {
+      return NextResponse.json({ error: 'תמונת הגריד לא נמצאה' }, { status: 404 });
+    }
+    const phash = await recordPhash(gridBuffer);
+    return phash ? NextResponse.json({ success: true, phash }) : NextResponse.json({ error: 'שמירת חתימת הדמיון נכשלה' }, { status: 500 });
+  }
+
   if (req.nextUrl.searchParams.get('mode') === 'grid') {
     // השלמה בלבד - תמונה שעוד לא עובדה צריכה עיבוד מלא (בלי mode).
     if (!hasWatermarkedThumbnail(photo) || !isKeyInGallery(params.id, photo.thumbnail_path)) {
@@ -147,7 +182,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     }
 
     const backfillFailure = await storeAndRecord(existingPreview, backfillGrid);
-    return backfillFailure ?? NextResponse.json({ success: true });
+    if (backfillFailure) return backfillFailure;
+    await recordPhash(backfillGrid);
+    return NextResponse.json({ success: true });
   }
 
   // בודקים גודל לפני שמורידים לזיכרון - קובץ ענק היה מפיל את ה-function.
@@ -207,6 +244,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     await supabase.from('photos').update({ sharpness_score: sharpnessScore }).eq('id', photo.id);
   } catch (err) {
     console.error('[process] חישוב ציון חדות נכשל:', err);
+  }
+
+  await recordPhash(grid);
+
+  // שעת צילום מה-EXIF של המקור - רק אם עוד לא נשמרה ברישום (is null), כדי לא
+  // לדרוס ערך שהדפדפן קרא מהקובץ המקורי המלא. best-effort כמו למעלה.
+  try {
+    const { exif } = await sharp(originalBuffer).metadata(); // קריאת header בלבד, בלי פענוח
+    const takenAt = takenAtFromExifBlock(exif ? new Uint8Array(exif) : null);
+    if (takenAt) {
+      await supabase.from('photos').update({ taken_at: takenAt }).eq('id', photo.id).is('taken_at', null);
+    }
+  } catch (err) {
+    console.error('[process] קריאת שעת צילום נכשלה:', err);
   }
 
   return NextResponse.json({ success: true });

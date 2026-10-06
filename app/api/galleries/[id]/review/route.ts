@@ -4,6 +4,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { getPresignedDownloadUrl } from '@/lib/r2';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { gridThumbKey, hasWatermarkedThumbnail, needsGridThumbBackfill } from '@/lib/uploadPolicy';
+import { fetchPhotoNavFields } from '@/lib/chapterQueries';
 
 // מחזירה לצלמת המחוברת תצוגה לקריאה בלבד של התמונות בגלריה: thumbnail + הסטטוס
 // הרשמי (של הבעלים בלבד - שיתוף גלריה משפחתי, בדיוק כמו app/dashboard/galleries/page.tsx
@@ -66,6 +67,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // תמונות מתנה (lib/gifts.ts) - שאילתה נפרדת ו-best-effort, כדי שהסקירה לא
   // תיפול אם המיגרציה של is_gift עוד לא רצה.
   const giftById = new Map((await fetchGiftPhotos(supabaseAdmin, [params.id])).map((g) => [g.id, g]));
+  // פרק / שעת צילום / חתימת דמיון (lib/chapterQueries.ts) - אותו דפוס best-effort.
+  // navAvailable=false = המיגרציה של הפרקים לא רצה: אין השלמת phash ואין ממשק פרקים.
+  const nav = await fetchPhotoNavFields(supabaseAdmin, params.id);
 
   const photos = await Promise.all(
     (photosData ?? []).map(async (photo) => {
@@ -91,9 +95,14 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         photographerReply: selection?.photographer_reply ?? null,
         isGift: giftById.has(photo.id),
         giftMessage: giftById.get(photo.id)?.gift_message ?? null,
+        chapterId: nav.byPhoto.get(photo.id)?.chapterId ?? null,
+        takenAt: nav.byPhoto.get(photo.id)?.takenAt ?? null,
+        // יש תמונת גריד אבל עוד אין חתימת דמיון - דף ההעלאה משלים ברקע (/process?mode=phash)
+        needsPhash:
+          nav.available && !needsProcessing && !!gridThumbKey(photo.thumbnail_path) && !nav.byPhoto.get(photo.id)?.phash,
       };
     })
   );
 
-  return NextResponse.json({ photos });
+  return NextResponse.json({ photos, navAvailable: nav.available });
 }

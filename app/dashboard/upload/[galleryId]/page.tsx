@@ -13,6 +13,7 @@ import {
   photosNeedingProcessRetry,
 } from '@/lib/uploadPolicy';
 import { originalsUploadBlockReason } from '@/lib/galleryLifecycle';
+import ChaptersManager from '@/components/ChaptersManager';
 
 interface UploadPageProps {
   params: { galleryId: string };
@@ -33,6 +34,11 @@ interface ExistingPhoto {
   // תמונה ישנה שעובדה לפני תמונות הגריד הקטנות - מושלמת ברקע (ראו למטה)
   needsGridThumb?: boolean;
   createdAt: string | null;
+  // פרקים / שעת צילום / חתימת דמיון (components/ChaptersManager.tsx, lib/bursts.ts)
+  chapterId?: string | null;
+  takenAt?: string | null;
+  // יש תמונת גריד אבל אין חתימת דמיון - מושלמת ברקע (ראו למטה)
+  needsPhash?: boolean;
 }
 
 // כמה בקשות עיבוד חוזר (/process) רצות בו-זמנית - כל אחת כבדה בצד שרת.
@@ -40,6 +46,8 @@ const PROCESS_RETRY_CONCURRENCY = 3;
 // השלמת תמונת גריד לתמונות ישנות (/process?mode=grid) - קלה (מורידה רק את
 // התצוגה הקיימת, לא את המקור), אבל עדיין לא מציפים את השרת.
 const GRID_BACKFILL_CONCURRENCY = 2;
+// השלמת חתימת דמיון (/process?mode=phash) - מורידה רק את תמונת הגריד הקטנה.
+const PHASH_BACKFILL_CONCURRENCY = 3;
 
 const FULL_RES_STORAGE_KEY = 'upload-full-resolution';
 
@@ -74,6 +82,8 @@ export default function UploadPage({ params }: UploadPageProps) {
   }
 
   const [existingPhotos, setExistingPhotos] = useState<ExistingPhoto[] | null>(null);
+  // false = המיגרציה של הפרקים/חתימות הדמיון עוד לא רצה (ראו /review)
+  const [navAvailable, setNavAvailable] = useState(false);
   const [checkingOwnership, setCheckingOwnership] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -129,6 +139,7 @@ export default function UploadPage({ params }: UploadPageProps) {
     if (!res.ok) return;
     const data = await res.json();
     setExistingPhotos(data.photos ?? []);
+    setNavAvailable(!!data.navAvailable);
   }
 
   function openReplyEditor(photo: ExistingPhoto) {
@@ -256,6 +267,21 @@ export default function UploadPage({ params }: UploadPageProps) {
     mapWithConcurrency(due, GRID_BACKFILL_CONCURRENCY, (p) =>
       fetch(`/api/galleries/${galleryId}/photos/${p.id}/process?mode=grid`, { method: 'POST' }).catch(() => null)
     ).then(() => loadExistingPhotos());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingPhotos, uploading, galleryId]);
+
+  // השלמה "עצלה" של חתימות דמיון (photos.phash, ל"תמונות דומות" אצל הלקוחה)
+  // לתמונות שעובדו לפני שהיו חתימות - אותו דפוס בדיוק כמו השלמת הגריד למעלה,
+  // רק בלי טעינה מחדש בסוף (שום דבר במסך הזה לא תלוי ב-phash).
+  const attemptedPhashRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (uploading || !existingPhotos) return;
+    const due = existingPhotos.filter((p) => p.needsPhash && !attemptedPhashRef.current.has(p.id));
+    if (due.length === 0) return;
+    due.forEach((p) => attemptedPhashRef.current.add(p.id));
+    mapWithConcurrency(due, PHASH_BACKFILL_CONCURRENCY, (p) =>
+      fetch(`/api/galleries/${galleryId}/photos/${p.id}/process?mode=phash`, { method: 'POST' }).catch(() => null)
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existingPhotos, uploading, galleryId]);
 
@@ -435,6 +461,15 @@ export default function UploadPage({ params }: UploadPageProps) {
             })}
           </div>
         </div>
+      )}
+
+      {existingPhotos !== null && existingPhotos.length > 0 && (
+        <ChaptersManager
+          galleryId={galleryId}
+          photos={existingPhotos.filter((p) => !p.needsProcessing)}
+          available={navAvailable}
+          onPhotosChanged={loadExistingPhotos}
+        />
       )}
 
       {uploadBlockReason && (

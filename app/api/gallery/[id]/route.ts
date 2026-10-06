@@ -8,6 +8,9 @@ import { countBillableSelected } from '@/lib/gifts';
 import { gridThumbKey, hasWatermarkedThumbnail, isKeyInGallery } from '@/lib/uploadPolicy';
 import { resolveGalleryViewAccess } from '@/lib/galleryAccess';
 import { fetchClientGender, fetchParticipantGenders, resolveViewerGender } from '@/lib/gender';
+import { fetchChapters, fetchPhotoNavFields } from '@/lib/chapterQueries';
+import { orderForTimeline } from '@/lib/chapters';
+import { burstIdByPhoto, groupBursts } from '@/lib/bursts';
 
 // service_role - נשאר בצד שרת בלבד. כל הגישה של הלקוחה לנתוני הגלריה
 // עוברת דרך ה-API הזה (ולא דרך anon key ישירות מהדפדפן), כי אין policy
@@ -153,6 +156,28 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // של הצלמת מפעיל עיבוד מחדש לתמונות כאלה.
   const processedPhotos = (photosData ?? []).filter(hasWatermarkedThumbnail);
 
+  // ניווט בגלריות גדולות (lib/chapterQueries.ts) - best-effort כמו למעלה: בלי
+  // המיגרציה אין פרקים ואין רצפים, והלקוחה פשוט לא רואה צ'יפים/תגי "דומות".
+  // פרקים: רק אלה שיש בהם תמונה שמוצגת ללקוחה. רצפים ("תמונות דומות",
+  // lib/bursts.ts): תמונות עוקבות בציר הזמן (שעת צילום, אחרת סדר ההעלאה) עם
+  // חתימת dHash קרובה; burstId = מזהה התמונה הראשונה ברצף.
+  const nav = await fetchPhotoNavFields(supabaseAdmin, galleryId);
+  const chapterList = nav.available ? (await fetchChapters(supabaseAdmin, galleryId)).chapters : [];
+  const usedChapterIds = new Set(processedPhotos.map((p) => nav.byPhoto.get(p.id)?.chapterId).filter(Boolean));
+  const chapters = chapterList.filter((c) => usedChapterIds.has(c.id));
+  const timeline = orderForTimeline(
+    processedPhotos.map((p) => ({ id: p.id, takenAt: nav.byPhoto.get(p.id)?.takenAt ?? null }))
+  );
+  const burstOf = burstIdByPhoto(
+    groupBursts(
+      timeline.ordered.map((o) => ({
+        id: o.photo.id,
+        phash: nav.byPhoto.get(o.photo.id)?.phash ?? null,
+        takenAt: o.hasOwnTime ? o.photo.takenAt : null,
+      }))
+    )
+  );
+
   const photos = await Promise.all(
     processedPhotos.map(async (photo) => {
       // fullUrl = התצוגה הגדולה עם סימן המים (2000px) - לתצוגה מוגדלת/סליידשואו/השוואה.
@@ -175,6 +200,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         possiblyBlurry: possiblyBlurryIds.has(photo.id),
         isGift: giftById.has(photo.id),
         giftMessage: giftById.get(photo.id)?.gift_message ?? null,
+        chapterId: nav.byPhoto.get(photo.id)?.chapterId ?? null,
+        burstId: burstOf.get(photo.id) ?? null,
       };
     })
   );
@@ -239,6 +266,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     editingStarted: !!(gallery as any).editing_started_at,
     delivered: !!gallery.delivered_at || deliveredPhotos.length > 0,
     photos,
+    chapters,
     deliveredPhotos,
     myParticipant,
     participants,

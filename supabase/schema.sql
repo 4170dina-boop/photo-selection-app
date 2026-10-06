@@ -171,6 +171,19 @@ create unique index gallery_participants_one_owner_idx on gallery_participants(g
 alter table galleries add constraint galleries_owner_participant_fk
   foreign key (owner_participant_id) references gallery_participants(id);
 
+-- "פרקים": הצלמת מחלקת גלריה גדולה לחלקים עם שם ("💍 חופה", "💃 ריקודים")
+-- כדי שהלקוחה תוכל לנווט בה - שורת צ'יפים מעל הגריד (components/GalleryNavBar.tsx).
+-- הצלמת מנהלת אותם בדף ההעלאה (app/api/galleries/[id]/chapters), הלקוחה רק
+-- קוראת דרך app/api/gallery/[id] (service_role) - לכן אין לה policy.
+create table gallery_chapters (
+  id uuid primary key default uuid_generate_v4(),
+  gallery_id uuid references galleries(id) on delete cascade not null,
+  name text not null check (char_length(name) between 1 and 60),
+  sort int not null default 0,
+  created_at timestamptz default now() not null
+);
+create index idx_gallery_chapters_gallery on gallery_chapters(gallery_id, sort);
+
 create table photos (
   id uuid primary key default uuid_generate_v4(),
   gallery_id uuid references galleries(id) on delete cascade not null,
@@ -199,6 +212,16 @@ create table photos (
   -- "photographers see own photos" כבר מכסה את זה, ללקוחה אין גישה ישירה.
   is_gift boolean default false not null,
   gift_message text check (gift_message is null or char_length(gift_message) <= 200),
+  -- הפרק שהתמונה שייכת אליו (gallery_chapters) - null = בלי פרק. מחיקת פרק
+  -- משאירה את התמונות בגלריה, רק בלי שיוך.
+  chapter_id uuid references gallery_chapters(id) on delete set null,
+  -- שעת הצילום (EXIF DateTimeOriginal), נקראת בדפדפן לפני ההקטנה (שמוחקת
+  -- את ה-EXIF) או בעיבוד בצד שרת - ראו lib/exifDate.ts. "שעון קיר" של המצלמה
+  -- שנשמר כאילו UTC: חשובים רק ההפרשים בין תמונות (חלוקה לפרקים, רצפים).
+  taken_at timestamptz,
+  -- dHash של 64 ביט (16 תווי hex) מתמונת הגריד - לזיהוי "תמונות דומות" ברצף
+  -- (lib/phash.ts, lib/bursts.ts). null עד שהעיבוד/ההשלמה רצים.
+  phash text,
   created_at timestamptz default now(),
   -- ה-RLS בודק רק gallery_id, ו-file_path/thumbnail_path נכתבים ע"י הצלמת -
   -- בלי זה אפשר היה להצביע שורה על קובץ של גלריה (או צלמת) אחרת ב-R2.
@@ -443,6 +466,7 @@ create index idx_galleries_photographer on galleries(photographer_id);
 create index idx_photos_gallery on photos(gallery_id);
 -- partial - רוב התמונות אינן מתנה, וכל שאילתות המתנה מסננות is_gift = true
 create index idx_photos_gallery_gift on photos(gallery_id) where is_gift;
+create index idx_photos_chapter on photos(chapter_id) where chapter_id is not null;
 create index idx_selections_gallery on selections(gallery_id);
 create index idx_gallery_participants_gallery on gallery_participants(gallery_id);
 -- אינדקסים על עמודות FK שהיו חסרים - בלעדיהם כל delete על photos/
@@ -457,6 +481,7 @@ alter table photographers enable row level security;
 alter table clients enable row level security;
 alter table galleries enable row level security;
 alter table photos enable row level security;
+alter table gallery_chapters enable row level security;
 alter table selections enable row level security;
 alter table packages enable row level security;
 alter table sync_jobs enable row level security;
@@ -508,6 +533,18 @@ create policy "photographers see own galleries" on galleries
     )
     and (owner_participant_id is null or public.participant_belongs_to_gallery(owner_participant_id, id))
   );
+
+create policy "photographers manage own gallery chapters" on gallery_chapters
+  for all using (gallery_id in (
+    select id from galleries where photographer_id in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  ))
+  with check (gallery_id in (
+    select id from galleries where photographer_id in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  ));
 
 create policy "photographers see own photos" on photos
   for all using (gallery_id in (
@@ -2116,3 +2153,35 @@ create policy "photographers read own logo" on storage.objects
 -- alter table photographers add column if not exists payment_bank_details text;
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: קישורי תשלום =====
+
+-- ===== מיגרציה: פרקים, שעת צילום ותמונות דומות (gallery_chapters / taken_at / phash) =====
+-- להריץ פעם אחת על פרויקט קיים (הכל idempotent). עד שמריצים - הקוד לא נשבר:
+-- אזור הפרקים בדף ההעלאה מציג הודעה במקום ממשק, ללקוחה לא מוצגים צ'יפים של
+-- פרקים ולא תגי "דומות", והעיבוד פשוט לא שומר taken_at/phash.
+-- create table if not exists gallery_chapters (
+--   id uuid primary key default uuid_generate_v4(),
+--   gallery_id uuid references galleries(id) on delete cascade not null,
+--   name text not null check (char_length(name) between 1 and 60),
+--   sort int not null default 0,
+--   created_at timestamptz default now() not null
+-- );
+-- create index if not exists idx_gallery_chapters_gallery on gallery_chapters(gallery_id, sort);
+-- alter table gallery_chapters enable row level security;
+-- drop policy if exists "photographers manage own gallery chapters" on gallery_chapters;
+-- create policy "photographers manage own gallery chapters" on gallery_chapters
+--   for all using (gallery_id in (
+--     select id from galleries where photographer_id in (
+--       select id from photographers where auth_user_id = auth.uid()
+--     )
+--   ))
+--   with check (gallery_id in (
+--     select id from galleries where photographer_id in (
+--       select id from photographers where auth_user_id = auth.uid()
+--     )
+--   ));
+-- alter table photos add column if not exists chapter_id uuid references gallery_chapters(id) on delete set null;
+-- alter table photos add column if not exists taken_at timestamptz;
+-- alter table photos add column if not exists phash text;
+-- create index if not exists idx_photos_chapter on photos(chapter_id) where chapter_id is not null;
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: פרקים, שעת צילום ותמונות דומות =====

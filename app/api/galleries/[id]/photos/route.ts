@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { deleteObjects, headObject } from '@/lib/r2';
 import { isFreshPhotoKey, MAX_UPLOAD_BYTES, parseUploadBatch } from '@/lib/uploadPolicy';
+import { parseTakenAtInput } from '@/lib/exifDate';
 
 // רישום תמונה שהדפדפן כבר העלה ל-R2 (דרך ה-URL החתום מ-presign-upload).
 // ה-insert עבר לכאן מהדפדפן (UploadProvider.tsx) כדי שאם הוא נכשל (למשל
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // גלריה) רצות פעם אחת לכל הקבוצה ולא לכל תמונה. כל תמונה עדיין נבדקת
   // ונרשמת בנפרד (insert לכל שורה, כדי ש-enforce_photo_limit ידחה רק את מה
   // שעובר את המכסה ולא את כל הקבוצה). אובייקט בודד (הצורה הישנה) עדיין נתמך.
-  const parsed = parseUploadBatch<{ path?: unknown; originalFilename?: unknown }>(await req.json().catch(() => null));
+  const parsed = parseUploadBatch<{ path?: unknown; originalFilename?: unknown; takenAt?: unknown }>(await req.json().catch(() => null));
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
@@ -80,7 +81,7 @@ type RegisterResult = { id: string } | { error: string; status: number };
 async function registerOne(
   supabase: ReturnType<typeof createClient>,
   galleryId: string,
-  item: { path?: unknown; originalFilename?: unknown }
+  item: { path?: unknown; originalFilename?: unknown; takenAt?: unknown }
 ): Promise<RegisterResult> {
   const path = item?.path;
   const originalFilename = typeof item?.originalFilename === 'string' ? item.originalFilename.slice(0, 255) : '';
@@ -119,6 +120,18 @@ async function registerOne(
       return { error: message, status: 403 };
     }
     return { error: 'שמירת התמונה נכשלה', status: 500 };
+  }
+
+  // שעת הצילום (EXIF) שהדפדפן קרא מהקובץ המקורי לפני ההקטנה - ראו lib/exifDate.ts.
+  // עדכון נפרד ו-best-effort: אם העמודה taken_at עוד לא קיימת (המיגרציה ב-
+  // supabase/schema.sql לא רצה), זה לא אמור להפיל את רישום התמונה עצמו.
+  const takenAt = parseTakenAtInput(item?.takenAt);
+  if (takenAt) {
+    try {
+      await supabase.from('photos').update({ taken_at: takenAt }).eq('id', photo.id);
+    } catch {
+      // בכוונה שקט - ראו למעלה
+    }
   }
 
   return { id: photo.id as string };
