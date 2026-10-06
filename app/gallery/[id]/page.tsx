@@ -13,6 +13,9 @@ import GalleryNavBar, { BurstBadge, BurstChooser } from '@/components/GalleryNav
 import { applyNavFilters, burstMembers } from '@/lib/galleryNav';
 import type { Chapter } from '@/lib/chapters';
 import LanguagePicker from '@/components/LanguagePicker';
+import GalleryMoreMenu, { type MoreMenuItem } from '@/components/GalleryMoreMenu';
+import { useNotify, NotifyHost } from '@/components/useNotify';
+import GallerySkeleton from '@/components/GallerySkeleton';
 import {
   type Lang,
   type MessageKey,
@@ -47,8 +50,12 @@ import {
   toggleStatusTo,
   shouldAutoAdvance,
   enlargedShortcutStatus,
-  tapHintKey,
   neighborPrefetchUrls,
+  type GridCols,
+  DEFAULT_GRID_COLS,
+  GRID_COLS_KEY,
+  parseGridCols,
+  nextGridCols,
 } from '@/lib/galleryClient';
 import { extractAccessCode } from '@/lib/accessCodePaste';
 import {
@@ -343,7 +350,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [deliveredPhotos, setDeliveredPhotos] = useState<DeliveredPhoto[]>([]);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [zipMessage, setZipMessage] = useState('');
   const [myMarks, setMyMarks] = useState<Record<string, { status: 'maybe' | 'selected'; note: string | null; photographerReply: string | null }>>({});
   const [allMarks, setAllMarks] = useState<Record<string, Mark[]>>({});
   const [packageInfo, setPackageInfo] = useState<ClientPackageInfo | null>(null);
@@ -377,15 +383,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [confettiPieces, setConfettiPieces] = useState<ConfettiPiece[]>([]);
   const [clearingAll, setClearingAll] = useState(false);
   const [aiPicksRunning, setAiPicksRunning] = useState(false);
-  const [aiPicksMessage, setAiPicksMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [brandColor, setBrandColor] = useState<string | null>(null);
   const [photographerName, setPhotographerName] = useState<string | null>(null);
   const [photographerLogo, setPhotographerLogo] = useState<string | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
-  // הודעת "חדש" חד-פעמית ללקוחות חוזרות: הקשה על תמונה כבר לא מסמנת "אולי",
-  // אלא פותחת אותה בגדול (tapHintKey ב-lib/galleryClient.ts)
-  const [showTapHint, setShowTapHint] = useState(false);
 
   // לשון הפנייה לצופה (lib/gender.ts): בעלים -> galleries.client_gender,
   // אורח/ת -> מה שבחר/ה בהצטרפות, null = לא ידוע -> צורה ניטרלית ("בחר/י").
@@ -431,6 +433,37 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // "בעלים" ברירת מחדל ("הלקוחה הראשית") כשאין שם
   const ownerLabel = (name: string | undefined) => name ?? trOwner('common.ownerFallback');
 
+  // הודעות חולפות מאוחדות (components/useNotify.tsx) - שגיאות פעולה, הורדות,
+  // סימונים של בני משפחה, מחיר תמונה נוספת, "בטל" אחרי הסרת סימון.
+  const notifier = useNotify();
+  const { notify, dismissKey } = notifier;
+  // גרסה עדכנית של פונקציות שנקראות מכפתור בהודעה ("בטל"/"נסי שוב") או מסקר
+  // ברקע - ההודעה נשארת על המסך כמה שניות, וסגירה (closure) מהרינדור שבו
+  // נוצרה הייתה רואה myMarks/שפה ישנים. מתעדכן בכל רינדור (למטה, לפני ה-return).
+  const liveRef = useRef<{
+    tr: typeof tr;
+    setPhotoStatus: (photoId: string, next: 'maybe' | 'selected' | null, options?: { silentUndo?: boolean }) => Promise<void>;
+    loadGallery: () => Promise<any | null>;
+    downloadDelivered: (photo: DeliveredPhoto) => Promise<void>;
+    downloadAllDelivered: () => Promise<void>;
+    clearAllSelections: (skipConfirm?: boolean) => Promise<void>;
+    aiPicks: () => Promise<void>;
+  } | null>(null);
+  // שגיאת פעולה אחת בכל רגע (key משותף - חדשה מחליפה ישנה), עם "נסי שוב"
+  // כשהפעולה ניתנת לניסיון חוזר
+  const ACTION_ERROR_KEY = 'action-error';
+  function notifyError(message: string, retry?: () => void) {
+    notify({
+      type: 'error',
+      message,
+      key: ACTION_ERROR_KEY,
+      action: retry ? { label: tr('notify.retry'), run: retry } : undefined,
+    });
+  }
+  function clearActionError() {
+    dismissKey(ACTION_ERROR_KEY);
+  }
+
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
 
@@ -443,8 +476,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [chapterFilter, setChapterFilter] = useState<string>('all');
   const [hideSimilar, setHideSimilar] = useState(false);
   const [burstChooserId, setBurstChooserId] = useState<string | null>(null);
-  // הודעה קופצת "🔔 יוסי סימן/ה 3 תמונות חדשות" מהסקר החי של הסימונים
-  const [othersToast, setOthersToast] = useState<{ displayName: string; count: number }[] | null>(null);
   const [isOffline, setIsOffline] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [compareMode, setCompareMode] = useState(false);
@@ -682,6 +713,51 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     };
   }, []);
 
+  // הכותרת הדביקה בנייד מתכווצת עוד יותר בגלילה למטה ונפתחת חזרה בגלילה
+  // למעלה (ה-CSS עצמו רק במסכים צרים - ראו .gh בכותרת). סף קטן כדי שרעידות
+  // גלילה לא יגרמו להבהוב, ו-rAF כדי לא לרנדר בכל אירוע scroll.
+  const [headerCompact, setHeaderCompact] = useState(false);
+  useEffect(() => {
+    let lastY = window.scrollY;
+    let frame = 0;
+    function onScroll() {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const y = window.scrollY;
+        const delta = y - lastY;
+        if (y < 48) {
+          setHeaderCompact(false);
+          lastY = y;
+        } else if (Math.abs(delta) > 8) {
+          setHeaderCompact(delta > 0);
+          lastY = y;
+        }
+      });
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  // מספר עמודות בגריד בנייד (▦) - העדפת תצוגה למכשיר הזה בלבד, אחסון חסום
+  // פשוט נשאר עם ברירת המחדל (2)
+  const [mobileCols, setMobileCols] = useState<GridCols>(DEFAULT_GRID_COLS);
+  useEffect(() => {
+    try {
+      setMobileCols(parseGridCols(localStorage.getItem(GRID_COLS_KEY)));
+    } catch {}
+  }, []);
+  function cycleMobileCols() {
+    const next = nextGridCols(mobileCols);
+    setMobileCols(next);
+    try {
+      localStorage.setItem(GRID_COLS_KEY, String(next));
+    } catch {}
+  }
+
   const [authorized, setAuthorized] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [codeInput, setCodeInput] = useState('');
@@ -693,7 +769,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   useEffect(() => {
     setCanPasteCode(typeof navigator !== 'undefined' && typeof navigator.clipboard?.readText === 'function');
   }, []);
-  const [actionError, setActionError] = useState('');
 
   // שיתוף גלריה משפחתי: אחרי קוד גישה תקין, עוד לא ידוע מי בפועל נכנס/ת
   const [needsIdentity, setNeedsIdentity] = useState(false);
@@ -722,7 +797,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   }, [isLocked]);
 
   // הודעה קופצת חד-פעמית כשהבעלים עוברת לראשונה את מכסת החבילה
-  const [showExtraPriceToast, setShowExtraPriceToast] = useState(false);
   const prevOwnerSelectedRef = useRef<number | null>(null);
 
   // "להמשיך מאיפה שעצרתי": התמונה האחרונה שנצפתה + אילו כבר נצפו (localStorage,
@@ -779,15 +853,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       if (localStorage.getItem(key)) return;
       localStorage.setItem(key, '1');
     } catch {}
-    setShowExtraPriceToast(true);
+    notify({
+      type: 'info',
+      key: 'extra-price',
+      message: tr('toast.extraPrice', { included: packageInfo.included, price: money(packageInfo.extraPrice) }),
+      durationMs: EXTRA_PRICE_TOAST_MS,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownerSelectedCount, packageInfo, myParticipant?.id, myParticipant?.isOwner]);
-
-  useEffect(() => {
-    if (!showExtraPriceToast) return;
-    const t = setTimeout(() => setShowExtraPriceToast(false), EXTRA_PRICE_TOAST_MS);
-    return () => clearTimeout(t);
-  }, [showExtraPriceToast]);
 
   useEffect(() => {
     loadGallery();
@@ -848,7 +921,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         othersMarksBaselineRef.current = serverMarks;
         setAllMarks((prev) => mergeOthersMarks(prev, serverMarks, myId));
         if (Array.isArray(data.participants)) setParticipants(data.participants);
-        if (fresh.length > 0) setOthersToast(fresh.map((f) => ({ displayName: f.displayName, count: f.count })));
+        if (fresh.length > 0) {
+          const t = liveRef.current?.tr ?? tr;
+          notify({
+            type: 'info',
+            key: 'others-marks',
+            message: `🔔 ${fresh.map((o) => t('toast.othersItem', { name: o.displayName, count: o.count })).join(' · ')}`,
+          });
+        }
       } catch {
         failures += 1;
       }
@@ -875,13 +955,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myParticipant?.id, readOnly, galleryId]);
-
-  // ההודעה הקופצת נעלמת לבד אחרי כמה שניות
-  useEffect(() => {
-    if (!othersToast) return;
-    const t = setTimeout(() => setOthersToast(null), 6000);
-    return () => clearTimeout(t);
-  }, [othersToast]);
 
   // ספירה לאחור ל"סיימתי לבחור" (ראו handleFinish/submitFinish/cancelFinish) -
   // מחושבת בכל טיק מול finishDeadline (timestamp מוחלט, ראו finishDeadlineKey
@@ -982,11 +1055,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (!res.ok) {
       if (!silent) {
         const body = await res.json().catch(() => null);
-        setActionError(
-          res.status === 410
-            ? localizedErrorFromBody(lang, body, tr('err.galleryExpired'), viewerGender)
-            : tr('err.loadFailed')
-        );
+        if (res.status === 410) notifyError(localizedErrorFromBody(lang, body, tr('err.galleryExpired'), viewerGender));
+        else notifyError(tr('err.loadFailed'), () => liveRef.current?.loadGallery());
         setCheckingAuth(false);
         setLoading(false);
       }
@@ -998,7 +1068,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       data = await res.json();
     } catch {
       if (!silent) {
-        setActionError(tr('err.loadFailed'));
+        notifyError(tr('err.loadFailed'), () => liveRef.current?.loadGallery());
         setCheckingAuth(false);
         setLoading(false);
       }
@@ -1071,15 +1141,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       if (typeof window !== 'undefined' && data.myParticipant && !serverReadOnly) {
         const seenKey = `gallery_welcome_seen_${galleryId}_${data.myParticipant.id}`;
         try {
-          const returning = !!localStorage.getItem(seenKey);
-          setShowWelcome(!returning);
-          // לקוחה חוזרת (כבר ראתה את שער הפתיחה בגרסה הקודמת) שעוד לא ראתה את
-          // ההסבר על ההתנהגות החדשה של הקשה על תמונה, ושהבחירה עדיין פתוחה לה
-          const lockedNow = data.status === 'completed' && !data.reopenedForSelectionAt;
-          setShowTapHint(returning && !lockedNow && !localStorage.getItem(tapHintKey(galleryId)));
+          setShowWelcome(!localStorage.getItem(seenKey));
         } catch {
           setShowWelcome(false);
-          setShowTapHint(false);
         }
       } else {
         setShowWelcome(false);
@@ -1099,6 +1163,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     });
     silentRefreshRef.current = p;
     return p;
+  }
+
+  // כניסה הדרגתית של תמונת גריד (.gimg) - ישירות על האלמנט, בלי state לכל תמונה.
+  // גם בכשל: שלא תישאר שקופה (הרקע/הרענון מטפלים בהמשך).
+  function markImageLoaded(e: React.SyntheticEvent<HTMLImageElement>) {
+    e.currentTarget.dataset.loaded = 'true';
   }
 
   // תמונה שנכשלה בטעינה (כנראה חתימה שפגה) - רענון אחד לכל תמונה, לא לולאה.
@@ -1146,10 +1216,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         blob = await fetchBlobOk(freshUrl);
       }
       if (!blob) {
-        setActionError(tr('err.downloadFailed'));
+        notifyError(tr('err.downloadFailed'), () => liveRef.current?.downloadDelivered(photo));
         return;
       }
-      setActionError('');
+      clearActionError();
       triggerBlobDownload(blob, photo.filename);
     } finally {
       setDownloadingId(null);
@@ -1158,7 +1228,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   async function handleDownloadAllDelivered() {
     setDownloadingZip(true);
-    setZipMessage('');
     try {
       const zip = new JSZip();
       const usedNames = new Set<string>();
@@ -1189,16 +1258,25 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       }
 
       if (done === 0) {
-        setActionError(tr('err.zipFailed'));
+        notifyError(tr('err.zipFailed'), () => liveRef.current?.downloadAllDelivered());
         return;
       }
 
       const blob = await zip.generateAsync({ type: 'blob' });
       triggerBlobDownload(blob, tr('dl.zipFileName'));
-      setActionError('');
-      setZipMessage(done < total ? tr('dl.zipPartial', { done, total }) : tr('dl.zipSummary', { done, total }));
+      clearActionError();
+      if (done < total) {
+        notify({
+          type: 'warning',
+          key: 'zip',
+          message: tr('dl.zipPartial', { done, total }),
+          action: { label: tr('notify.retry'), run: () => liveRef.current?.downloadAllDelivered() },
+        });
+      } else {
+        notify({ type: 'success', key: 'zip', message: tr('dl.zipSummary', { done, total }) });
+      }
     } catch {
-      setActionError(tr('err.zipFailed'));
+      notifyError(tr('err.zipFailed'), () => liveRef.current?.downloadAllDelivered());
     } finally {
       setDownloadingZip(false);
     }
@@ -1206,20 +1284,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   function dismissWelcome() {
     if (typeof window !== 'undefined' && myParticipant) {
-      localStorage.setItem(`gallery_welcome_seen_${galleryId}_${myParticipant.id}`, '1');
-      // לקוחה חדשה כבר פוגשת את ההתנהגות החדשה מההתחלה - לא צריך להציג לה "חדש:"
       try {
-        localStorage.setItem(tapHintKey(galleryId), '1');
+        localStorage.setItem(`gallery_welcome_seen_${galleryId}_${myParticipant.id}`, '1');
       } catch {}
     }
     setShowWelcome(false);
-  }
-
-  function dismissTapHint() {
-    try {
-      localStorage.setItem(tapHintKey(galleryId), '1');
-    } catch {}
-    setShowTapHint(false);
   }
 
   // הדבקה לתיבת הקוד (גם Ctrl+V/לחיצה ארוכה) - אם הודבקה ההודעה כולה
@@ -1313,18 +1382,32 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     await loadGallery();
   }
 
+  liveRef.current = {
+    tr,
+    setPhotoStatus,
+    loadGallery: () => loadGallery(),
+    downloadDelivered: handleDownloadDeliveredPhoto,
+    downloadAllDelivered: handleDownloadAllDelivered,
+    clearAllSelections,
+    aiPicks: handleAiPicks,
+  };
+
+  // מסכי הכניסה (קוד/זיהוי) מציגים גם הם הודעות - למשל "הגלריה פגה" בטעינה
+  const notifyHostStandalone = (
+    <NotifyHost notifier={notifier} bottom="calc(1rem + env(safe-area-inset-bottom))" closeLabel={tr('common.closeNotice')} accent={theme.gold} dir={dir} />
+  );
+
+  // שלד גריד במקום טקסט "טוען..." - גם בבדיקת הגישה הראשונית (שהיא עצמה
+  // טעינת הגלריה, ראו loadGallery) וגם בטעינה חוזרת אחרי קוד/זיהוי
   if (checkingAuth) {
-    return (
-      <div style={{ minHeight: '100vh', background: theme.bg, color: theme.text, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <p style={{ color: theme.textMuted }}>{tr('common.loading')}</p>
-      </div>
-    );
+    return <GallerySkeleton label={tr('common.loadingGallery')} dir={dir} lang={lang} />;
   }
 
   if (!authorized) {
     return (
       <div dir={dir} lang={lang} style={{ minHeight: '100vh', background: theme.bg, color: theme.text, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <LanguagePicker lang={lang} onChange={changeLang} />
+        {notifyHostStandalone}
         <form onSubmit={handleSubmitCode} style={{ maxWidth: 320, width: '100%', textAlign: 'center', padding: '1.25rem 2rem 2rem' }}>
           <label htmlFor="access-code" style={{ display: 'block', marginBottom: '1.25rem', color: theme.gold, fontSize: 18 }}>
             {tr('code.title')}
@@ -1381,6 +1464,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     return (
       <div dir={dir} lang={lang} style={{ minHeight: '100vh', background: theme.bg, color: theme.text, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <LanguagePicker lang={lang} onChange={changeLang} />
+        {notifyHostStandalone}
         <div style={{ maxWidth: 340, width: '100%', textAlign: 'center', padding: '1.25rem 2rem 2rem' }}>
           <p style={{ marginBottom: '1.5rem', color: theme.gold, fontSize: 18, fontFamily: theme.fontSerif }}>
             {registeredName ? tr('id.hiName', { name: registeredName }) : tr('id.hi')}
@@ -1626,7 +1710,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       // לפעולות בתור אין את המצב "לפני" (current) כמו ב-setPhotoStatus, אז אי
       // אפשר לבטל בדיוק את אותה פעולה - טוענים מחדש מהשרת (ברקע, בלי מסך טעינה).
       await refreshGallerySilently();
-      setActionError(tr('err.offlineNotSaved'));
+      notifyError(tr('err.offlineNotSaved'));
     } else if (anyProcessed) {
       // סנכרון הצליח - טוענים מחדש סימונים ומונים מהשרת (אמת אחת)
       await refreshGallerySilently();
@@ -1711,7 +1795,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // מעדכן את המסך מיד (אופטימי), לפני תשובת השרת - כדי שאפשר יהיה להמשיך
   // לדפדף ולבחור גם באינטרנט חלש/מנותק. אם זו שגיאת רשת (לא שרת), הפעולה
   // נכנסת לתור ותסונכרן אוטומטית כשהחיבור יחזור (ראו flushPendingQueue).
-  async function setPhotoStatus(photoId: string, next: 'maybe' | 'selected' | null) {
+  async function setPhotoStatus(photoId: string, next: 'maybe' | 'selected' | null, options: { silentUndo?: boolean } = {}) {
     if (isLocked || !myParticipant) return;
     // ביטול (null) עדיין מותר - למקרה שסומנה לפני שהפכה למתנה
     if (next !== null && isGiftPhoto(photoId)) return;
@@ -1719,13 +1803,25 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     applyStatusChange(photoId, next, current);
 
+    // הסרת בחירה/"אולי" - הודעה עם "בטל" שמחזירה את הסימון הקודם (דרך אותה
+    // setPhotoStatus, בגרסה העדכנית שלה - liveRef). לא אחרי ה"בטל" עצמו.
+    if (next === null && current && !options.silentUndo) {
+      const n = photos.findIndex((p) => p.id === photoId) + 1;
+      notify({
+        type: 'success',
+        key: 'undo-remove',
+        message: tr(current === 'selected' ? 'notify.selectionRemoved' : 'notify.maybeRemoved', { n }),
+        action: { label: tr('notify.undo'), run: () => liveRef.current?.setPhotoStatus(photoId, current, { silentUndo: true }) },
+      });
+    }
+
     const action: PendingAction = { type: 'status', photoId, status: next };
 
     // flush באמצע, או שיש כבר פעולות ממתינות לאותה תמונה - נכנסים לתור כדי
     // לשמור על הסדר (אחרת פעולה ישנה מהתור עלולה להגיע לשרת אחרי החדשה).
     if (flushInFlightRef.current || queueHasPhoto(loadPendingQueue(galleryId, myParticipant.id), photoId)) {
       enqueuePendingAction(action);
-      setActionError('');
+      clearActionError();
       flushPendingQueue();
       return;
     }
@@ -1734,16 +1830,17 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     if (result === 'network-error') {
       enqueuePendingAction(action);
-      setActionError('');
+      clearActionError();
       return;
     }
     if (result === 'server-error') {
       applyStatusChange(photoId, current ?? null, next ?? undefined); // ביטול העדכון האופטימי - שגיאה אמיתית, לא ניתוק
-      setActionError(tr('err.updateNotSaved'));
+      dismissKey('undo-remove');
+      notifyError(tr('err.updateNotSaved'), () => liveRef.current?.setPhotoStatus(photoId, next, { silentUndo: true }));
       return;
     }
     dropQueuedAfterDirectSuccess(action);
-    setActionError('');
+    clearActionError();
   }
 
   function openNoteEditor(photoId: string, e: React.MouseEvent) {
@@ -1783,7 +1880,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         setFinishing(false);
         setFinishCountdown(null);
         setFinishFailed(true);
-        setActionError(tr('err.finishPendingOffline'));
+        notifyError(tr('err.finishPendingOffline'));
         return;
       }
     }
@@ -1796,7 +1893,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       setFinishing(false);
       setFinishCountdown(null);
       setFinishFailed(true);
-      setActionError(tr('err.offlineRetryLater'));
+      notifyError(tr('err.offlineRetryLater'));
       // לא מנקים את ה-localStorage כאן - זו לא כשלון סופי, רק ניתוק. הרשומה
       // נשארת, וה"סיימתי לבחור" יושלם אוטומטית בפעם הבאה שהעמוד ייטען או
       // שהטאב יחזור לפוקוס (checkPendingFinish), בלי שהלקוחה תצטרך ללחוץ שוב.
@@ -1816,11 +1913,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       const body = await res.json().catch(() => null);
       setFinishCountdown(null);
       setFinishFailed(true);
-      setActionError(localizedErrorFromBody(lang, body, tr('err.finishFailed'), viewerGender));
+      notifyError(localizedErrorFromBody(lang, body, tr('err.finishFailed'), viewerGender));
       return;
     }
 
-    setActionError('');
+    clearActionError();
     setFinishCountdown(null);
     setFinishFailed(false);
     setGalleryStatus('completed');
@@ -1929,9 +2026,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setFinishFailed(false);
   }
 
-  async function clearAllSelections() {
+  // skipConfirm - רק מ"נסי שוב" אחרי כשל (כבר אישרו פעם אחת)
+  async function clearAllSelections(skipConfirm = false) {
     if (!myParticipant || isLocked) return;
-    if (!window.confirm(tr('act.clearConfirm'))) return;
+    if (!skipConfirm && !window.confirm(tr('act.clearConfirm'))) return;
 
     setClearingAll(true);
     let res: Response;
@@ -1939,16 +2037,17 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       res = await fetch(`/api/gallery/${galleryId}/selection`, { method: 'DELETE' });
     } catch {
       setClearingAll(false);
-      setActionError(tr('err.offlineRetryLater'));
+      notifyError(tr('err.offlineRetryLater'), () => liveRef.current?.clearAllSelections(true));
       return;
     }
     setClearingAll(false);
 
     if (!res.ok) {
-      setActionError(tr('err.clearFailed'));
+      notifyError(tr('err.clearFailed'), () => liveRef.current?.clearAllSelections(true));
       return;
     }
-    setActionError('');
+    clearActionError();
+    dismissKey('undo-remove');
 
     setMyMarks({});
     setAllMarks((prev) => {
@@ -1971,22 +2070,21 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (!myParticipant?.isOwner || isLocked || aiPicksRunning) return;
 
     setAiPicksRunning(true);
-    setAiPicksMessage('');
-    setActionError('');
+    clearActionError();
 
     let res: Response;
     try {
       res = await fetch(`/api/gallery/${galleryId}/ai-picks`, { method: 'POST' });
     } catch {
       setAiPicksRunning(false);
-      setActionError(tr('err.offlineRetryLater'));
+      notifyError(tr('err.offlineRetryLater'), () => liveRef.current?.aiPicks());
       return;
     }
     setAiPicksRunning(false);
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      setActionError(localizedErrorFromBody(lang, data, tr('err.aiFailed'), viewerGender));
+      notifyError(localizedErrorFromBody(lang, data, tr('err.aiFailed'), viewerGender));
       return;
     }
 
@@ -1995,10 +2093,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     // לעדכן מקומית, כדי שהמסך יהיה אמת אחת עם מה שבאמת נשמר.
     await refreshGallerySilently();
 
-    setAiPicksMessage(
+    notify(
       data.pickedCount > 0
-        ? tr('act.aiPicked', { picked: data.pickedCount, analyzed: data.analyzedCount })
-        : tr('act.aiNone')
+        ? { type: 'success', key: 'ai', message: tr('act.aiPicked', { picked: data.pickedCount, analyzed: data.analyzedCount }) }
+        : { type: 'info', key: 'ai', message: tr('act.aiNone') }
     );
   }
 
@@ -2023,7 +2121,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     // אחריו, אחרת השרת ידחה אותה ("תמונה שלא סומנה").
     if (flushInFlightRef.current || queueHasPhoto(loadPendingQueue(galleryId, myParticipant.id), photoId)) {
       enqueuePendingAction(action);
-      setActionError('');
+      clearActionError();
       flushPendingQueue();
       return;
     }
@@ -2032,7 +2130,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     if (result === 'network-error') {
       enqueuePendingAction(action);
-      setActionError('');
+      clearActionError();
       return;
     }
     if (result === 'server-error') {
@@ -2043,11 +2141,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         if (!existing) return prev;
         return { ...prev, [photoId]: { ...existing, note: previousNote } };
       });
-      setActionError(tr('err.noteNotSaved'));
+      // "נסי שוב" פותח מחדש את חלון ההערה עם הטקסט שנכתב
+      notifyError(tr('err.noteNotSaved'), () => {
+        setNoteEditingId(photoId);
+        setNoteDraft(trimmed);
+      });
       return;
     }
     dropQueuedAfterDirectSuccess(action);
-    setActionError('');
+    clearActionError();
   }
 
   function toggleCompareSelect(photoId: string, e: React.SyntheticEvent) {
@@ -2150,11 +2252,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   }
 
   if (loading) {
-    return (
-      <div style={{ minHeight: '100vh', background: theme.bg, color: theme.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <p>{tr('common.loadingGallery')}</p>
-      </div>
-    );
+    return <GallerySkeleton label={tr('common.loadingGallery')} dir={dir} lang={lang} />;
   }
 
   // "נבחרו X/Y" ופס ההתקדמות תמיד לפי ה-ownerSelectedCount (הרשמי) - לא לפי
@@ -2207,6 +2305,43 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // הפס התחתון הקבוע בגריד - רק לבעלים כשהבחירה פתוחה, ולא כשמסך מלא פתוח
   // (לתצוגה המוגדלת יש פס משלה).
   const showBottomBar = isOwner && !isLocked && !enlargedId && !slideshowActive && !swipeMode && !compareViewOpen;
+  // ההודעות החולפות יושבות מעל מה שקבוע בתחתית המסך באותו רגע
+  const notifyBottom = enlargedId
+    ? 'calc(11rem + env(safe-area-inset-bottom))'
+    : swipeMode
+    ? 'calc(7.5rem + env(safe-area-inset-bottom))'
+    : showBottomBar
+    ? 'calc(4.25rem + env(safe-area-inset-bottom))'
+    : 'calc(1rem + env(safe-area-inset-bottom))';
+
+  // שורת הסינון ("הכל/נבחרו/אולי/ביחד") מופיעה רק כשיש מה לסנן: אחרי הסימון
+  // הראשון, כשמישהו אחר כבר סימן, או בגלריה עם פרקים (הצ'יפים של הפרקים
+  // עצמם - GalleryNavBar - גלויים מההתחלה). סינון פעיל תמיד נשאר גלוי.
+  const othersHaveMarks = Object.values(allMarks).some((marks) => marks.some((m) => m.participantId !== myParticipant?.id));
+  const showFilterRow = mySelectedCount + maybeCount > 0 || othersHaveMarks || together.show || chapters.length > 0 || viewFilter !== 'all';
+  // "🪄 עזרי לי לבחור" - רק לבעלים כשהבחירה פתוחה (ראו handleAiPicks)
+  const aiPicksAvailable = !isLocked && isOwner && photos.length > 0;
+  // תפריט "⋯ עוד" (components/GalleryMoreMenu.tsx) - פעולות משניות במקום
+  // שורת כפתורים; השפה נוספת בתוך התפריט עצמו
+  const moreMenuItems: MoreMenuItem[] = [
+    {
+      key: 'compare',
+      label: compareMode ? tr('hdr.exitCompare') : tr('hdr.compare'),
+      onSelect: () => {
+        setCompareMode((prev) => !prev);
+        setCompareIds([]);
+        setCompareViewOpen(false);
+      },
+    },
+    ...(photos.length > 0 ? [{ key: 'slideshow', label: tr('act.slideshow'), onSelect: openSlideshow }] : []),
+    ...(aiPicksAvailable && ownerSelectedCount > 0
+      ? [{ key: 'ai', label: aiPicksRunning ? tr('act.aiRunning') : tr('act.aiHelp'), onSelect: handleAiPicks, disabled: aiPicksRunning }]
+      : []),
+    // האישור (window.confirm) נשאר בתוך clearAllSelections
+    ...(!isLocked && (mySelectedCount > 0 || maybeCount > 0)
+      ? [{ key: 'clear', label: clearingAll ? tr('act.clearing') : tr('act.clearAll'), onSelect: () => { clearAllSelections(); }, disabled: clearingAll, danger: true }]
+      : []),
+  ];
 
   // "צבע מותג": אם הצלמת לא הגדירה אחד בהגדרות, נשארים עם הפלטה המקורית
   // (theme.gold/goldBright) - ראו app/api/gallery/[id]/route.ts.
@@ -2269,23 +2404,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             {expiresAt ? tr('welcome.until', { date: dateText(expiresAt) }) : ''}
             {tr('welcome.end')}
           </p>
-          <div
-            style={{
-              textAlign: 'start', background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10,
-              padding: '1rem 1.25rem', marginBottom: '1.5rem', fontSize: 13, color: theme.textMuted,
-              display: 'flex', flexDirection: 'column', gap: '0.5rem',
-            }}
-          >
-            <span>{tr('welcome.tipOpen')}</span>
-            <span>{tr('welcome.tipCompare')}</span>
-            <span>{tr('welcome.tipNote')}</span>
-            {giftPhotos.length > 0 && (
-              <span style={{ color: accent }}>{tr('welcome.gifts', { count: giftPhotos.length })}</span>
-            )}
-            {!isOwner && (
-              <span>{trOwner('welcome.guestNote', { owner: ownerLabel(owner?.displayName) })}</span>
-            )}
-          </div>
+          {/* שער פתיחה קצר: שורה אחת על הגלריה (+ שורת מתנות אם יש) וכפתור
+              התחלה - ההסברים עצמם מופיעים בגריד ברגע שהם רלוונטיים */}
+          {giftPhotos.length > 0 && (
+            <p style={{ color: accent, fontSize: 14, marginTop: '-0.75rem', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+              {tr('welcome.gifts', { count: giftPhotos.length })}
+            </p>
+          )}
           <button onClick={dismissWelcome} style={{ ...primaryButtonStyle, width: '100%' }}>
             {tr('welcome.start')}
           </button>
@@ -2296,46 +2421,77 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   return (
     <div dir={dir} lang={lang} style={{ background: theme.bg, minHeight: '100vh', color: theme.text, fontFamily: theme.fontSans }}>
-      <div
-        style={{
-          position: 'sticky', top: 0, zIndex: 50, backdropFilter: 'blur(12px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '1rem 1.5rem', borderBottom: `1px solid ${theme.border}`, flexWrap: 'wrap', gap: '1rem',
-          background: 'rgba(15,22,38,0.92)',
-        }}
-      >
-        <div style={{ display: 'flex', gap: '0.75rem 1rem', alignItems: 'center', fontSize: 14, flexWrap: 'wrap' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: theme.green, display: 'inline-block' }} />
-            {tr('hdr.maybe', { n: maybeCount })}
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: accent, display: 'inline-block' }} />
-            {tr('hdr.selected', { n: mySelectedCount })}
-          </span>
+      {/* עיצוב משותף לכותרת הדביקה (שורה דקה אחת בנייד, מתכווצת בגלילה למטה) -
+          כ-CSS ולא inline כי צריך media queries ומצב מכווץ */}
+      <style>{`
+        .gh {
+          position: sticky; top: 0; z-index: 50; backdrop-filter: blur(12px);
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 1rem 1.5rem; border-bottom: 1px solid ${theme.border}; flex-wrap: wrap; gap: 1rem;
+          background: rgba(15,22,38,0.92); transition: padding 0.2s ease;
+        }
+        .gh-start { display: flex; gap: 0.75rem 1rem; align-items: center; font-size: 14px; flex-wrap: wrap; min-width: 0; }
+        .gh-end { display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; }
+        .gh-btn { padding: 0.35rem 0.75rem !important; font-size: 12px !important; white-space: nowrap; }
+        .gh-ring {
+          width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+          font-size: 12px; font-weight: bold; transition: width 0.2s ease, height 0.2s ease;
+        }
+        .gh-ring-inner {
+          width: 34px; height: 34px; border-radius: 50%; background: ${theme.bg};
+          display: flex; align-items: center; justify-content: center; transition: width 0.2s ease, height 0.2s ease;
+        }
+        @media (max-width: 640px) {
+          .gh { padding: 0.45rem 0.75rem; gap: 0.3rem 0.5rem; }
+          .gh-start { flex-wrap: nowrap; gap: 0.4rem; }
+          .gh-who { display: none; }
+          .gh-count-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+          .gh-btn { min-height: 40px; min-width: 40px; padding: 0.3rem 0.6rem !important; font-size: 13px !important; }
+          .gh[data-compact="true"] { padding: 0.2rem 0.75rem; }
+          .gh[data-compact="true"] .gh-btn { min-height: 34px; min-width: 34px; padding: 0.15rem 0.5rem !important; }
+          .gh[data-compact="true"] .gh-ring { width: 30px; height: 30px; font-size: 9px; }
+          .gh[data-compact="true"] .gh-ring-inner { width: 23px; height: 23px; }
+        }
+        /* גבהים לפי 100dvh (הגובה הנראה בפועל בנייד, בלי סרגל הכתובת) עם נפילה
+           ל-vh בדפדפנים ישנים */
+        .enl-img { max-height: calc(100vh - 13rem); max-height: calc(100dvh - 13rem); }
+        .vh-45 { max-height: 45vh; max-height: 45dvh; }
+        .vh-75 { max-height: 75vh; max-height: 75dvh; }
+        .vh-80 { max-height: 80vh; max-height: 80dvh; }
+        .vh-90 { max-height: 90vh; max-height: 90dvh; }
+        /* גריד: אוטומטי במסך רחב; בנייד 2/3/4 עמודות לפי בחירה (▦, נשמר במכשיר) */
+        .ggrid { display: grid; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(140px, 45vw), 1fr)); gap: 1rem; }
+        .gcols-row { display: none; }
+        @media (max-width: 640px) {
+          .ggrid { grid-template-columns: repeat(var(--gcols, 2), minmax(0, 1fr)); gap: 0.6rem; }
+          .ggrid[data-cols="3"] { gap: 0.4rem; }
+          .ggrid[data-cols="4"] { gap: 0.3rem; }
+          .ggrid[data-cols="3"] .gc-extra, .ggrid[data-cols="4"] .gc-extra { display: none; }
+          .gcols-row { display: flex; }
+        }
+        /* תמונות הגריד נכנסות בהדרגה כשהן נטענות (data-loaded מ-onLoad/onError) */
+        .gimg { opacity: 0; transition: opacity 0.35s ease; }
+        .gimg[data-loaded="true"] { opacity: 1; }
+        @media (prefers-reduced-motion: reduce) {
+          .gh, .gh-ring, .gh-ring-inner, .gimg { transition: none; }
+        }
+      `}</style>
+      <header className="gh" data-compact={headerCompact ? 'true' : 'false'}>
+        <div className="gh-start">
           {myParticipant && (
-            <span style={{ color: theme.textFaint, fontSize: 12 }}>
+            <span className="gh-who" style={{ color: theme.textFaint, fontSize: 12 }}>
               {tr('hdr.connectedAs', { name: myParticipant.displayName })}{isOwner ? '' : tr('hdr.family')}
             </span>
           )}
-          <button
-            onClick={() => {
-              setCompareMode((prev) => !prev);
-              setCompareIds([]);
-            }}
-            style={{
-              ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12,
-              borderColor: compareMode ? accent : theme.border, color: compareMode ? accent : theme.textMuted,
-            }}
-          >
-            {compareMode ? tr('hdr.exitCompare') : tr('hdr.compare')}
-          </button>
+          {/* "⚡ בחירה מהירה" נשארת גלויה; כל השאר (השוואה, סקירה ברצף, ביטול
+              הכל, שפה) בתפריט "⋯ עוד" אחד - components/GalleryMoreMenu.tsx */}
           {!readOnly && (
           <button
+            className="gh-btn"
             onClick={() => (swipeMode ? exitSwipeMode() : startSwipeMode(1))}
             disabled={isLocked || photos.length === 0}
             style={{
-              ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12,
+              ...outlineButtonStyle,
               borderColor: swipeMode ? accent : theme.border, color: swipeMode ? accent : theme.textMuted,
               opacity: isLocked || photos.length === 0 ? 0.5 : 1,
             }}
@@ -2343,52 +2499,67 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             {swipeMode ? tr('hdr.exitSwipe') : tr('hdr.swipe')}
           </button>
           )}
+          <GalleryMoreMenu
+            label={tr('hdr.more')}
+            ariaLabel={tr('hdr.moreAria')}
+            items={moreMenuItems}
+            lang={lang}
+            onLangChange={changeLang}
+            languageLabel={tr('common.language')}
+            accent={accent}
+            buttonClassName="gh-btn"
+          />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-          <LanguagePicker lang={lang} onChange={changeLang} accent={accent} />
-          <div style={{ textAlign: 'start' }}>
-            <div>
-              {tr('hdr.selectedInPackage')}{' '}
-              <bdi dir="ltr">
-                <b style={{ color: accent, fontFamily: theme.fontSerif }}>{ownerSelectedCount}</b> / {packageInfo?.included ?? 0}
-              </bdi>
-            </div>
-            <div style={{ fontSize: 12, color: theme.textFaint }}>
-              {isOwner ? tr('hdr.ownerMaybe', { n: maybeCount }) : tr('hdr.guestSummary', { selected: mySelectedCount, maybe: maybeCount })}
-            </div>
-            {/* כמה תמונות כבר נפתחו במסך מלא (מקומי, למכשיר הזה) */}
-            {!isLocked && viewProgress.seen > 0 && (
-              <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 3 }}>
-                <span>
-                  {rich('hdr.viewed', { seen: <bdi dir="ltr">{viewProgress.seen}</bdi>, total: <bdi dir="ltr">{viewProgress.total}</bdi> })}
-                </span>
-                <div
-                  role="progressbar"
-                  aria-label={tr('hdr.viewedAria')}
-                  aria-valuemin={0}
-                  aria-valuemax={viewProgress.total}
-                  aria-valuenow={viewProgress.seen}
-                  style={{ height: 3, borderRadius: 2, background: theme.panelInput, marginTop: 3, overflow: 'hidden' }}
-                >
-                  <div style={{ width: `${viewProgress.pct}%`, height: '100%', background: accentSolid }} />
-                </div>
-              </div>
-            )}
+        {/* מונה אחד בלבד: "X/Y בחבילה" + טבעת אחוזים. הספירות "נבחר/אולי" של
+            הצופה/ה עצמו/ה מופיעות בשורת הסינון, וההתקדמות בצפייה - מתחתיה */}
+        <div className="gh-end">
+          <div style={{ textAlign: 'start', fontSize: 14, whiteSpace: 'nowrap' }}>
+            <span className="gh-count-label">{tr('hdr.selectedInPackage')}{' '}</span>
+            <bdi dir="ltr">
+              <b style={{ color: accent, fontFamily: theme.fontSerif }}>{ownerSelectedCount}</b> / {packageInfo?.included ?? 0}
+            </bdi>
           </div>
           <div
+            className="gh-ring"
+            aria-hidden="true"
             style={{
-              width: 44, height: 44, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 12, fontWeight: 'bold', color: accent, fontFamily: theme.fontSerif,
+              color: accent, fontFamily: theme.fontSerif,
               background: `conic-gradient(${accentSolid} ${progressPct}%, ${theme.panelInput} ${progressPct}%)`,
             }}
           >
-            <div style={{ width: 34, height: 34, borderRadius: '50%', background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {progressPct}%
-            </div>
+            <div className="gh-ring-inner">{progressPct}%</div>
           </div>
         </div>
-      </div>
+
+        {/* מצב השוואה (נפתח מתפריט "⋯ עוד") - השורה בתוך הכותרת הדביקה, כדי
+            ש"השוואה כעת" ו"יציאה" יהיו זמינים מכל מקום בגריד */}
+        {compareMode && (
+          <div style={{ flexBasis: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: 13 }}>
+            <span role="status" style={{ color: theme.textMuted }}>
+              {tr('act.compareHint', { max: MAX_COMPARE, count: compareIds.length })}
+            </span>
+            {compareIds.length >= 2 && (
+              <button
+                onClick={() => setCompareViewOpen(true)}
+                style={{ ...primaryButtonStyle, padding: '0.4rem 1rem', minHeight: 40 }}
+              >
+                {tr('act.compareNow', { count: compareIds.length })}
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setCompareMode(false);
+                setCompareIds([]);
+                setCompareViewOpen(false);
+              }}
+              style={{ ...outlineButtonStyle, padding: '0.4rem 0.9rem', minHeight: 40 }}
+            >
+              {tr('act.exitCompare')}
+            </button>
+          </div>
+        )}
+      </header>
 
       {(isOffline || pendingCount > 0) && (
         <div role="status" aria-live="polite" style={{ padding: '0.5rem 1.5rem', background: theme.warningBg, color: theme.warningText, fontSize: 13, textAlign: 'center' }}>
@@ -2458,43 +2629,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </div>
       )}
 
-      {giftPhotos.length > 0 && (
-        <div
-          role="note"
-          style={{
-            margin: '0.6rem 1.5rem 0', padding: '0.6rem 1rem', borderRadius: 8,
-            background: `linear-gradient(90deg, ${accent}2b, ${accent}0d)`, border: `1px dashed ${accent}88`,
-            color: theme.text, fontSize: 14,
-          }}
-        >
-          {tr('gift.banner', { count: giftPhotos.length })}
-        </div>
-      )}
-
-      {!isLocked && showTapHint && (
-        <div
-          role="status"
-          style={{
-            margin: '0.6rem 1.5rem 0', padding: '0.5rem 0.75rem 0.5rem 0.5rem', borderRadius: 8,
-            background: `${accent}1f`, border: `1px solid ${accent}55`, color: theme.text, fontSize: 13,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem',
-          }}
-        >
-          <span>{tr('hint.tap')}</span>
-          <button
-            type="button"
-            onClick={dismissTapHint}
-            aria-label={tr('common.closeNotice')}
-            style={{
-              flexShrink: 0, width: 44, height: 44, borderRadius: '50%', border: 'none',
-              background: 'transparent', color: theme.textMuted, fontSize: 16, cursor: 'pointer',
-            }}
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
       {resumeOffer && (
         <div
           role="status"
@@ -2504,7 +2638,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap',
           }}
         >
-          <span>{rich('resume.text', { n: <bdi dir="ltr">{resumeOffer.index + 1}</bdi> })}</span>
+          <span>
+            {rich('resume.text', { n: <bdi dir="ltr">{resumeOffer.index + 1}</bdi> })}
+            {/* ההתקדמות בצפייה עברה מהכותרת לכאן (ולשורה העדינה מעל הגריד) */}
+            {viewProgress.seen > 0 && (
+              <span style={{ display: 'block', fontSize: 12, color: theme.textFaint }}>
+                {rich('hdr.viewed', { seen: <bdi dir="ltr">{viewProgress.seen}</bdi>, total: <bdi dir="ltr">{viewProgress.total}</bdi> })}
+              </span>
+            )}
+          </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <button type="button" onClick={resumeFromOffer} style={{ ...primaryButtonStyle, padding: '0.4rem 1.1rem', minHeight: 44 }}>
               {tr('resume.continue')}
@@ -2539,18 +2681,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           }}
         >
           {expiresAt ? tr('ro.endedWithDate', { date: dateText(expiresAt) }) : tr('ro.ended')}
-        </div>
-      )}
-
-      {actionError && (
-        <div role="alert" style={{ padding: '0.5rem 1.5rem', background: theme.errorBg, color: theme.errorText, fontSize: 14 }}>
-          {actionError}
-        </div>
-      )}
-
-      {aiPicksMessage && (
-        <div role="status" style={{ padding: '0.5rem 1.5rem', background: theme.successBg, color: theme.successText, fontSize: 14, textAlign: 'center' }}>
-          {aiPicksMessage}
         </div>
       )}
 
@@ -2635,10 +2765,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             </button>
           </div>
 
-          {zipMessage && (
-            <p role="status" style={{ color: theme.textMuted, fontSize: 13, marginBottom: '0.75rem' }}>{zipMessage}</p>
-          )}
-
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(130px, 40vw), 1fr))', gap: '0.75rem' }}>
             {deliveredPhotos.map((photo) => (
               <div key={photo.id} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: `1px solid ${theme.border}` }}>
@@ -2649,7 +2775,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     alt={photo.filename}
                     loading="lazy"
                     decoding="async"
-                    onError={() => handleImageError(`delivered:${photo.id}`)}
+                    className="gimg"
+                    onLoad={markImageLoaded}
+                    onError={(e) => {
+                      markImageLoaded(e);
+                      handleImageError(`delivered:${photo.id}`);
+                    }}
                     style={{ width: '100%', height: 130, objectFit: 'cover', display: 'block' }}
                   />
                 ) : (
@@ -2679,53 +2810,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       </p>
 
       <div style={{ padding: '0 1.5rem 1rem', textAlign: 'center' }}>
-        <button
-          onClick={() => {
-            setCompareMode((prev) => !prev);
-            setCompareIds([]);
-            setCompareViewOpen(false);
-          }}
-          style={{ ...outlineButtonStyle, marginTop: '0.5rem' }}
-        >
-          {compareMode ? tr('act.exitCompare') : tr('act.compareMany')}
-        </button>
-        {compareMode && (
-          <span style={{ marginInlineStart: '0.5rem', fontSize: 13, color: theme.textMuted }}>
-            {tr('act.compareHint', { max: MAX_COMPARE, count: compareIds.length })}
-          </span>
-        )}
-        {compareMode && compareIds.length >= 2 && (
-          <button
-            onClick={() => setCompareViewOpen(true)}
-            style={{ ...primaryButtonStyle, marginTop: '0.5rem', marginInlineStart: '0.5rem', padding: '0.5rem 1.1rem' }}
-          >
-            {tr('act.compareNow', { count: compareIds.length })}
-          </button>
-        )}
-
-        {photos.length > 0 && (
-          <button onClick={openSlideshow} style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginInlineStart: '0.5rem' }}>
-            {tr('act.slideshow')}
-          </button>
-        )}
-
-        {!isLocked && (mySelectedCount > 0 || maybeCount > 0) && (
-          <button
-            onClick={clearAllSelections}
-            disabled={clearingAll}
-            style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginInlineStart: '0.5rem', color: theme.errorText, opacity: clearingAll ? 0.6 : 1 }}
-          >
-            {clearingAll ? tr('act.clearing') : tr('act.clearAll')}
-          </button>
-        )}
-
-        {/* רק לבעלים - השרת מחזיר 403 לאורחים (עלות AI לצלמת), ראו app/api/gallery/[id]/ai-picks */}
-        {!isLocked && isOwner && photos.length > 0 && (
+        {/* "🪄 עזרי לי לבחור" גלוי רק כל עוד לבעלים אין אף בחירה - אחר כך הוא
+            בתפריט "⋯ עוד". רק לבעלים - השרת מחזיר 403 לאורחים (עלות AI לצלמת),
+            ראו app/api/gallery/[id]/ai-picks */}
+        {aiPicksAvailable && ownerSelectedCount === 0 && (
           <button
             onClick={handleAiPicks}
             disabled={aiPicksRunning}
             title={tr('act.aiTitle')}
-            style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginInlineStart: '0.5rem', borderColor: theme.gold, color: theme.gold, opacity: aiPicksRunning ? 0.6 : 1 }}
+            style={{ ...outlineButtonStyle, marginTop: '0.5rem', borderColor: theme.gold, color: theme.gold, opacity: aiPicksRunning ? 0.6 : 1 }}
           >
             {aiPicksRunning ? tr('act.aiRunning') : tr('act.aiHelp')}
           </button>
@@ -2791,8 +2884,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   decoding="async"
                   onError={() => handleImageError(photo.id)}
                   onContextMenu={(e) => e.preventDefault()}
+                  className={compareIds.length > 2 ? 'vh-45' : 'vh-80'}
                   style={{
-                    maxHeight: compareIds.length > 2 ? '45vh' : '80vh', maxWidth: '100%', objectFit: 'contain', borderRadius: 6,
+                    maxWidth: '100%', objectFit: 'contain', borderRadius: 6,
                     WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
                   }}
                 />
@@ -3085,9 +3179,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               }}
               onContextMenu={(e) => e.preventDefault()}
               title={tr('en.zoomTitle')}
+              className="enl-img"
               style={{
-                // מקום לפס הבחירה הקבוע למטה, כדי שהכפתורים לא יכסו את התמונה
-                maxHeight: 'calc(100vh - 13rem)', maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
+                // מקום לפס הבחירה הקבוע למטה (max-height ב-.enl-img, לפי 100dvh), כדי
+                // שהכפתורים לא יכסו את התמונה
+                maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
                 transform: `scale(${zoomScale})`, transition: zoomScale === 1 ? 'transform 0.15s ease-out' : 'none',
                 cursor: zoomScale > 1 ? 'zoom-out' : 'zoom-in',
                 WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
@@ -3306,8 +3402,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 onError={() => handleImageError(photo.id)}
                 onClick={(e) => e.stopPropagation()}
                 onContextMenu={(e) => e.preventDefault()}
+                className="vh-75"
                 style={{
-                  maxHeight: '75vh', maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
+                  maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
                   WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
                 }}
               />
@@ -3436,6 +3533,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </div>
       )}
 
+      {showFilterRow && (
       <div id="gallery-filter-row" style={{ display: 'flex', gap: '0.5rem', padding: '0 1.5rem 0.75rem', justifyContent: 'center', flexWrap: 'wrap', scrollMarginTop: 96 }}>
         {([
           { key: 'all', label: tr('f.all', { n: photos.length }) },
@@ -3465,6 +3563,27 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </button>
         ))}
       </div>
+      )}
+
+      {/* כמה תמונות כבר נפתחו במסך מלא (מקומי, למכשיר הזה) - שורה עדינה
+          מתחת לסינון, במקום מונה נוסף בכותרת */}
+      {!isLocked && viewProgress.seen > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', padding: '0 1.5rem 0.6rem', fontSize: 11, color: theme.textFaint }}>
+          <span>
+            {rich('hdr.viewed', { seen: <bdi dir="ltr">{viewProgress.seen}</bdi>, total: <bdi dir="ltr">{viewProgress.total}</bdi> })}
+          </span>
+          <div
+            role="progressbar"
+            aria-label={tr('hdr.viewedAria')}
+            aria-valuemin={0}
+            aria-valuemax={viewProgress.total}
+            aria-valuenow={viewProgress.seen}
+            style={{ width: 60, height: 3, borderRadius: 2, background: theme.panelInput, overflow: 'hidden' }}
+          >
+            <div style={{ width: `${viewProgress.pct}%`, height: '100%', background: accentSolid }} />
+          </div>
+        </div>
+      )}
 
       <GalleryNavBar
         chapters={chapters}
@@ -3497,44 +3616,30 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         />
       )}
 
-      {/* הודעה קופצת לא-חוסמת על סימונים חדשים של בני משפחה (הסקר החי) -
-          אזור ה-aria-live קיים תמיד כדי שקוראי מסך יכריזו על השינוי */}
-      <div
-        role="status"
-        aria-live="polite"
-        style={{
-          position: 'fixed', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 60,
-          maxWidth: 'calc(100vw - 32px)', pointerEvents: othersToast ? 'auto' : 'none',
-        }}
-      >
-        {othersToast && (
-          <button
-            type="button"
-            onClick={() => setOthersToast(null)}
-            title={tr('common.close')}
-            style={{
-              background: 'rgba(15,22,38,0.95)', color: theme.text, border: `1px solid ${accent}`,
-              borderRadius: 20, padding: '0.45rem 1rem', fontSize: 13, cursor: 'pointer',
-              boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
-            }}
-          >
-            {`🔔 ${othersToast.map((o) => tr('toast.othersItem', { name: o.displayName, count: o.count })).join(' · ')}`}
-          </button>
-        )}
-      </div>
-
       {visiblePhotos.length === 0 && (
         <p style={{ textAlign: 'center', color: theme.textFaint, fontSize: 13, padding: '1rem' }}>
           {tr('grid.empty')}
         </p>
       )}
 
+      {/* ▦ מספר עמודות בנייד (2/3/4) - מוצג רק במסך צר (.gcols-row) */}
+      <div className="gcols-row" style={{ justifyContent: 'flex-end', padding: '0 1rem 0.5rem' }}>
+        <button
+          type="button"
+          onClick={cycleMobileCols}
+          aria-label={tr('grid.colsAria', { n: mobileCols })}
+          title={tr('grid.colsAria', { n: mobileCols })}
+          style={{ ...outlineButtonStyle, minHeight: 40, minWidth: 44, padding: '0.25rem 0.7rem', fontSize: 13 }}
+        >
+          <span aria-hidden="true">▦ <bdi dir="ltr">{mobileCols}</bdi></span>
+        </button>
+      </div>
+
       <div
+        className="ggrid"
+        data-cols={mobileCols}
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(min(140px, 45vw), 1fr))',
-          alignItems: 'start',
-          gap: '1rem',
+          ['--gcols' as string]: mobileCols,
           // מקום לפס התחתון הקבוע, כדי שלא יכסה את השורה האחרונה
           padding: showBottomBar ? '0 1.5rem calc(4.5rem + env(safe-area-inset-bottom))' : '0 1.5rem 1.5rem',
         }}
@@ -3607,8 +3712,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   padding: '1px 7px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 4,
                 }}
               >
-                {/* מספר רץ במקום שם הקובץ; כבר נפתחה במסך מלא - אייקון עין קטן, לא רק צבע */}
-                {viewedIds.has(photo.id) && <span title={tr('card.viewed')} style={{ opacity: 0.85 }}>👁</span>}
+                {/* מספר רץ במקום שם הקובץ (מה שכבר נצפה נשמר ב-viewedIds - להתקדמות
+                    ולפרקים, בלי אייקון על כל כרטיס) */}
                 <bdi dir="ltr">{photoNumber}</bdi>
               </div>
 
@@ -3634,6 +3739,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   ממרכז התמונה (פנים), קטן ושקוף-למחצה */}
               {photo.possiblyBlurry && (
                 <div
+                  className="gc-extra"
                   role="img"
                   aria-label={tr('card.blurAria')}
                   title={tr('card.blurTitle')}
@@ -3685,6 +3791,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
               {isGift && (
                 <div
+                  className="gc-extra"
                   style={{
                     // zIndex 0 - מעל התמונה, מתחת לשאר התגים/כפתורים (zIndex 1)
                     position: 'absolute', bottom: 0, insetInline: 0, zIndex: 0, pointerEvents: 'none',
@@ -3745,7 +3852,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     draggable={false}
                     loading="lazy"
                     decoding="async"
-                    onError={() => handleImageError(photo.id)}
+                    className="gimg"
+                    onLoad={markImageLoaded}
+                    onError={(e) => {
+                      markImageLoaded(e);
+                      handleImageError(photo.id);
+                    }}
                     style={{
                       // aspectRatio 'auto 4 / 3': שומר מקום (ורקע) עד שהתמונה נטענת ואז
                       // עובר ליחס האמיתי שלה - בלי זה אריחים שלא נטענו בגובה 0, כך שגם
@@ -3873,9 +3985,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               aria-labelledby="finish-dialog-title"
               onClick={(e) => e.stopPropagation()}
               onKeyDown={handleFinishModalKeyDown}
+              className="vh-90"
               style={{
                 background: theme.panel, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 14,
-                padding: '1.25rem 1.25rem 1rem', width: '100%', maxWidth: 380, maxHeight: '90vh', overflowY: 'auto',
+                padding: '1.25rem 1.25rem 1rem', width: '100%', maxWidth: 380, overflowY: 'auto',
               }}
             >
               <p id="finish-dialog-title" style={{ fontFamily: theme.fontSerif, fontSize: 20, margin: '0 0 0.75rem', textAlign: 'center' }}>
@@ -3972,38 +4085,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         );
       })()}
 
-      {/* הודעה קופצת חד-פעמית: עברת את מכסת החבילה (ראו prevOwnerSelectedRef) */}
-      {showExtraPriceToast && packageInfo && extraLabel && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="gallery-toast"
-          style={{
-            position: 'fixed', top: 'calc(0.75rem + env(safe-area-inset-top))', left: '50%', transform: 'translateX(-50%)',
-            zIndex: 80, width: 'max-content', maxWidth: 'calc(100vw - 2rem)',
-            background: theme.panel, color: theme.text, border: `1px solid ${accent}88`, borderRadius: 10,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.4)', padding: '0.4rem 0.4rem 0.4rem 0.9rem', fontSize: 14,
-            display: 'flex', alignItems: 'center', gap: '0.5rem',
-          }}
-        >
-          <style>{`
-            @keyframes gallery-toast-in { from { opacity: 0; } to { opacity: 1; } }
-            .gallery-toast { animation: gallery-toast-in 0.25s ease-out; }
-            @media (prefers-reduced-motion: reduce) { .gallery-toast { animation: none; } }
-          `}</style>
-          <span>
-            {tr('toast.extraPrice', { included: packageInfo.included, price: money(packageInfo.extraPrice) })}
-          </span>
-          <button
-            type="button"
-            onClick={() => setShowExtraPriceToast(false)}
-            aria-label={tr('common.closeNotice')}
-            style={{ width: 44, height: 44, flexShrink: 0, borderRadius: '50%', border: 'none', background: 'transparent', color: theme.textMuted, fontSize: 15, cursor: 'pointer' }}
-          >
-            ✕
-          </button>
-        </div>
-      )}
+      {/* הודעות חולפות (components/useNotify.tsx) - מעל הפס התחתון, או מעל פס
+          הבחירה בתצוגה המוגדלת / כפתורי הבחירה המהירה */}
+      <NotifyHost
+        notifier={notifier}
+        bottom={notifyBottom}
+        closeLabel={tr('common.closeNotice')}
+        accent={accent}
+        dir={dir}
+      />
     </div>
   );
 }

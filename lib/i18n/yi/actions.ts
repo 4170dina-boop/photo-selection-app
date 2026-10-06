@@ -4,7 +4,6 @@ import type { actions as he } from '../he/actions';
 
 export const actions: Section<typeof he> = {
   'act.exitCompare': 'ארויס פון פארגלייכן',
-  'act.compareMany': '⇄ פארגלייכן עטליכע בילדער',
   'act.compareHint': 'קלייבט אויס ביז {max} בילדער צו פארגלייכן ({count}/{max})',
   'act.compareNow': 'פארגלייכן יעצט ({count})',
   'act.slideshow': '▶ דורכקוקן איינס נאכן צווייטן',

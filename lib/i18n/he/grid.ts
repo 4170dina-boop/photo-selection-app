@@ -9,6 +9,7 @@ export const grid = {
   'f.only': 'רק {name} ({n})',
   'f.onlyMe': 'רק אני ({n})',
   'grid.empty': 'אין תמונות להצגה בסינון הזה.',
+  'grid.colsAria': 'מספר עמודות בגריד: {n} (לחיצה מחליפה)',
 
   // "סימן/ה" - השם יכול להיות של גבר או של אישה
   'toast.othersItem': {
@@ -20,7 +21,6 @@ export const grid = {
   'card.compareOff': 'לא נבחרה להשוואה',
   'card.open': 'פתיחת {label}',
   'card.hasNote': ', יש הערה',
-  'card.viewed': 'כבר צפית בתמונה הזו',
   'card.badgeMaybe': '🤔 אולי',
   'card.blurAria': 'ייתכן שהתמונה לא חדה (הערכה אוטומטית)',
   'card.blurTitle': 'הערכה אוטומטית לפי חדות - לא תמיד מדויקת',

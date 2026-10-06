@@ -3,7 +3,6 @@ import type { Section } from '../types';
 import type { common as he } from '../he/common';
 
 export const common: Section<typeof he> = {
-  'common.loading': 'Cargando...',
   'common.loadingGallery': 'Cargando tu galería...',
   'common.back': 'Volver',
   'common.cancel': 'Cancelar',
@@ -19,6 +18,10 @@ export const common: Section<typeof he> = {
   'common.photographer': 'tu fotógrafa',
   'common.ownerFallback': { f: 'la clienta principal', m: 'el cliente principal' },
   'common.language': 'Idioma',
+  'notify.retry': 'Reintentar',
+  'notify.undo': 'Deshacer',
+  'notify.selectionRemoved': 'Quitaste la selección de la foto {n}',
+  'notify.maybeRemoved': 'Quitaste "quizás" de la foto {n}',
 
   'err.noInternet': 'Sin conexión a internet. Revisa tu conexión e inténtalo de nuevo.',
   'err.offlineRetryLater': 'Ahora mismo no hay conexión: inténtalo de nuevo cuando vuelva.',

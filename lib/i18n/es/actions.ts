@@ -4,7 +4,6 @@ import type { actions as he } from '../he/actions';
 
 export const actions: Section<typeof he> = {
   'act.exitCompare': 'Salir de comparar',
-  'act.compareMany': '⇄ Comparar varias fotos',
   'act.compareHint': 'Elige hasta {max} fotos para comparar ({count}/{max})',
   'act.compareNow': 'Comparar ahora ({count})',
   'act.slideshow': '▶ Ver en secuencia',

@@ -3,7 +3,6 @@ import type { Message } from '../types';
 
 export const actions = {
   'act.exitCompare': { f: 'צאי ממצב השוואה', m: 'צא ממצב השוואה', n: 'צא/י ממצב השוואה' },
-  'act.compareMany': '⇄ השוואה בין כמה תמונות',
   'act.compareHint': {
     f: 'בחרי עד {max} תמונות להשוואה ({count}/{max})',
     m: 'בחר עד {max} תמונות להשוואה ({count}/{max})',

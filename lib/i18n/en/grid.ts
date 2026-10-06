@@ -10,6 +10,7 @@ export const grid: Section<typeof he> = {
   'f.only': 'Only {name} ({n})',
   'f.onlyMe': 'Only me ({n})',
   'grid.empty': 'No photos match this filter.',
+  'grid.colsAria': 'Grid columns: {n} (tap to change)',
 
   'toast.othersItem': {
     one: '{name} marked a new photo',
@@ -20,7 +21,6 @@ export const grid: Section<typeof he> = {
   'card.compareOff': 'not selected for comparison',
   'card.open': 'Open {label}',
   'card.hasNote': ', has a note',
-  'card.viewed': "You've already viewed this photo",
   'card.badgeMaybe': '🤔 Maybe',
   'card.blurAria': 'This photo may not be sharp (automatic estimate)',
   'card.blurTitle': 'Automatic sharpness estimate - not always accurate',

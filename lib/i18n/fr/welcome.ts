@@ -8,31 +8,21 @@ export const welcome: Section<typeof he> = {
   'welcome.package': ' : votre forfait comprend {n} photos',
   'welcome.until': ', jusqu’au {date}',
   'welcome.end': '.',
-  'welcome.tipOpen': '🔍 Touchez une photo pour l’agrandir, puis choisissez avec les boutons en bas',
-  'welcome.tipCompare': '⇄ Vous pouvez comparer plusieurs photos côte à côte',
-  'welcome.tipNote': '✎ Vous pouvez laisser une note personnelle à votre photographe sur chaque photo (depuis la vue agrandie)',
   'welcome.gifts': {
     one: '🎁 Une photo cadeau de ma part vous attend aussi, sans être décomptée du forfait',
     other: '🎁 {count} photos cadeaux de ma part vous attendent aussi, sans être décomptées du forfait',
   },
-  // genre de la cliente/du client principal (pas du visiteur)
-  'welcome.guestNote': {
-    f: '👀 Vos choix ici sont des suggestions à discuter : seule {owner} peut valider la sélection finale',
-    m: '👀 Vos choix ici sont des suggestions à discuter : seul {owner} peut valider la sélection finale',
-  },
   'welcome.start': 'C’est parti ✨',
 
-  'hdr.maybe': 'Peut-être ({n})',
-  'hdr.selected': 'Choisies ({n})',
   'hdr.connectedAs': { f: 'Connectée en tant que {name}', m: 'Connecté en tant que {name}', n: 'Connecté·e en tant que {name}' },
   'hdr.family': ' (famille)',
   'hdr.compare': '⇄ Comparer',
   'hdr.exitCompare': '✕ Quitter la comparaison',
   'hdr.swipe': '⚡ Choix rapide',
   'hdr.exitSwipe': '✕ Quitter le choix rapide',
+  'hdr.more': '⋯ Plus',
+  'hdr.moreAria': 'Plus d’actions',
   'hdr.selectedInPackage': 'Choisies dans le forfait',
-  'hdr.ownerMaybe': '{n} photos « peut-être »',
-  'hdr.guestSummary': 'Vos choix (suggestions) : {selected} choisies, {maybe} peut-être',
   'hdr.viewed': 'Vous avez vu {seen} photos sur {total}',
   'hdr.viewedAria': 'Photos déjà vues',
 

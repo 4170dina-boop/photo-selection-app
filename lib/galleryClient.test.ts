@@ -20,6 +20,9 @@ import {
   enlargedShortcutStatus,
   tapHintKey,
   neighborPrefetchUrls,
+  parseGridCols,
+  nextGridCols,
+  DEFAULT_GRID_COLS,
   type PendingAction,
 } from './galleryClient';
 
@@ -237,5 +240,21 @@ describe('enlarged view selection', () => {
 
   it('builds the hint key per gallery', () => {
     expect(tapHintKey('g1')).toBe('gallery_tap_hint_v2_g1');
+  });
+});
+
+describe('grid columns (mobile)', () => {
+  it('parses stored value with fallback to 2', () => {
+    expect(parseGridCols('3')).toBe(3);
+    expect(parseGridCols('4')).toBe(4);
+    expect(parseGridCols(null)).toBe(DEFAULT_GRID_COLS);
+    expect(parseGridCols('7')).toBe(2);
+    expect(parseGridCols('abc')).toBe(2);
+  });
+
+  it('cycles 2 -> 3 -> 4 -> 2', () => {
+    expect(nextGridCols(2)).toBe(3);
+    expect(nextGridCols(3)).toBe(4);
+    expect(nextGridCols(4)).toBe(2);
   });
 });

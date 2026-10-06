@@ -4,7 +4,6 @@ import type { Section } from '../types';
 import type { common as he } from '../he/common';
 
 export const common: Section<typeof he> = {
-  'common.loading': 'לאדנט...',
   'common.loadingGallery': 'די גאלעריע לאדנט...',
   'common.back': 'צוריק',
   'common.cancel': 'אפזאגן',
@@ -20,6 +19,10 @@ export const common: Section<typeof he> = {
   'common.photographer': 'דער פאטאגראף',
   'common.ownerFallback': 'דער הויפט-קליענט',
   'common.language': 'שפראך',
+  'notify.retry': 'פרובירט נאכאמאל',
+  'notify.undo': 'צוריק',
+  'notify.selectionRemoved': 'די אויסוואל איז אראפגענומען פון בילד {n}',
+  'notify.maybeRemoved': '"אפשר" איז אראפגענומען פון בילד {n}',
 
   'err.noInternet': 'קיין אינטערנעט פארבינדונג. ביטע טשעקט די פארבינדונג און פרובירט נאכאמאל.',
   'err.offlineRetryLater': 'איר זענט יעצט נישט פארבונדן - פרובירט נאכאמאל ווען די פארבינדונג קומט צוריק.',

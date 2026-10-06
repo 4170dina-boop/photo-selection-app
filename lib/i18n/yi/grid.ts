@@ -10,6 +10,7 @@ export const grid: Section<typeof he> = {
   'f.only': 'נאר {name} ({n})',
   'f.onlyMe': 'נאר איך ({n})',
   'grid.empty': 'קיין בילדער פאסן נישט צו דעם פילטער.',
+  'grid.colsAria': 'צאל קאלאנעס: {n} (דריקט צו טוישן)',
 
   'toast.othersItem': {
     one: '{name} האט אנגעצייכנט א נייע בילד',
@@ -20,7 +21,6 @@ export const grid: Section<typeof he> = {
   'card.compareOff': 'נישט אויסגעקליבן צום פארגלייכן',
   'card.open': 'עפענען {label}',
   'card.hasNote': ', האט א באמערקונג',
-  'card.viewed': 'איר האט שוין געקוקט דאס בילד',
   'card.badgeMaybe': '🤔 אפשר',
   'card.blurAria': 'דאס בילד איז אפשר נישט שארף (אויטאמאטישע אפשאצונג)',
   'card.blurTitle': 'אויטאמאטישע אפשאצונג לויט שארפקייט - נישט שטענדיג גענוי',
