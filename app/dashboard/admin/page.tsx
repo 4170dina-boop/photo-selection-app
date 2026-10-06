@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { theme, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import EmailInput from '@/components/EmailInput';
+import SystemSetupGuide from '@/components/SystemSetupGuide';
 
 interface PhotographerRow {
   id: string;
@@ -142,6 +143,8 @@ export default function AdminPage() {
         הגלריה-הפעילה-האחת ומגבלת 25 התמונות (`enforce_active_gallery_limit`/`enforce_photo_limit`
         ב-`supabase/schema.sql`).
       </p>
+
+      <SystemSetupGuide />
 
       {unlockedAdminUserId && (
         <div style={{ background: theme.panel, border: `1px solid ${theme.gold}`, borderRadius: 10, padding: '1rem', marginBottom: '1.5rem' }}>
