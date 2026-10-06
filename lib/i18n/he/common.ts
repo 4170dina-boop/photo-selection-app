@@ -19,6 +19,10 @@ export const common = {
   'common.photographer': 'הצלמת',
   'common.ownerFallback': { f: 'הלקוחה הראשית', m: 'הלקוח הראשי' },
   'common.language': 'שפה',
+  'notify.retry': { f: 'נסי שוב', m: 'נסה שוב', n: 'נסה/י שוב' },
+  'notify.undo': { f: 'בטלי', m: 'בטל', n: 'בטל' },
+  'notify.selectionRemoved': 'הבחירה הוסרה מתמונה {n}',
+  'notify.maybeRemoved': 'הסימון "אולי" הוסר מתמונה {n}',
 
   'err.noInternet': {
     f: 'אין חיבור לאינטרנט. בדקי את החיבור ונסי שוב.',

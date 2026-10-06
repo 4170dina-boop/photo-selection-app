@@ -20,6 +20,10 @@ export const common: Section<typeof he> = {
   'common.photographer': 'דער פאטאגראף',
   'common.ownerFallback': 'דער הויפט-קליענט',
   'common.language': 'שפראך',
+  'notify.retry': 'פרובירט נאכאמאל',
+  'notify.undo': 'צוריק',
+  'notify.selectionRemoved': 'די אויסוואל איז אראפגענומען פון בילד {n}',
+  'notify.maybeRemoved': '"אפשר" איז אראפגענומען פון בילד {n}',
 
   'err.noInternet': 'קיין אינטערנעט פארבינדונג. ביטע טשעקט די פארבינדונג און פרובירט נאכאמאל.',
   'err.offlineRetryLater': 'איר זענט יעצט נישט פארבונדן - פרובירט נאכאמאל ווען די פארבינדונג קומט צוריק.',

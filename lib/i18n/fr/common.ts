@@ -19,6 +19,10 @@ export const common: Section<typeof he> = {
   'common.photographer': 'votre photographe',
   'common.ownerFallback': { f: 'la cliente principale', m: 'le client principal' },
   'common.language': 'Langue',
+  'notify.retry': 'Réessayer',
+  'notify.undo': 'Annuler',
+  'notify.selectionRemoved': 'Choix retiré de la photo {n}',
+  'notify.maybeRemoved': '« Peut-être » retiré de la photo {n}',
 
   'err.noInternet': 'Pas de connexion internet. Vérifiez votre connexion et réessayez.',
   'err.offlineRetryLater': 'Vous êtes hors ligne pour le moment : réessayez une fois la connexion revenue.',

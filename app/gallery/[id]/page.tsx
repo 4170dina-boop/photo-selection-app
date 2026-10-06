@@ -14,6 +14,7 @@ import { applyNavFilters, burstMembers } from '@/lib/galleryNav';
 import type { Chapter } from '@/lib/chapters';
 import LanguagePicker from '@/components/LanguagePicker';
 import GalleryMoreMenu, { type MoreMenuItem } from '@/components/GalleryMoreMenu';
+import { useNotify, NotifyHost } from '@/components/useNotify';
 import {
   type Lang,
   type MessageKey,
@@ -343,7 +344,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [deliveredPhotos, setDeliveredPhotos] = useState<DeliveredPhoto[]>([]);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [zipMessage, setZipMessage] = useState('');
   const [myMarks, setMyMarks] = useState<Record<string, { status: 'maybe' | 'selected'; note: string | null; photographerReply: string | null }>>({});
   const [allMarks, setAllMarks] = useState<Record<string, Mark[]>>({});
   const [packageInfo, setPackageInfo] = useState<ClientPackageInfo | null>(null);
@@ -377,7 +377,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [confettiPieces, setConfettiPieces] = useState<ConfettiPiece[]>([]);
   const [clearingAll, setClearingAll] = useState(false);
   const [aiPicksRunning, setAiPicksRunning] = useState(false);
-  const [aiPicksMessage, setAiPicksMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [brandColor, setBrandColor] = useState<string | null>(null);
   const [photographerName, setPhotographerName] = useState<string | null>(null);
@@ -428,6 +427,37 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // "בעלים" ברירת מחדל ("הלקוחה הראשית") כשאין שם
   const ownerLabel = (name: string | undefined) => name ?? trOwner('common.ownerFallback');
 
+  // הודעות חולפות מאוחדות (components/useNotify.tsx) - שגיאות פעולה, הורדות,
+  // סימונים של בני משפחה, מחיר תמונה נוספת, "בטל" אחרי הסרת סימון.
+  const notifier = useNotify();
+  const { notify, dismissKey } = notifier;
+  // גרסה עדכנית של פונקציות שנקראות מכפתור בהודעה ("בטל"/"נסי שוב") או מסקר
+  // ברקע - ההודעה נשארת על המסך כמה שניות, וסגירה (closure) מהרינדור שבו
+  // נוצרה הייתה רואה myMarks/שפה ישנים. מתעדכן בכל רינדור (למטה, לפני ה-return).
+  const liveRef = useRef<{
+    tr: typeof tr;
+    setPhotoStatus: (photoId: string, next: 'maybe' | 'selected' | null, options?: { silentUndo?: boolean }) => Promise<void>;
+    loadGallery: () => Promise<any | null>;
+    downloadDelivered: (photo: DeliveredPhoto) => Promise<void>;
+    downloadAllDelivered: () => Promise<void>;
+    clearAllSelections: (skipConfirm?: boolean) => Promise<void>;
+    aiPicks: () => Promise<void>;
+  } | null>(null);
+  // שגיאת פעולה אחת בכל רגע (key משותף - חדשה מחליפה ישנה), עם "נסי שוב"
+  // כשהפעולה ניתנת לניסיון חוזר
+  const ACTION_ERROR_KEY = 'action-error';
+  function notifyError(message: string, retry?: () => void) {
+    notify({
+      type: 'error',
+      message,
+      key: ACTION_ERROR_KEY,
+      action: retry ? { label: tr('notify.retry'), run: retry } : undefined,
+    });
+  }
+  function clearActionError() {
+    dismissKey(ACTION_ERROR_KEY);
+  }
+
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
 
@@ -440,8 +470,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [chapterFilter, setChapterFilter] = useState<string>('all');
   const [hideSimilar, setHideSimilar] = useState(false);
   const [burstChooserId, setBurstChooserId] = useState<string | null>(null);
-  // הודעה קופצת "🔔 יוסי סימן/ה 3 תמונות חדשות" מהסקר החי של הסימונים
-  const [othersToast, setOthersToast] = useState<{ displayName: string; count: number }[] | null>(null);
   const [isOffline, setIsOffline] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [compareMode, setCompareMode] = useState(false);
@@ -719,7 +747,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   useEffect(() => {
     setCanPasteCode(typeof navigator !== 'undefined' && typeof navigator.clipboard?.readText === 'function');
   }, []);
-  const [actionError, setActionError] = useState('');
 
   // שיתוף גלריה משפחתי: אחרי קוד גישה תקין, עוד לא ידוע מי בפועל נכנס/ת
   const [needsIdentity, setNeedsIdentity] = useState(false);
@@ -748,7 +775,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   }, [isLocked]);
 
   // הודעה קופצת חד-פעמית כשהבעלים עוברת לראשונה את מכסת החבילה
-  const [showExtraPriceToast, setShowExtraPriceToast] = useState(false);
   const prevOwnerSelectedRef = useRef<number | null>(null);
 
   // "להמשיך מאיפה שעצרתי": התמונה האחרונה שנצפתה + אילו כבר נצפו (localStorage,
@@ -805,15 +831,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       if (localStorage.getItem(key)) return;
       localStorage.setItem(key, '1');
     } catch {}
-    setShowExtraPriceToast(true);
+    notify({
+      type: 'info',
+      key: 'extra-price',
+      message: tr('toast.extraPrice', { included: packageInfo.included, price: money(packageInfo.extraPrice) }),
+      durationMs: EXTRA_PRICE_TOAST_MS,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownerSelectedCount, packageInfo, myParticipant?.id, myParticipant?.isOwner]);
-
-  useEffect(() => {
-    if (!showExtraPriceToast) return;
-    const t = setTimeout(() => setShowExtraPriceToast(false), EXTRA_PRICE_TOAST_MS);
-    return () => clearTimeout(t);
-  }, [showExtraPriceToast]);
 
   useEffect(() => {
     loadGallery();
@@ -874,7 +899,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         othersMarksBaselineRef.current = serverMarks;
         setAllMarks((prev) => mergeOthersMarks(prev, serverMarks, myId));
         if (Array.isArray(data.participants)) setParticipants(data.participants);
-        if (fresh.length > 0) setOthersToast(fresh.map((f) => ({ displayName: f.displayName, count: f.count })));
+        if (fresh.length > 0) {
+          const t = liveRef.current?.tr ?? tr;
+          notify({
+            type: 'info',
+            key: 'others-marks',
+            message: `🔔 ${fresh.map((o) => t('toast.othersItem', { name: o.displayName, count: o.count })).join(' · ')}`,
+          });
+        }
       } catch {
         failures += 1;
       }
@@ -901,13 +933,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myParticipant?.id, readOnly, galleryId]);
-
-  // ההודעה הקופצת נעלמת לבד אחרי כמה שניות
-  useEffect(() => {
-    if (!othersToast) return;
-    const t = setTimeout(() => setOthersToast(null), 6000);
-    return () => clearTimeout(t);
-  }, [othersToast]);
 
   // ספירה לאחור ל"סיימתי לבחור" (ראו handleFinish/submitFinish/cancelFinish) -
   // מחושבת בכל טיק מול finishDeadline (timestamp מוחלט, ראו finishDeadlineKey
@@ -1008,11 +1033,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (!res.ok) {
       if (!silent) {
         const body = await res.json().catch(() => null);
-        setActionError(
-          res.status === 410
-            ? localizedErrorFromBody(lang, body, tr('err.galleryExpired'), viewerGender)
-            : tr('err.loadFailed')
-        );
+        if (res.status === 410) notifyError(localizedErrorFromBody(lang, body, tr('err.galleryExpired'), viewerGender));
+        else notifyError(tr('err.loadFailed'), () => liveRef.current?.loadGallery());
         setCheckingAuth(false);
         setLoading(false);
       }
@@ -1024,7 +1046,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       data = await res.json();
     } catch {
       if (!silent) {
-        setActionError(tr('err.loadFailed'));
+        notifyError(tr('err.loadFailed'), () => liveRef.current?.loadGallery());
         setCheckingAuth(false);
         setLoading(false);
       }
@@ -1166,10 +1188,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         blob = await fetchBlobOk(freshUrl);
       }
       if (!blob) {
-        setActionError(tr('err.downloadFailed'));
+        notifyError(tr('err.downloadFailed'), () => liveRef.current?.downloadDelivered(photo));
         return;
       }
-      setActionError('');
+      clearActionError();
       triggerBlobDownload(blob, photo.filename);
     } finally {
       setDownloadingId(null);
@@ -1178,7 +1200,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   async function handleDownloadAllDelivered() {
     setDownloadingZip(true);
-    setZipMessage('');
     try {
       const zip = new JSZip();
       const usedNames = new Set<string>();
@@ -1209,16 +1230,25 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       }
 
       if (done === 0) {
-        setActionError(tr('err.zipFailed'));
+        notifyError(tr('err.zipFailed'), () => liveRef.current?.downloadAllDelivered());
         return;
       }
 
       const blob = await zip.generateAsync({ type: 'blob' });
       triggerBlobDownload(blob, tr('dl.zipFileName'));
-      setActionError('');
-      setZipMessage(done < total ? tr('dl.zipPartial', { done, total }) : tr('dl.zipSummary', { done, total }));
+      clearActionError();
+      if (done < total) {
+        notify({
+          type: 'warning',
+          key: 'zip',
+          message: tr('dl.zipPartial', { done, total }),
+          action: { label: tr('notify.retry'), run: () => liveRef.current?.downloadAllDelivered() },
+        });
+      } else {
+        notify({ type: 'success', key: 'zip', message: tr('dl.zipSummary', { done, total }) });
+      }
     } catch {
-      setActionError(tr('err.zipFailed'));
+      notifyError(tr('err.zipFailed'), () => liveRef.current?.downloadAllDelivered());
     } finally {
       setDownloadingZip(false);
     }
@@ -1324,6 +1354,21 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     await loadGallery();
   }
 
+  liveRef.current = {
+    tr,
+    setPhotoStatus,
+    loadGallery: () => loadGallery(),
+    downloadDelivered: handleDownloadDeliveredPhoto,
+    downloadAllDelivered: handleDownloadAllDelivered,
+    clearAllSelections,
+    aiPicks: handleAiPicks,
+  };
+
+  // מסכי הכניסה (קוד/זיהוי) מציגים גם הם הודעות - למשל "הגלריה פגה" בטעינה
+  const notifyHostStandalone = (
+    <NotifyHost notifier={notifier} bottom="calc(1rem + env(safe-area-inset-bottom))" closeLabel={tr('common.closeNotice')} accent={theme.gold} dir={dir} />
+  );
+
   if (checkingAuth) {
     return (
       <div style={{ minHeight: '100vh', background: theme.bg, color: theme.text, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1336,6 +1381,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     return (
       <div dir={dir} lang={lang} style={{ minHeight: '100vh', background: theme.bg, color: theme.text, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <LanguagePicker lang={lang} onChange={changeLang} />
+        {notifyHostStandalone}
         <form onSubmit={handleSubmitCode} style={{ maxWidth: 320, width: '100%', textAlign: 'center', padding: '1.25rem 2rem 2rem' }}>
           <label htmlFor="access-code" style={{ display: 'block', marginBottom: '1.25rem', color: theme.gold, fontSize: 18 }}>
             {tr('code.title')}
@@ -1392,6 +1438,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     return (
       <div dir={dir} lang={lang} style={{ minHeight: '100vh', background: theme.bg, color: theme.text, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <LanguagePicker lang={lang} onChange={changeLang} />
+        {notifyHostStandalone}
         <div style={{ maxWidth: 340, width: '100%', textAlign: 'center', padding: '1.25rem 2rem 2rem' }}>
           <p style={{ marginBottom: '1.5rem', color: theme.gold, fontSize: 18, fontFamily: theme.fontSerif }}>
             {registeredName ? tr('id.hiName', { name: registeredName }) : tr('id.hi')}
@@ -1637,7 +1684,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       // לפעולות בתור אין את המצב "לפני" (current) כמו ב-setPhotoStatus, אז אי
       // אפשר לבטל בדיוק את אותה פעולה - טוענים מחדש מהשרת (ברקע, בלי מסך טעינה).
       await refreshGallerySilently();
-      setActionError(tr('err.offlineNotSaved'));
+      notifyError(tr('err.offlineNotSaved'));
     } else if (anyProcessed) {
       // סנכרון הצליח - טוענים מחדש סימונים ומונים מהשרת (אמת אחת)
       await refreshGallerySilently();
@@ -1722,7 +1769,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // מעדכן את המסך מיד (אופטימי), לפני תשובת השרת - כדי שאפשר יהיה להמשיך
   // לדפדף ולבחור גם באינטרנט חלש/מנותק. אם זו שגיאת רשת (לא שרת), הפעולה
   // נכנסת לתור ותסונכרן אוטומטית כשהחיבור יחזור (ראו flushPendingQueue).
-  async function setPhotoStatus(photoId: string, next: 'maybe' | 'selected' | null) {
+  async function setPhotoStatus(photoId: string, next: 'maybe' | 'selected' | null, options: { silentUndo?: boolean } = {}) {
     if (isLocked || !myParticipant) return;
     // ביטול (null) עדיין מותר - למקרה שסומנה לפני שהפכה למתנה
     if (next !== null && isGiftPhoto(photoId)) return;
@@ -1730,13 +1777,25 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     applyStatusChange(photoId, next, current);
 
+    // הסרת בחירה/"אולי" - הודעה עם "בטל" שמחזירה את הסימון הקודם (דרך אותה
+    // setPhotoStatus, בגרסה העדכנית שלה - liveRef). לא אחרי ה"בטל" עצמו.
+    if (next === null && current && !options.silentUndo) {
+      const n = photos.findIndex((p) => p.id === photoId) + 1;
+      notify({
+        type: 'success',
+        key: 'undo-remove',
+        message: tr(current === 'selected' ? 'notify.selectionRemoved' : 'notify.maybeRemoved', { n }),
+        action: { label: tr('notify.undo'), run: () => liveRef.current?.setPhotoStatus(photoId, current, { silentUndo: true }) },
+      });
+    }
+
     const action: PendingAction = { type: 'status', photoId, status: next };
 
     // flush באמצע, או שיש כבר פעולות ממתינות לאותה תמונה - נכנסים לתור כדי
     // לשמור על הסדר (אחרת פעולה ישנה מהתור עלולה להגיע לשרת אחרי החדשה).
     if (flushInFlightRef.current || queueHasPhoto(loadPendingQueue(galleryId, myParticipant.id), photoId)) {
       enqueuePendingAction(action);
-      setActionError('');
+      clearActionError();
       flushPendingQueue();
       return;
     }
@@ -1745,16 +1804,17 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     if (result === 'network-error') {
       enqueuePendingAction(action);
-      setActionError('');
+      clearActionError();
       return;
     }
     if (result === 'server-error') {
       applyStatusChange(photoId, current ?? null, next ?? undefined); // ביטול העדכון האופטימי - שגיאה אמיתית, לא ניתוק
-      setActionError(tr('err.updateNotSaved'));
+      dismissKey('undo-remove');
+      notifyError(tr('err.updateNotSaved'), () => liveRef.current?.setPhotoStatus(photoId, next, { silentUndo: true }));
       return;
     }
     dropQueuedAfterDirectSuccess(action);
-    setActionError('');
+    clearActionError();
   }
 
   function openNoteEditor(photoId: string, e: React.MouseEvent) {
@@ -1794,7 +1854,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         setFinishing(false);
         setFinishCountdown(null);
         setFinishFailed(true);
-        setActionError(tr('err.finishPendingOffline'));
+        notifyError(tr('err.finishPendingOffline'));
         return;
       }
     }
@@ -1807,7 +1867,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       setFinishing(false);
       setFinishCountdown(null);
       setFinishFailed(true);
-      setActionError(tr('err.offlineRetryLater'));
+      notifyError(tr('err.offlineRetryLater'));
       // לא מנקים את ה-localStorage כאן - זו לא כשלון סופי, רק ניתוק. הרשומה
       // נשארת, וה"סיימתי לבחור" יושלם אוטומטית בפעם הבאה שהעמוד ייטען או
       // שהטאב יחזור לפוקוס (checkPendingFinish), בלי שהלקוחה תצטרך ללחוץ שוב.
@@ -1827,11 +1887,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       const body = await res.json().catch(() => null);
       setFinishCountdown(null);
       setFinishFailed(true);
-      setActionError(localizedErrorFromBody(lang, body, tr('err.finishFailed'), viewerGender));
+      notifyError(localizedErrorFromBody(lang, body, tr('err.finishFailed'), viewerGender));
       return;
     }
 
-    setActionError('');
+    clearActionError();
     setFinishCountdown(null);
     setFinishFailed(false);
     setGalleryStatus('completed');
@@ -1940,9 +2000,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setFinishFailed(false);
   }
 
-  async function clearAllSelections() {
+  // skipConfirm - רק מ"נסי שוב" אחרי כשל (כבר אישרו פעם אחת)
+  async function clearAllSelections(skipConfirm = false) {
     if (!myParticipant || isLocked) return;
-    if (!window.confirm(tr('act.clearConfirm'))) return;
+    if (!skipConfirm && !window.confirm(tr('act.clearConfirm'))) return;
 
     setClearingAll(true);
     let res: Response;
@@ -1950,16 +2011,17 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       res = await fetch(`/api/gallery/${galleryId}/selection`, { method: 'DELETE' });
     } catch {
       setClearingAll(false);
-      setActionError(tr('err.offlineRetryLater'));
+      notifyError(tr('err.offlineRetryLater'), () => liveRef.current?.clearAllSelections(true));
       return;
     }
     setClearingAll(false);
 
     if (!res.ok) {
-      setActionError(tr('err.clearFailed'));
+      notifyError(tr('err.clearFailed'), () => liveRef.current?.clearAllSelections(true));
       return;
     }
-    setActionError('');
+    clearActionError();
+    dismissKey('undo-remove');
 
     setMyMarks({});
     setAllMarks((prev) => {
@@ -1982,22 +2044,21 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (!myParticipant?.isOwner || isLocked || aiPicksRunning) return;
 
     setAiPicksRunning(true);
-    setAiPicksMessage('');
-    setActionError('');
+    clearActionError();
 
     let res: Response;
     try {
       res = await fetch(`/api/gallery/${galleryId}/ai-picks`, { method: 'POST' });
     } catch {
       setAiPicksRunning(false);
-      setActionError(tr('err.offlineRetryLater'));
+      notifyError(tr('err.offlineRetryLater'), () => liveRef.current?.aiPicks());
       return;
     }
     setAiPicksRunning(false);
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      setActionError(localizedErrorFromBody(lang, data, tr('err.aiFailed'), viewerGender));
+      notifyError(localizedErrorFromBody(lang, data, tr('err.aiFailed'), viewerGender));
       return;
     }
 
@@ -2006,10 +2067,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     // לעדכן מקומית, כדי שהמסך יהיה אמת אחת עם מה שבאמת נשמר.
     await refreshGallerySilently();
 
-    setAiPicksMessage(
+    notify(
       data.pickedCount > 0
-        ? tr('act.aiPicked', { picked: data.pickedCount, analyzed: data.analyzedCount })
-        : tr('act.aiNone')
+        ? { type: 'success', key: 'ai', message: tr('act.aiPicked', { picked: data.pickedCount, analyzed: data.analyzedCount }) }
+        : { type: 'info', key: 'ai', message: tr('act.aiNone') }
     );
   }
 
@@ -2034,7 +2095,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     // אחריו, אחרת השרת ידחה אותה ("תמונה שלא סומנה").
     if (flushInFlightRef.current || queueHasPhoto(loadPendingQueue(galleryId, myParticipant.id), photoId)) {
       enqueuePendingAction(action);
-      setActionError('');
+      clearActionError();
       flushPendingQueue();
       return;
     }
@@ -2043,7 +2104,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     if (result === 'network-error') {
       enqueuePendingAction(action);
-      setActionError('');
+      clearActionError();
       return;
     }
     if (result === 'server-error') {
@@ -2054,11 +2115,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         if (!existing) return prev;
         return { ...prev, [photoId]: { ...existing, note: previousNote } };
       });
-      setActionError(tr('err.noteNotSaved'));
+      // "נסי שוב" פותח מחדש את חלון ההערה עם הטקסט שנכתב
+      notifyError(tr('err.noteNotSaved'), () => {
+        setNoteEditingId(photoId);
+        setNoteDraft(trimmed);
+      });
       return;
     }
     dropQueuedAfterDirectSuccess(action);
-    setActionError('');
+    clearActionError();
   }
 
   function toggleCompareSelect(photoId: string, e: React.SyntheticEvent) {
@@ -2218,6 +2283,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // הפס התחתון הקבוע בגריד - רק לבעלים כשהבחירה פתוחה, ולא כשמסך מלא פתוח
   // (לתצוגה המוגדלת יש פס משלה).
   const showBottomBar = isOwner && !isLocked && !enlargedId && !slideshowActive && !swipeMode && !compareViewOpen;
+  // ההודעות החולפות יושבות מעל מה שקבוע בתחתית המסך באותו רגע
+  const notifyBottom = enlargedId
+    ? 'calc(11rem + env(safe-area-inset-bottom))'
+    : swipeMode
+    ? 'calc(7.5rem + env(safe-area-inset-bottom))'
+    : showBottomBar
+    ? 'calc(4.25rem + env(safe-area-inset-bottom))'
+    : 'calc(1rem + env(safe-area-inset-bottom))';
 
   // שורת הסינון ("הכל/נבחרו/אולי/ביחד") מופיעה רק כשיש מה לסנן: אחרי הסימון
   // הראשון, כשמישהו אחר כבר סימן, או בגלריה עם פרקים (הצ'יפים של הפרקים
@@ -2569,18 +2642,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </div>
       )}
 
-      {actionError && (
-        <div role="alert" style={{ padding: '0.5rem 1.5rem', background: theme.errorBg, color: theme.errorText, fontSize: 14 }}>
-          {actionError}
-        </div>
-      )}
-
-      {aiPicksMessage && (
-        <div role="status" style={{ padding: '0.5rem 1.5rem', background: theme.successBg, color: theme.successText, fontSize: 14, textAlign: 'center' }}>
-          {aiPicksMessage}
-        </div>
-      )}
-
       {/* מסך תודה - מוצג ברגע שהקונפטי דועך (showCelebration חוזר ל-false), כדי
           שלא יתחרה איתו על תשומת הלב. לא חוסם את הגלריה שמתחתיו - "אפשר עדיין
           לצפות בתמונות" נשאר תקף כרגיל, זה רק פאנל בזרימת העמוד. */}
@@ -2661,10 +2722,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               {downloadingZip ? tr('dl.preparingZip') : tr('dl.zipAll')}
             </button>
           </div>
-
-          {zipMessage && (
-            <p role="status" style={{ color: theme.textMuted, fontSize: 13, marginBottom: '0.75rem' }}>{zipMessage}</p>
-          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(130px, 40vw), 1fr))', gap: '0.75rem' }}>
             {deliveredPhotos.map((photo) => (
@@ -3508,32 +3565,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         />
       )}
 
-      {/* הודעה קופצת לא-חוסמת על סימונים חדשים של בני משפחה (הסקר החי) -
-          אזור ה-aria-live קיים תמיד כדי שקוראי מסך יכריזו על השינוי */}
-      <div
-        role="status"
-        aria-live="polite"
-        style={{
-          position: 'fixed', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 60,
-          maxWidth: 'calc(100vw - 32px)', pointerEvents: othersToast ? 'auto' : 'none',
-        }}
-      >
-        {othersToast && (
-          <button
-            type="button"
-            onClick={() => setOthersToast(null)}
-            title={tr('common.close')}
-            style={{
-              background: 'rgba(15,22,38,0.95)', color: theme.text, border: `1px solid ${accent}`,
-              borderRadius: 20, padding: '0.45rem 1rem', fontSize: 13, cursor: 'pointer',
-              boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
-            }}
-          >
-            {`🔔 ${othersToast.map((o) => tr('toast.othersItem', { name: o.displayName, count: o.count })).join(' · ')}`}
-          </button>
-        )}
-      </div>
-
       {visiblePhotos.length === 0 && (
         <p style={{ textAlign: 'center', color: theme.textFaint, fontSize: 13, padding: '1rem' }}>
           {tr('grid.empty')}
@@ -3981,38 +4012,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         );
       })()}
 
-      {/* הודעה קופצת חד-פעמית: עברת את מכסת החבילה (ראו prevOwnerSelectedRef) */}
-      {showExtraPriceToast && packageInfo && extraLabel && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="gallery-toast"
-          style={{
-            position: 'fixed', top: 'calc(0.75rem + env(safe-area-inset-top))', left: '50%', transform: 'translateX(-50%)',
-            zIndex: 80, width: 'max-content', maxWidth: 'calc(100vw - 2rem)',
-            background: theme.panel, color: theme.text, border: `1px solid ${accent}88`, borderRadius: 10,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.4)', padding: '0.4rem 0.4rem 0.4rem 0.9rem', fontSize: 14,
-            display: 'flex', alignItems: 'center', gap: '0.5rem',
-          }}
-        >
-          <style>{`
-            @keyframes gallery-toast-in { from { opacity: 0; } to { opacity: 1; } }
-            .gallery-toast { animation: gallery-toast-in 0.25s ease-out; }
-            @media (prefers-reduced-motion: reduce) { .gallery-toast { animation: none; } }
-          `}</style>
-          <span>
-            {tr('toast.extraPrice', { included: packageInfo.included, price: money(packageInfo.extraPrice) })}
-          </span>
-          <button
-            type="button"
-            onClick={() => setShowExtraPriceToast(false)}
-            aria-label={tr('common.closeNotice')}
-            style={{ width: 44, height: 44, flexShrink: 0, borderRadius: '50%', border: 'none', background: 'transparent', color: theme.textMuted, fontSize: 15, cursor: 'pointer' }}
-          >
-            ✕
-          </button>
-        </div>
-      )}
+      {/* הודעות חולפות (components/useNotify.tsx) - מעל הפס התחתון, או מעל פס
+          הבחירה בתצוגה המוגדלת / כפתורי הבחירה המהירה */}
+      <NotifyHost
+        notifier={notifier}
+        bottom={notifyBottom}
+        closeLabel={tr('common.closeNotice')}
+        accent={accent}
+        dir={dir}
+      />
     </div>
   );
 }
