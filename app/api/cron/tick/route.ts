@@ -17,6 +17,7 @@ import {
 import { toHebrewDateString } from '@/lib/hebrewDate';
 import { deleteObjects } from '@/lib/r2';
 import { applyRowGuard } from '@/lib/rowGuard';
+import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 import {
   isCronAuthorized,
   resolveExpiryReminderDays,
@@ -200,6 +201,8 @@ async function sendExpiryReminders(ctx: RunContext) {
       if (!claimed?.length) continue;
 
       const result = await sendExpiryReminderEmail({
+        // שפת הגלריה (galleries.language) - עמודה חסרה = עברית
+        language: await fetchGalleryLanguageOrDefault(supabaseAdmin, gallery.id),
         to: client.email,
         clientName: client.full_name,
         businessName: photographer.business_name,

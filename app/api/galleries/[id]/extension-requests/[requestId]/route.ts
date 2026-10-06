@@ -4,6 +4,7 @@ import { sendExtensionDecisionEmail } from '@/lib/email';
 import { planExtensionApproval } from '@/lib/extensionRequests';
 import { STATUS_GUARDED_UPDATE_MAX_ATTEMPTS } from '@/lib/galleryLifecycle';
 import { applyRowGuard } from '@/lib/rowGuard';
+import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 
 // אישור/דחייה של בקשת הארכה (body: { action: 'approve' | 'decline' }).
 // רץ עם session הצלמת (RLS), אותו דפוס בעלות כמו app/api/galleries/[id]/route.ts.
@@ -89,6 +90,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     if (clientEmail) {
       // best-effort - הדחייה כבר נשמרה
       await sendExtensionDecisionEmail({
+        // שפת הגלריה (galleries.language) - עמודה חסרה = עברית
+        language: await fetchGalleryLanguageOrDefault(supabase, gallery.id),
         to: clientEmail,
         clientName,
         businessName: photographer.business_name ?? '',
@@ -188,6 +191,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   let emailSent = false;
   if (clientEmail) {
     const result = await sendExtensionDecisionEmail({
+      // שפת הגלריה (galleries.language) - עמודה חסרה = עברית
+      language: await fetchGalleryLanguageOrDefault(supabase, gallery.id),
       to: clientEmail,
       clientName,
       businessName: photographer.business_name ?? '',

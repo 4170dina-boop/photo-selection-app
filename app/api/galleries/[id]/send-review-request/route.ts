@@ -3,6 +3,7 @@ import { createClient as createServerClient } from '@/lib/supabase/server';
 import { sendReviewRequestEmail } from '@/lib/email';
 import { fetchClientGender } from '@/lib/gender';
 import { getManualEmailCooldown, recordManualEmailSend, cooldownResponse } from '@/lib/manualEmailLog';
+import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 
 // שליחת בקשת ביקורת - זמינה רק אחרי שהצלמת סימנה את הגלריה כ"נמסרה"
 // (delivered_at, ראו app/api/galleries/[id]/toggle-delivered) וגם הגדירה
@@ -56,6 +57,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!cooldown.allowed) return cooldownResponse(cooldown);
 
   const { sent: emailSent } = await sendReviewRequestEmail({
+    // שפת הגלריה (galleries.language) - עמודה חסרה = עברית
+    language: await fetchGalleryLanguageOrDefault(supabase, gallery.id),
     to: client.email,
     clientName: client.full_name,
     clientGender: await fetchClientGender(supabase, gallery.id),

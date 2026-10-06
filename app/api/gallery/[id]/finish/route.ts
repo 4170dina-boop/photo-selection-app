@@ -5,6 +5,7 @@ import { sendSelectionCompleteEmail, sendClientSelectionSummaryEmail } from '@/l
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { isGalleryExpired } from '@/lib/galleryAccess';
 import { fetchClientGender } from '@/lib/gender';
+import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -122,6 +123,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
       if (clientEmail) {
         await sendClientSelectionSummaryEmail({
+          // שפת הגלריה (galleries.language) - עמודה חסרה = עברית
+          language: await fetchGalleryLanguageOrDefault(supabaseAdmin, galleryId),
           to: clientEmail,
           clientName,
           businessName: photographer?.business_name ?? '',

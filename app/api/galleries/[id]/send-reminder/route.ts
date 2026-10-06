@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { sendExpiryReminderEmail } from '@/lib/email';
 import { getManualEmailCooldown, recordManualEmailSend, cooldownResponse } from '@/lib/manualEmailLog';
+import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 
 // service_role - חובה כאן כדי לעדכן last_reminder_sent_at, אחרי אימות הבעלות
 // עם ה-session של הצלם. אותו דגם כמו app/api/admin/photographers/[id]/route.ts:
@@ -75,6 +76,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
   const { sent: emailSent } = await sendExpiryReminderEmail({
+    // שפת הגלריה (galleries.language) - עמודה חסרה = עברית
+    language: await fetchGalleryLanguageOrDefault(supabase, gallery.id),
     to: client.email,
     clientName: client.full_name,
     businessName: photographer.business_name,
