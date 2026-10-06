@@ -12,6 +12,7 @@ import { createClient } from '@/lib/supabase/client';
 import MagicButton from '@/components/MagicButton';
 import LightroomNamesCopy from '@/components/LightroomNamesCopy';
 import DeliveryMatchPanel from '@/components/DeliveryMatchPanel';
+import StageMessagesMenu from '@/components/StageMessagesMenu';
 import GalleryPaymentsSection from '@/components/GalleryPaymentsSection';
 import EmailInput from '@/components/EmailInput';
 import ClientInviteMessageCopy from '@/components/ClientInviteMessageCopy';
@@ -557,6 +558,17 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
                 expiresAt={expiresAt || null}
                 businessName={businessName}
                 logoUrl={logoUrl}
+              />
+              <StageMessagesMenu
+                galleryId={galleryId}
+                accessCode={accessCode}
+                clientName={clientName}
+                clientGender={clientGender}
+                language={language}
+                expiresAt={expiresAt || null}
+                businessName={businessName}
+                logoUrl={logoUrl}
+                deliveredCount={deliveredPhotos.length}
               />
             </div>
           </div>

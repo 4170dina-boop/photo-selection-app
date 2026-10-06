@@ -9,6 +9,7 @@ import { grid } from './grid';
 import { finish } from './finish';
 import { serverErrors } from './serverErrors';
 import { emails } from './emails';
+import { stages } from './stages';
 
 export const en = {
   ...common,
@@ -21,4 +22,5 @@ export const en = {
   ...finish,
   ...serverErrors,
   ...emails,
+  ...stages,
 };

@@ -10,8 +10,9 @@ import { grid } from './grid';
 import { finish } from './finish';
 import { serverErrors } from './serverErrors';
 import { emails } from './emails';
+import { stages } from './stages';
 
-export const heSections = { common, access, welcome, banners, actions, enlarged, grid, finish, serverErrors, emails };
+export const heSections = { common, access, welcome, banners, actions, enlarged, grid, finish, serverErrors, emails, stages };
 
 export const he = {
   ...common,
@@ -24,6 +25,7 @@ export const he = {
   ...finish,
   ...serverErrors,
   ...emails,
+  ...stages,
 };
 
 export type HeSections = typeof heSections;
