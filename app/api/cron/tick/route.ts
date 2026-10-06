@@ -31,9 +31,13 @@ import {
   deletableOriginalPaths,
   originalsCleanupClaimGuard,
   shouldReleaseCleanupClaim,
+  canClaimOriginalsWarning,
+  originalsWarningClaimGuard,
+  originalsWarningAfterSendPatch,
   fetchAllPages,
   errorMessage,
 } from '@/lib/cronTick';
+import { isMissingColumnError } from '@/lib/gender';
 
 // Endpoint אחד שמופעל ע"י תזמון חיצוני (Vercel Cron / Supabase pg_cron / כל
 // שירות cron אחר) - ראו README.md ("תזכורות וסטטוס אוטומטי") להוראות הפעלה.
@@ -178,6 +182,7 @@ async function sendExpiryReminders(ctx: RunContext) {
   let remindersSent = 0;
 
   for (const gallery of candidates) {
+    let claimedAt: string | null = null;
     try {
       const client = (gallery as any).clients;
       const photographer = (gallery as any).photographers;
@@ -190,15 +195,16 @@ async function sendExpiryReminders(ctx: RunContext) {
 
       // "תופסים" את הגלריה לפני השליחה (כמו בשלב 5) - שתי ריצות מקבילות לא
       // ישלחו פעמיים. אם השליחה נכשלת, משחררים כדי שהריצה הבאה תנסה שוב.
-      const claimedAt = now.toISOString();
+      const attemptAt = now.toISOString();
       const { data: claimed, error: claimError } = await supabaseAdmin
         .from('galleries')
-        .update({ last_reminder_sent_at: claimedAt })
+        .update({ last_reminder_sent_at: attemptAt })
         .eq('id', gallery.id)
         .is('last_reminder_sent_at', null)
         .select('id');
       if (claimError) throw claimError;
       if (!claimed?.length) continue;
+      claimedAt = attemptAt;
 
       const result = await sendExpiryReminderEmail({
         // שפת הגלריה (galleries.language) - עמודה חסרה = עברית
@@ -214,16 +220,24 @@ async function sendExpiryReminders(ctx: RunContext) {
 
       if (result.sent) {
         remindersSent++;
+        claimedAt = null;
       } else {
-        await supabaseAdmin
-          .from('galleries')
-          .update({ last_reminder_sent_at: null })
-          .eq('id', gallery.id)
-          .eq('last_reminder_sent_at', claimedAt);
         itemError(ctx, 'expiryReminders', gallery.id, result.error ?? 'send failed');
       }
     } catch (err) {
       itemError(ctx, 'expiryReminders', gallery.id, err);
+    }
+    // לא נשלח אחרי שנתפס (כישלון או חריגה) - משחררים כדי שהריצה הבאה תנסה שוב
+    if (claimedAt) {
+      const releaseAt = claimedAt;
+      await releaseClaim(ctx, 'expiryReminders', gallery.id, () =>
+        supabaseAdmin
+          .from('galleries')
+          .update({ last_reminder_sent_at: null })
+          .eq('id', gallery.id)
+          .eq('last_reminder_sent_at', releaseAt)
+          .select('id')
+      );
     }
   }
 
@@ -232,47 +246,66 @@ async function sendExpiryReminders(ctx: RunContext) {
 
 // 3. גלריות שיעברו 30 יום ממסירה בעוד 5 ימים או פחות - התראת מייל חד-פעמית
 // לצלמת, כדי שתספיק להוריד את המקור לפני המחיקה הבלתי-הפיכה בשלב 4.
+// originals_deletion_warning_sent_at נכתב רק אחרי שליחה מוצלחת (שלב 4 דורש אותו);
+// התפיסה נגד שליחה כפולה היא בעמודה נפרדת - ראו canClaimOriginalsWarning ב-lib/cronTick.ts.
 async function sendOriginalsWarnings(ctx: RunContext) {
   const { now, siteUrl } = ctx;
-  const { rows: candidates, error } = await fetchAllPages((from, to) =>
-    supabaseAdmin
-      .from('galleries')
-      .select('id, delivered_at, clients(full_name), photographers(auth_user_id)')
-      // רק בחירה סופית (completed, לא פתוחה מחדש) - כמו isOriginalsCleanupDue
-      .eq('status', 'completed')
-      .is('reopened_for_selection_at', null)
-      .not('delivered_at', 'is', null)
-      .lt('delivered_at', originalsWarningThreshold(now))
-      .is('originals_cleaned_up_at', null)
-      .is('originals_deletion_warning_sent_at', null)
-      .order('delivered_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, to)
-  , PAGE_SIZE);
+  const fetchCandidates = (withClaim: boolean) =>
+    fetchAllPages((from, to) =>
+      supabaseAdmin
+        .from('galleries')
+        .select(
+          `id, delivered_at, originals_deletion_warning_sent_at${withClaim ? ', originals_deletion_warning_claimed_at' : ''}, clients(full_name), photographers(auth_user_id)`
+        )
+        // רק בחירה סופית (completed, לא פתוחה מחדש) - כמו isOriginalsCleanupDue
+        .eq('status', 'completed')
+        .is('reopened_for_selection_at', null)
+        .not('delivered_at', 'is', null)
+        .lt('delivered_at', originalsWarningThreshold(now))
+        .is('originals_cleaned_up_at', null)
+        .is('originals_deletion_warning_sent_at', null)
+        .order('delivered_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to)
+    , PAGE_SIZE);
+
+  // העמודה originals_deletion_warning_claimed_at נוספה במיגרציה (סוף supabase/schema.sql).
+  // עד שמריצים אותה - שולחים בלי תפיסה (במקרה נדיר: התראה כפולה), אבל עדיין
+  // מסמנים "נשלחה" רק אחרי שליחה מוצלחת.
+  let claimSupported = true;
+  let { rows: candidates, error } = await fetchCandidates(true);
+  if (error && isMissingColumnError(error as { code?: string; message?: string })) {
+    console.warn('[cron/tick] originals_deletion_warning_claimed_at חסרה - שולחים התראות בלי תפיסה (הריצי את המיגרציה ב-supabase/schema.sql)');
+    claimSupported = false;
+    ({ rows: candidates, error } = await fetchCandidates(false));
+  }
   if (error) throw new Error(`שליפת מועמדות להתראת מחיקת מקור נכשלה: ${errorMessage(error)}`);
 
   let originalsWarningsSent = 0;
 
-  for (const gallery of candidates) {
+  for (const gallery of candidates as any[]) {
+    let claimedAt: string | null = null;
     try {
-      const client = (gallery as any).clients;
-      const photographer = (gallery as any).photographers;
+      const client = gallery.clients;
+      const photographer = gallery.photographers;
       if (!client?.full_name || !photographer?.auth_user_id || !gallery.delivered_at) continue;
+      if (claimSupported && !canClaimOriginalsWarning(gallery, now)) continue;
 
       const photographerEmail = await ctx.getPhotographerEmail(photographer.auth_user_id);
       if (!photographerEmail) continue;
 
       if (!(await beforeSend(ctx))) break;
 
-      const claimedAt = now.toISOString();
-      const { data: claimed, error: claimError } = await supabaseAdmin
-        .from('galleries')
-        .update({ originals_deletion_warning_sent_at: claimedAt })
-        .eq('id', gallery.id)
-        .is('originals_deletion_warning_sent_at', null)
-        .select('id');
-      if (claimError) throw claimError;
-      if (!claimed?.length) continue;
+      if (claimSupported) {
+        const attemptAt = new Date().toISOString();
+        const { data: claimed, error: claimError } = await applyRowGuard(
+          supabaseAdmin.from('galleries').update({ originals_deletion_warning_claimed_at: attemptAt }).eq('id', gallery.id),
+          originalsWarningClaimGuard(gallery)
+        ).select('id');
+        if (claimError) throw claimError;
+        if (!claimed?.length) continue;
+        claimedAt = attemptAt;
+      }
 
       const result = await sendOriginalsDeletionWarningEmail({
         to: photographerEmail,
@@ -281,22 +314,60 @@ async function sendOriginalsWarnings(ctx: RunContext) {
         dashboardUrl: `${siteUrl}/dashboard/galleries/${gallery.id}/edit`,
       });
 
+      const patch = originalsWarningAfterSendPatch(result.sent, new Date().toISOString(), claimSupported);
+      if (patch) {
+        // מותנה בתפיסה שלנו (או, בלי תפיסה, בכך שעוד לא סומנה) - לא דורסים מצב שהשתנה.
+        const base = supabaseAdmin.from('galleries').update(patch).eq('id', gallery.id);
+        const guarded = claimedAt
+          ? base.eq('originals_deletion_warning_claimed_at', claimedAt)
+          : base.is('originals_deletion_warning_sent_at', null);
+        const { data: written, error: writeError } = await guarded.select('id');
+        if (writeError || !written?.length) {
+          // אחרי שליחה: לא סומן "נשלחה" -> אין מחיקה (בטוח), לכל היותר התראה כפולה מחר.
+          // אחרי כישלון: התפיסה תתיישן לבד (WARNING_CLAIM_STALE_MS).
+          itemError(ctx, 'originalsWarnings', gallery.id, writeError ?? `עדכון אחרי שליחה (sent=${result.sent}) לא תאם אף שורה`);
+        }
+      }
+      claimedAt = null;
+
       if (result.sent) {
         originalsWarningsSent++;
       } else {
-        await supabaseAdmin
-          .from('galleries')
-          .update({ originals_deletion_warning_sent_at: null })
-          .eq('id', gallery.id)
-          .eq('originals_deletion_warning_sent_at', claimedAt);
         itemError(ctx, 'originalsWarnings', gallery.id, result.error ?? 'send failed');
       }
     } catch (err) {
       itemError(ctx, 'originalsWarnings', gallery.id, err);
+      if (claimedAt) {
+        await releaseClaim(ctx, 'originalsWarnings', gallery.id, () =>
+          supabaseAdmin
+            .from('galleries')
+            .update({ originals_deletion_warning_claimed_at: null })
+            .eq('id', gallery.id)
+            .eq('originals_deletion_warning_claimed_at', claimedAt as string)
+            .select('id')
+        );
+      }
     }
   }
 
   return { originalsWarningsSent };
+}
+
+// שחרור "תפיסה" אחרי שליחה שנכשלה - בודקים את התוצאה ומדווחים. שחרור שנכשל
+// בתזכורות משמעו שהתזכורת לא תישלח שוב (לא מסוכן, אבל צריך לדעת על זה).
+async function releaseClaim(
+  ctx: RunContext,
+  step: string,
+  id: string,
+  run: () => PromiseLike<{ data: unknown[] | null; error: unknown }>
+) {
+  try {
+    const { data, error } = await run();
+    if (error) itemError(ctx, step, id, `שחרור התפיסה נכשל: ${errorMessage(error)}`);
+    else if (!data?.length) console.warn(`[cron/tick] ${step}: שחרור התפיסה של ${id} לא תאם אף שורה (השורה השתנתה בינתיים)`);
+  } catch (err) {
+    itemError(ctx, step, id, `שחרור התפיסה נכשל: ${errorMessage(err)}`);
+  }
 }
 
 // 4. גלריות שנמסרו לפני 30+ יום *וגם* שהצלמת קיבלה עליהן התראה לפני 5+ ימים -
@@ -438,6 +509,7 @@ async function sendShootReminders(ctx: RunContext) {
   let shootRemindersSent = 0;
 
   for (const shoot of dueShoots) {
+    let claimedAt: string | null = null;
     try {
       const client = (shoot as any).clients;
       const photographer = (shoot as any).photographers;
@@ -448,15 +520,16 @@ async function sendShootReminders(ctx: RunContext) {
       // "תופסים" את הצילום לפני השליחה (update מותנה ב-reminder_sent_at is null) -
       // כך שתי ריצות cron מקבילות לא ישלחו את אותה תזכורת פעמיים. אם השליחה
       // נכשלת, משחררים חזרה כדי שהריצה הבאה תנסה שוב.
-      const claimedAt = now.toISOString();
+      const attemptAt = now.toISOString();
       const { data: claimed, error: claimError } = await supabaseAdmin
         .from('shoots')
-        .update({ reminder_sent_at: claimedAt })
+        .update({ reminder_sent_at: attemptAt })
         .eq('id', shoot.id)
         .is('reminder_sent_at', null)
         .select('id');
       if (claimError) throw claimError;
       if (!claimed?.length) continue;
+      claimedAt = attemptAt;
 
       const result = await sendShootReminderEmail({
         to: client.email,
@@ -471,12 +544,19 @@ async function sendShootReminders(ctx: RunContext) {
 
       if (result.sent) {
         shootRemindersSent++;
+        claimedAt = null;
       } else {
-        await supabaseAdmin.from('shoots').update({ reminder_sent_at: null }).eq('id', shoot.id).eq('reminder_sent_at', claimedAt);
         itemError(ctx, 'shootReminders', shoot.id, result.error ?? 'send failed');
       }
     } catch (err) {
       itemError(ctx, 'shootReminders', shoot.id, err);
+    }
+    // לא נשלח אחרי שנתפס (כישלון או חריגה) - משחררים כדי שהריצה הבאה תנסה שוב
+    if (claimedAt) {
+      const releaseAt = claimedAt;
+      await releaseClaim(ctx, 'shootReminders', shoot.id, () =>
+        supabaseAdmin.from('shoots').update({ reminder_sent_at: null }).eq('id', shoot.id).eq('reminder_sent_at', releaseAt).select('id')
+      );
     }
   }
 

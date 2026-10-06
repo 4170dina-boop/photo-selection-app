@@ -103,13 +103,43 @@ describe('decideReopenToggle', () => {
     expect(d).toEqual({
       ok: true,
       newReopenedForSelectionAt: now.toISOString(),
+      patch: { reopened_for_selection_at: now.toISOString(), delivered_at: null, originals_deletion_warning_sent_at: null },
       guard: { status: 'completed', reopened_for_selection_at: null, originals_cleaned_up_at: null },
     });
   });
 
   it('closing is always allowed, guarded on the current marker', () => {
     const d = decideReopenToggle({ status: 'completed', reopened_for_selection_at: '2026-10-01T00:00:00Z', originals_cleaned_up_at: null }, now);
-    expect(d).toEqual({ ok: true, newReopenedForSelectionAt: null, guard: { reopened_for_selection_at: '2026-10-01T00:00:00Z' } });
+    expect(d).toEqual({
+      ok: true,
+      newReopenedForSelectionAt: null,
+      patch: { reopened_for_selection_at: null },
+      guard: { reopened_for_selection_at: '2026-10-01T00:00:00Z' },
+    });
+  });
+
+  it('data loss: reopen after delivery + warning, client finishes again -> next cron does NOT delete', () => {
+    // נמסרה לפני ~28 יום, התראת המחיקה כבר נשלחה
+    const row: Row = {
+      status: 'completed',
+      reopened_for_selection_at: null,
+      delivered_at: '2026-09-07T08:00:00Z',
+      originals_cleaned_up_at: null,
+      originals_deletion_warning_sent_at: '2026-09-30T08:00:00Z',
+    };
+    const reopen = decideReopenToggle(row, now);
+    expect(reopen.ok).toBe(true);
+    if (!reopen.ok) return;
+    expect(conditionalUpdate(row, reopen.guard, { ...reopen.patch })).toBe(true);
+    expect(row.delivered_at).toBeNull();
+    expect(row.originals_deletion_warning_sent_at).toBeNull();
+
+    // הלקוחה בוחרת עוד ולוחצת "סיימתי" (selection/finish מנקה את reopened_for_selection_at)
+    row.reopened_for_selection_at = null;
+
+    // ריצות cron אחרי 30+ יום מהמסירה המקורית - אין מסירה ואין התראה, אין מחיקה
+    const later = new Date('2026-10-20T08:00:00Z');
+    expect(isOriginalsCleanupDue(row as unknown as OriginalsCleanupCandidate, later)).toBe(false);
   });
 
   it('refuses a gallery still in selection', () => {

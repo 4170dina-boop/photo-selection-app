@@ -60,6 +60,7 @@ export default function GalleriesDashboard() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
   const [bulkMessage, setBulkMessage] = useState('');
+  const [bulkError, setBulkError] = useState(false);
   const [togglingEditingId, setTogglingEditingId] = useState<string | null>(null);
   const [togglingDeliveredId, setTogglingDeliveredId] = useState<string | null>(null);
   const [togglingPaidId, setTogglingPaidId] = useState<string | null>(null);
@@ -153,64 +154,103 @@ export default function GalleriesDashboard() {
   // פעולות מרוכזות - לולאה על ה-API הקיים של פריט בודד (לא route חדש) - פשוט
   // ובטוח יותר מ-endpoint מרוכז חדש, והכמות (כמה גלריות יש לצלמת אחת) קטנה
   // מספיק שזה לא בעיית ביצועים.
+  //
+  // פועלות רק על נבחרות שגלויות עכשיו ברשימה המסוננת (visibleSelectedRows):
+  // גלריה שסומנה ואז הוסתרה בחיפוש/סינון לא תימחק "בהפתעה" - מחיקה לצמיתות
+  // רק של מה שהצלמת רואה. הנבחרות המוסתרות מוצגות בסרגל ונשארות מסומנות.
   async function handleBulkDelete() {
-    if (selectedIds.size === 0) return;
-    if (!window.confirm(`למחוק ${selectedIds.size} גלריות? כל התמונות, הבחירות והיסטוריית התשלומים שלהן יימחקו לצמיתות - אי אפשר לבטל את זה.`)) return;
+    const targets = visibleSelectedRows;
+    if (targets.length === 0) return;
+    if (!window.confirm(`למחוק ${targets.length} גלריות? כל התמונות, הבחירות והיסטוריית התשלומים שלהן יימחקו לצמיתות - אי אפשר לבטל את זה.`)) return;
 
     setBulkWorking(true);
     setBulkMessage('');
+    setBulkError(false);
     let succeeded = 0;
 
-    for (const id of selectedIds) {
-      const res = await fetch(`/api/galleries/${id}`, { method: 'DELETE' });
-      if (res.ok) succeeded++;
+    try {
+      for (const row of targets) {
+        try {
+          const res = await fetch(`/api/galleries/${row.id}`, { method: 'DELETE' });
+          if (res.ok) succeeded++;
+        } catch {
+          // שגיאת רשת בגלריה אחת - נספרת ככישלון, ממשיכים לבאות
+        }
+      }
+    } finally {
+      setBulkWorking(false);
+      setBulkError(succeeded < targets.length);
+      setBulkMessage(
+        succeeded < targets.length
+          ? `נמחקו ${succeeded} מתוך ${targets.length} גלריות - המחיקה של ${targets.length - succeeded} נכשלה, נסי שוב`
+          : `נמחקו ${succeeded} מתוך ${targets.length} גלריות`
+      );
+      // רק את מה שטופל - נבחרות מוסתרות נשארות מסומנות
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const row of targets) next.delete(row.id);
+        return next;
+      });
+      await loadGalleries();
     }
-
-    setBulkWorking(false);
-    setBulkMessage(`נמחקו ${succeeded} מתוך ${selectedIds.size} גלריות`);
-    setSelectedIds(new Set());
-    await loadGalleries();
   }
 
   async function handleBulkReminder() {
-    if (selectedIds.size === 0) return;
+    if (visibleSelectedRows.length === 0) return;
 
     // רק גלריות שהלקוחה עדיין בוחרת בהן (sent/in_progress, או שנפתחה מחדש)
     // עם תוקף עתידי - אותם תנאים כמו app/api/galleries/[id]/send-reminder,
     // ראו isReminderEligible ב-lib/galleryLifecycle.ts.
     const now = new Date();
-    const selectedRows = rows.filter((r) => selectedIds.has(r.id));
+    const selectedRows = visibleSelectedRows;
     const eligible = selectedRows.filter((r) => isReminderEligible(r, now));
     const skipped = selectedRows.length - eligible.length;
     if (eligible.length === 0) {
+      setBulkError(true);
       setBulkMessage('אין בבחירה גלריות שהלקוחה עדיין בוחרת בהן עם תוקף עתידי - אי אפשר לשלוח תזכורת');
       return;
     }
 
     setBulkWorking(true);
     setBulkMessage('');
+    setBulkError(false);
     let sent = 0;
     // 429 = מגבלת הקצב של שליחה ידנית (lib/manualEmailCooldown.ts) - תזכורת
     // נשלחה לגלריה הזו ממש עכשיו או יותר מדי פעמים היום; נספרות בנפרד.
     let rateLimited = 0;
+    let failed = 0;
 
-    for (const row of eligible) {
-      const res = await fetch(`/api/galleries/${row.id}/send-reminder`, { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        if (data.emailSent) sent++;
-      } else if (res.status === 429) {
-        rateLimited++;
+    try {
+      for (const row of eligible) {
+        try {
+          const res = await fetch(`/api/galleries/${row.id}/send-reminder`, { method: 'POST' });
+          if (res.ok) {
+            const data = await res.json().catch(() => ({}));
+            if (data.emailSent) sent++;
+          } else if (res.status === 429) {
+            rateLimited++;
+          } else {
+            failed++;
+          }
+        } catch {
+          failed++;
+        }
       }
+    } finally {
+      setBulkWorking(false);
+      setBulkError(failed > 0);
+      setBulkMessage(
+        `נשלחו ${sent} מתוך ${eligible.length} תזכורות` +
+          (skipped > 0 ? ` (דולגו ${skipped} גלריות שהושלמו, שפג תוקפן או שאין להן תוקף)` : '') +
+          (rateLimited > 0 ? ` (${rateLimited} דולגו כי תזכורת נשלחה אליהן לפני רגע או יותר מדי פעמים היום)` : '') +
+          (failed > 0 ? ` (${failed} נכשלו - נסי שוב)` : '')
+      );
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const row of selectedRows) next.delete(row.id);
+        return next;
+      });
     }
-
-    setBulkWorking(false);
-    setBulkMessage(
-      `נשלחו ${sent} מתוך ${eligible.length} תזכורות` +
-        (skipped > 0 ? ` (דולגו ${skipped} גלריות שהושלמו, שפג תוקפן או שאין להן תוקף)` : '') +
-        (rateLimited > 0 ? ` (${rateLimited} דולגו כי תזכורת נשלחה אליהן לפני רגע או יותר מדי פעמים היום)` : '')
-    );
-    setSelectedIds(new Set());
   }
 
   async function loadGalleries() {
@@ -384,6 +424,11 @@ export default function GalleriesDashboard() {
     return matchesStatus && matchesSearch;
   });
 
+  // נבחרות שגלויות כרגע (הפעולות המרוכזות פועלות רק עליהן) מול נבחרות שהוסתרו
+  // בחיפוש/סינון אחרי שסומנו - ראו ההערה מעל handleBulkDelete.
+  const visibleSelectedRows = filteredRows.filter((row) => selectedIds.has(row.id));
+  const hiddenSelectedCount = selectedIds.size - visibleSelectedRows.length;
+
   // מיון בצד לקוח על מה שכבר נטען ומסונן - "newest" הוא סדר ברירת המחדל
   // שכבר מגיע כך מהשאילתה (created_at desc), שאר האפשרויות דורסות אותו.
   // בכל מקרה שבו אין ערך (expires_at/last_activity_at ריקים) - הגלריה יורדת לסוף,
@@ -487,14 +532,19 @@ export default function GalleriesDashboard() {
 
       {selectedIds.size > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10, padding: '0.75rem 1rem' }}>
-          <span style={{ fontSize: 13 }}>{selectedIds.size} נבחרו</span>
-          <button onClick={handleBulkReminder} disabled={bulkWorking} style={{ ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12, opacity: bulkWorking ? 0.6 : 1 }}>
+          <span style={{ fontSize: 13 }}>
+            {visibleSelectedRows.length} נבחרו
+            {hiddenSelectedCount > 0 && (
+              <span style={{ color: theme.textFaint }}> · {hiddenSelectedCount} נבחרות מוסתרות בסינון (לא ייכללו)</span>
+            )}
+          </span>
+          <button onClick={handleBulkReminder} disabled={bulkWorking || visibleSelectedRows.length === 0} style={{ ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12, opacity: bulkWorking || visibleSelectedRows.length === 0 ? 0.6 : 1 }}>
             🔔 שליחת תזכורת לנבחרות
           </button>
           <button
             onClick={handleBulkDelete}
-            disabled={bulkWorking}
-            style={{ ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12, color: theme.errorText, borderColor: theme.errorText, opacity: bulkWorking ? 0.6 : 1 }}
+            disabled={bulkWorking || visibleSelectedRows.length === 0}
+            style={{ ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12, color: theme.errorText, borderColor: theme.errorText, opacity: bulkWorking || visibleSelectedRows.length === 0 ? 0.6 : 1 }}
           >
             {bulkWorking ? 'מבצעת...' : '🗑 מחיקת הנבחרות'}
           </button>
@@ -505,7 +555,13 @@ export default function GalleriesDashboard() {
       )}
 
       {bulkMessage && (
-        <p style={{ background: theme.successBg, color: theme.successText, padding: '0.6rem 0.9rem', borderRadius: 8, fontSize: 13 }}>
+        <p
+          style={{
+            background: bulkError ? theme.errorBg : theme.successBg,
+            color: bulkError ? theme.errorText : theme.successText,
+            padding: '0.6rem 0.9rem', borderRadius: 8, fontSize: 13,
+          }}
+        >
           {bulkMessage}
         </p>
       )}

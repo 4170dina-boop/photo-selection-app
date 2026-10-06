@@ -51,9 +51,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // UPDATE מותנה במצב שנקרא: ה-cron "תופס" גלריה לניקוי המקור ע"י סימון
   // originals_cleaned_up_at באותו אופן מותנה, כך שפתיחה מחדש והמחיקה לא יכולות
   // להצליח שתיהן. 0 שורות = הגלריה השתנתה מאז הקריאה (ניקוי מקור, סיום בחירה
-  // מחדש של הלקוחה, לחיצה כפולה וכו').
+  // מחדש של הלקוחה, לחיצה כפולה וכו'). בפתיחה decision.patch מאפס גם את
+  // delivered_at ואת originals_deletion_warning_sent_at (ראו decideReopenToggle).
   const { data: updated, error } = await applyRowGuard(
-    supabase.from('galleries').update({ reopened_for_selection_at: newReopenedForSelectionAt }).eq('id', gallery.id),
+    supabase.from('galleries').update(decision.patch).eq('id', gallery.id),
     decision.guard
   ).select('id');
 
@@ -81,5 +82,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error }, { status: 409 });
   }
 
-  return NextResponse.json({ reopenedForSelectionAt: newReopenedForSelectionAt });
+  return NextResponse.json({
+    reopenedForSelectionAt: newReopenedForSelectionAt,
+    // רק כשהפתיחה איפסה את המסירה - כדי שהדף יעדכן את "נמסר" בלי טעינה מחדש
+    ...('delivered_at' in decision.patch ? { deliveredAt: null } : {}),
+  });
 }

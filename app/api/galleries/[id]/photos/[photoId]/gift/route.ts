@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { normalizeGiftMessage } from '@/lib/gifts';
-import { syncPaidAtAfterTotalChange } from '@/lib/galleryPayments';
+import { captureAmountDueBefore, syncPaidAtAfterTotalChange } from '@/lib/galleryPayments';
 
 // סימון/ביטול "תמונת מתנה" (photos.is_gift + gift_message, ראו lib/gifts.ts) -
 // רק הצלמת. רץ עם session הצלם (לא service key), בדיוק כמו
@@ -67,6 +67,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     return NextResponse.json({ error: message.error }, { status: 400 });
   }
 
+  // הסכום לתשלום לפני השינוי - paid_at מסונכרן רק אם הוא באמת השתנה
+  const amountBefore = await captureAmountDueBefore(supabase, params.id);
+
   const { data: updated, error } = await supabase
     .from('photos')
     .update({ is_gift: body.isGift, gift_message: body.isGift ? message.value : null })
@@ -83,7 +86,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   }
 
   // מתנה לא נספרת לחיוב - הסכום לתשלום אולי השתנה (best-effort, לא מכשיל)
-  await syncPaidAtAfterTotalChange(supabase, params.id);
+  await syncPaidAtAfterTotalChange(supabase, amountBefore);
 
   return NextResponse.json({ success: true, isGift: updated.is_gift, giftMessage: updated.gift_message });
 }

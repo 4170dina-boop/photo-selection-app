@@ -119,6 +119,53 @@ export function shouldReleaseCleanupClaim(deletedCount: number): boolean {
   return deletedCount === 0;
 }
 
+// ---------- תפיסת שליחה של התראת מחיקת המקור (שלב 3) ----------
+
+// originals_deletion_warning_sent_at נכתב רק אחרי שליחה מוצלחת (שלב 4 דורש
+// אותו לפני מחיקה). התפיסה נגד שליחה כפולה היא בעמודה נפרדת,
+// originals_deletion_warning_claimed_at: אם הריצה נהרגת בין התפיסה לשליחה
+// (timeout וכו'), התפיסה מתיישנת והריצה הבאה מנסה שוב - ואף פעם לא נוצר מצב
+// של "נשלחה" בלי שנשלחה. שעה = הרבה מעבר ל-maxDuration של ריצה אחת.
+export const WARNING_CLAIM_STALE_MS = 60 * 60 * 1000;
+
+export interface WarningClaimState {
+  originals_deletion_warning_sent_at: string | null;
+  originals_deletion_warning_claimed_at?: string | null;
+}
+
+// מותר לתפוס: ההתראה עוד לא נשלחה, ואין תפיסה פעילה (או שהקיימת התיישנה).
+export function canClaimOriginalsWarning(gallery: WarningClaimState, now: Date): boolean {
+  if (gallery.originals_deletion_warning_sent_at) return false;
+  const claimed = gallery.originals_deletion_warning_claimed_at;
+  if (!claimed) return true;
+  const t = new Date(claimed).getTime();
+  return Number.isNaN(t) || t <= now.getTime() - WARNING_CLAIM_STALE_MS;
+}
+
+// UPDATE מותנה של התפיסה: רק אם ההתראה עדיין לא נשלחה והתפיסה היא בדיוק זו
+// שנקראה (null או תפיסה ישנה) - שתי ריצות מקבילות לא יכולות לתפוס שתיהן.
+export function originalsWarningClaimGuard(gallery: WarningClaimState): RowGuard {
+  return {
+    originals_deletion_warning_sent_at: null,
+    originals_deletion_warning_claimed_at: gallery.originals_deletion_warning_claimed_at ?? null,
+  };
+}
+
+// מה לכתוב אחרי ניסיון השליחה. רק שליחה מוצלחת מסמנת "נשלחה" (ומתחילה את
+// ספירת 5 הימים עד המחיקה). כישלון רק משחרר את התפיסה.
+export function originalsWarningAfterSendPatch(
+  sent: boolean,
+  sentAt: string,
+  claimSupported: boolean
+): { originals_deletion_warning_sent_at?: string; originals_deletion_warning_claimed_at?: null } | null {
+  if (sent) {
+    return claimSupported
+      ? { originals_deletion_warning_sent_at: sentAt, originals_deletion_warning_claimed_at: null }
+      : { originals_deletion_warning_sent_at: sentAt };
+  }
+  return claimSupported ? { originals_deletion_warning_claimed_at: null } : null;
+}
+
 // התאריך שמוצג לצלמת בהתראה: 30 יום אחרי המסירה, אבל לא לפני 5 ימים מהיום
 // (אם ההתראה יוצאת באיחור, המחיקה נדחית בהתאם - ראו isOriginalsCleanupDue).
 export function originalsDeletionDate(deliveredAt: string, now: Date): Date {

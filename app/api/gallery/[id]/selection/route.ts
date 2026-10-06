@@ -6,7 +6,7 @@ import { sendQuotaReachedEmail } from '@/lib/email';
 import { fetchClientGender } from '@/lib/gender';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { countBillableSelected } from '@/lib/gifts';
-import { syncPaidAtAfterTotalChange } from '@/lib/galleryPayments';
+import { captureAmountDueBefore, syncPaidAtAfterTotalChange } from '@/lib/galleryPayments';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -63,6 +63,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (status !== null && giftIds.includes(photoId)) {
     return NextResponse.json({ error: 'זו תמונת מתנה - היא כבר כלולה אצלך, אין צורך לבחור אותה' }, { status: 400 });
   }
+
+  // הסכום לתשלום לפני השינוי - paid_at מסונכרן רק אם הוא באמת השתנה (רק
+  // בחירות הבעלים נספרות לחיוב, ראו captureAmountDueBefore)
+  const amountBefore = await captureAmountDueBefore(supabaseAdmin, galleryId, session.participantId);
 
   const { error: writeError } =
     status === null
@@ -153,10 +157,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
   }
 
-  // רק בחירות הבעלים נספרות לחיוב - שינוי שלהן אולי שינה את הסכום לתשלום.
-  if (gallery?.owner_participant_id === session.participantId) {
-    await syncPaidAtAfterTotalChange(supabaseAdmin, galleryId);
-  }
+  // רק בחירות הבעלים נספרות לחיוב - שינוי שלהן אולי שינה את הסכום לתשלום
+  // (amountBefore הוא null לבן משפחה אחר / בלי תשלומים).
+  await syncPaidAtAfterTotalChange(supabaseAdmin, amountBefore);
 
   return NextResponse.json({ success: true });
 }
@@ -181,6 +184,9 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return NextResponse.json({ error: writable.error }, { status: writable.status });
   }
 
+  // הסכום לפני - רק לבעלים (ראו POST)
+  const amountBefore = await captureAmountDueBefore(supabaseAdmin, galleryId, session.participantId);
+
   const { error: deleteError } = await supabaseAdmin
     .from('selections')
     .delete()
@@ -192,14 +198,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return NextResponse.json({ error: 'ביטול הבחירה נכשל, נסי שוב' }, { status: 500 });
   }
 
-  const { data: gallery } = await supabaseAdmin
-    .from('galleries')
-    .select('owner_participant_id')
-    .eq('id', galleryId)
-    .single();
-  if (gallery?.owner_participant_id === session.participantId) {
-    await syncPaidAtAfterTotalChange(supabaseAdmin, galleryId);
-  }
+  await syncPaidAtAfterTotalChange(supabaseAdmin, amountBefore);
 
   return NextResponse.json({ success: true });
 }

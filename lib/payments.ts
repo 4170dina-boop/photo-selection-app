@@ -89,6 +89,10 @@ export type PaymentChange = 'payment_added' | 'payment_deleted' | 'amount_change
 //   יותר ממה לגזור, וסימון ידני שקדם לרישום התשלומים לא אמור להימחק איתו.
 // - הכפתור הידני (toggle-paid) ממשיך לעבוד כמו קודם ולא עובר דרך כאן; הוא
 //   "דורס" עד השינוי הבא ברשימת התשלומים.
+// - total_changed (שינוי עקיף - בחירה של הלקוחה, מתנה, עריכת חבילה) רק *מסמן*
+//   כשהתשלומים מכסים את הסכום, ולעולם לא מבטל סימון קיים: הצלמת לא עשתה כלום
+//   במסך התשלומים, וסימון "שולם" ידני (למשל כשוויתרה על היתרה) לא אמור
+//   להיעלם בגלל שהלקוחה בחרה עוד תמונה.
 export function nextPaidAt(
   currentPaidAt: string | null,
   summary: Pick<PaymentSummary, 'total' | 'paid' | 'paymentCount'>,
@@ -97,7 +101,21 @@ export function nextPaidAt(
 ): string | null {
   if (summary.paymentCount === 0 && change !== 'payment_added') return currentPaidAt;
   const fullyPaid = summary.paid > 0 && summary.paid >= summary.total;
+  if (change === 'total_changed') return fullyPaid ? currentPaidAt ?? nowIso : currentPaidAt;
   return fullyPaid ? currentPaidAt ?? nowIso : null;
+}
+
+// אחרי שינוי עקיף: נוגעים ב-paid_at רק אם הסכום לתשלום באמת השתנה (השוואה
+// באגורות בין לפני לאחרי). בלי זה, כל לחיצה של הלקוחה (גם "אולי", גם בן משפחה)
+// הייתה מחילה מחדש את הכלל ודורסת החלטה ידנית של הצלמת (toggle-paid).
+export function paidAtAfterTotalChange(
+  currentPaidAt: string | null,
+  totalBefore: number,
+  summary: Pick<PaymentSummary, 'total' | 'paid' | 'paymentCount'>,
+  nowIso: string
+): string | null {
+  if (toAgorot(totalBefore) === toAgorot(summary.total)) return currentPaidAt;
+  return nextPaidAt(currentPaidAt, summary, 'total_changed', nowIso);
 }
 
 export interface PaymentInput {

@@ -3,6 +3,7 @@ import {
   packageAmount,
   computePaymentSummary,
   nextPaidAt,
+  paidAtAfterTotalChange,
   parsePaymentInput,
   parseAmountDueOverride,
   formatShekels,
@@ -99,10 +100,11 @@ describe('nextPaidAt', () => {
     expect(nextPaidAt(null, { total: 1500, paid: 0, paymentCount: 0 }, 'payment_deleted', now)).toBeNull();
   });
 
-  it('treats an indirect total change like an amount change', () => {
+  it('an indirect total change only sets paid, never clears an existing (manual) mark', () => {
     expect(nextPaidAt(earlier, { total: 2000, paid: 0, paymentCount: 0 }, 'total_changed', now)).toBe(earlier);
     expect(nextPaidAt(null, { total: 1000, paid: 1000, paymentCount: 1 }, 'total_changed', now)).toBe(now);
-    expect(nextPaidAt(earlier, { total: 2000, paid: 1000, paymentCount: 1 }, 'total_changed', now)).toBeNull();
+    expect(nextPaidAt(earlier, { total: 2000, paid: 1000, paymentCount: 1 }, 'total_changed', now)).toBe(earlier);
+    expect(nextPaidAt(null, { total: 2000, paid: 1000, paymentCount: 1 }, 'total_changed', now)).toBeNull();
   });
 
   it('does not touch a manual mark when the amount changes and no payments are recorded', () => {
@@ -113,6 +115,32 @@ describe('nextPaidAt', () => {
   it('re-derives from payments when the amount changes and payments exist', () => {
     expect(nextPaidAt(null, { total: 1000, paid: 1000, paymentCount: 1 }, 'amount_changed', now)).toBe(now);
     expect(nextPaidAt(earlier, { total: 2000, paid: 1000, paymentCount: 1 }, 'amount_changed', now)).toBeNull();
+  });
+});
+
+describe('paidAtAfterTotalChange', () => {
+  const now = '2026-10-05T10:00:00.000Z';
+  const earlier = '2026-09-01T10:00:00.000Z';
+
+  it('does nothing when the amount due did not actually change', () => {
+    // הצלמת ביטלה ידנית את "שולם" למרות שהתשלומים מכסים - בחירת "אולי" לא מחזירה אותו
+    expect(paidAtAfterTotalChange(null, 1000, { total: 1000, paid: 1000, paymentCount: 1 }, now)).toBeNull();
+    // וסימון ידני נשאר
+    expect(paidAtAfterTotalChange(earlier, 1500, { total: 1500, paid: 500, paymentCount: 1 }, now)).toBe(earlier);
+    // השוואה באגורות - בלי שאריות float
+    expect(paidAtAfterTotalChange(null, 0.3, { total: 0.1 + 0.2, paid: 1, paymentCount: 1 }, now)).toBeNull();
+  });
+
+  it('client picks more photos after a manual paid mark -> mark is kept', () => {
+    expect(paidAtAfterTotalChange(earlier, 1500, { total: 1700, paid: 1000, paymentCount: 1 }, now)).toBe(earlier);
+  });
+
+  it('total drops so payments now cover it -> marks paid', () => {
+    expect(paidAtAfterTotalChange(null, 1700, { total: 1500, paid: 1500, paymentCount: 1 }, now)).toBe(now);
+  });
+
+  it('total grows above payments -> leaves unpaid as unpaid', () => {
+    expect(paidAtAfterTotalChange(null, 1500, { total: 1700, paid: 1500, paymentCount: 1 }, now)).toBeNull();
   });
 });
 

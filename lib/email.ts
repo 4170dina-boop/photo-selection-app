@@ -112,6 +112,12 @@ export function retryDelayMs(retryAfterHeader: string | null | undefined): numbe
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// תקרת זמן לבקשה אחת ל-Resend: בלי זה בקשה תקועה הייתה מחזיקה את ריצת ה-cron
+// עד maxDuration, הפונקציה נהרגת באמצע - ושורות שכבר "נתפסו" לשליחה (תזכורת /
+// התראת מחיקת מקור) נשארות מסומנות בלי שהמייל יצא. timeout נתפס ב-sendEmail
+// וחוזר כ-{ sent: false } כמו כל כישלון רשת.
+export const RESEND_TIMEOUT_MS = 10_000;
+
 async function postToResend(payload: string): Promise<Response> {
   return fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -120,6 +126,7 @@ async function postToResend(payload: string): Promise<Response> {
       'Content-Type': 'application/json',
     },
     body: payload,
+    signal: AbortSignal.timeout(RESEND_TIMEOUT_MS),
   });
 }
 

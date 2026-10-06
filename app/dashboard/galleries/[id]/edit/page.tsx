@@ -461,6 +461,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     }
 
     setReopenedForSelectionAt(data.reopenedForSelectionAt ?? null);
+    // פתיחה מחדש מאפסת את סימון "נמסר" (ספירת 30 הימים למחיקת המקור מתחילה מחדש)
+    if ('deliveredAt' in data) setDeliveredAt(data.deliveredAt ?? null);
     setReopenMessage(data.reopenedForSelectionAt ? 'הלקוחה יכולה כעת לבחור שוב' : 'הבחירה ננעלה בחזרה');
   }
 
