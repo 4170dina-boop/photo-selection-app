@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sendGalleryInviteEmail } from '@/lib/email';
 import { getManualEmailCooldown, recordManualEmailSend, cooldownResponse } from '@/lib/manualEmailLog';
+import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 
 // שולחת שוב את מייל ההזמנה (קישור + קוד גישה) ללקוחה הקיימת של הגלריה - שימושי
 // כשהלקוחה מדווחת שהיא לא מצאה/מחקה את המייל המקורי. רץ עם session הצלם (לא
@@ -57,6 +58,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   for (const to of recipients) {
     const result = await sendGalleryInviteEmail({
+      // שפת הגלריה (galleries.language) - עמודה חסרה = עברית
+      language: await fetchGalleryLanguageOrDefault(supabase, gallery.id),
       to,
       clientName: client.full_name,
       businessName: photographer.business_name,

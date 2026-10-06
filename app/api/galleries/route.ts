@@ -4,6 +4,8 @@ import { createClient } from '@/lib/supabase/server';
 import { sendGalleryInviteEmail, parseAdditionalInviteEmails, isValidEmail } from '@/lib/email';
 import { parseGalleryNumbers } from '@/lib/galleryValidation';
 import { DEFAULT_CLIENT_GENDER, parseGenderInput, saveClientGender } from '@/lib/gender';
+import { parseLanguageInput, saveGalleryLanguage } from '@/lib/i18n/galleryLanguage';
+import { DEFAULT_LANG } from '@/lib/i18n/types';
 
 // יוצר גלריה חדשה (client + gallery + package) עבור הצלם המחובר.
 // רץ דרך לקוח השרת עם ה-session של הצלם (לא service key) - כך RLS הקיים
@@ -42,6 +44,7 @@ export async function POST(req: NextRequest) {
     reminderDays?: number;
     additionalInviteEmails?: unknown;
     clientGender?: unknown;
+    language?: unknown;
   };
   try {
     body = await req.json();
@@ -77,6 +80,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsedGender.error }, { status: 400 });
   }
   const clientGender = parsedGender.value ?? DEFAULT_CLIENT_GENDER;
+
+  // שפת הגלריה והמיילים ללקוח/ה (lib/i18n) - אופציונלי, ברירת מחדל עברית
+  const parsedLanguage = parseLanguageInput(body.language);
+  if (!parsedLanguage.ok) {
+    return NextResponse.json({ error: parsedLanguage.error }, { status: 400 });
+  }
+  const language = parsedLanguage.value ?? DEFAULT_LANG;
 
   const { data: photographer, error: photographerError } = await supabase
     .from('photographers')
@@ -191,6 +201,12 @@ export async function POST(req: NextRequest) {
     if (saved === 'error') console.error('[POST /api/galleries] שמירת client_gender נכשלה:', gallery.id);
   }
 
+  // אותו דבר לשפה - 'he' היא ברירת המחדל של העמודה
+  if (language !== DEFAULT_LANG) {
+    const saved = await saveGalleryLanguage(supabase, gallery.id, language);
+    if (saved === 'error') console.error('[POST /api/galleries] שמירת language נכשלה:', gallery.id);
+  }
+
   // שליחת המייל היא best-effort: כישלון שליחה לא אמור לבטל את יצירת הגלריה -
   // הצלם עדיין רואה את הקישור והקוד במסך ויכול לשלוח ידנית אם emailSent=false.
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
@@ -201,6 +217,7 @@ export async function POST(req: NextRequest) {
     galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
     accessCode,
     replyTo: user.email,
+    language,
   });
 
   // אותו מייל בדיוק (קישור + קוד גישה) נשלח גם לכתובות הנוספות - best-effort
@@ -214,6 +231,7 @@ export async function POST(req: NextRequest) {
         galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
         accessCode,
         replyTo: user.email,
+        language,
       })
     )
   );

@@ -180,7 +180,8 @@ export function coverCrop(srcW: number, srcH: number, dstW: number, dstH: number
 
 // "הקולאז-שלי-<שם>.jpg" - בלי תווים שאסורים בשמות קבצים (Windows/iOS), בלי
 // גרש (שובר חלק מתוכנות ההורדה), רווחים הופכים למקפים.
-export function collageFileName(name: string | null | undefined): string {
+// prefix - תחילית מתורגמת (lib/i18n: col.fileName), ברירת מחדל עברית
+export function collageFileName(name: string | null | undefined, prefix = 'הקולאז-שלי'): string {
   const clean = (name ?? '')
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001f\u007f<>:"/\\|?*'`׳״]/g, '')
@@ -189,5 +190,5 @@ export function collageFileName(name: string | null | undefined): string {
     .replace(/-+/g, '-')
     .replace(/^[-.]+|[-.]+$/g, '')
     .slice(0, 60);
-  return clean ? `הקולאז-שלי-${clean}.jpg` : 'הקולאז-שלי.jpg';
+  return clean ? `${prefix}-${clean}.jpg` : `${prefix}.jpg`;
 }

@@ -11,6 +11,7 @@ import { fetchClientGender, fetchParticipantGenders, resolveViewerGender } from 
 import { fetchChapters, fetchPhotoNavFields } from '@/lib/chapterQueries';
 import { orderForTimeline } from '@/lib/chapters';
 import { burstIdByPhoto, groupBursts } from '@/lib/bursts';
+import { fetchGalleryLanguage } from '@/lib/i18n/galleryLanguage';
 
 // service_role - נשאר בצד שרת בלבד. כל הגישה של הלקוחה לנתוני הגלריה
 // עוברת דרך ה-API הזה (ולא דרך anon key ישירות מהדפדפן), כי אין policy
@@ -27,7 +28,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const session = requireGallerySession(req, galleryId);
 
   if (!session) {
-    return NextResponse.json({ error: 'לא מאומת' }, { status: 401 });
+    // שפת הגלריה (galleries.language) גם בלי אימות - כדי שמסך קוד הגישה
+    // יוצג כבר בשפה שהצלמת קבעה. best-effort: null אם העמודה חסרה.
+    return NextResponse.json(
+      { error: 'לא מאומת', language: await fetchGalleryLanguage(supabaseAdmin, galleryId) },
+      { status: 401 }
+    );
   }
 
   const { data: gallery, error: galleryError } = await supabaseAdmin
@@ -107,6 +113,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // לשון הפנייה ללקוח/ה הראשי/ת (galleries.client_gender, lib/gender.ts) -
   // שאילתה נפרדת ו-best-effort, כדי שעמודה חסרה לא תפיל את הטעינה.
   const clientGender = await fetchClientGender(supabaseAdmin, galleryId);
+  // שפת הגלריה (lib/i18n) - null = עמודה חסרה, הלקוח נופל לשפת הדפדפן
+  const language = await fetchGalleryLanguage(supabaseAdmin, galleryId);
 
   if (!session.participantId) {
     return NextResponse.json({
@@ -114,6 +122,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       readOnly,
       registeredName: (gallery as any).clients?.full_name ?? null,
       registeredGender: clientGender,
+      language,
       deliveredPhotos,
     });
   }
@@ -273,6 +282,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     viewerGender,
     // לטקסטים בגוף שלישי על הבעלים ("רק X יכולה לסיים")
     ownerGender: clientGender,
+    language,
     myMarks,
     allMarks,
     ownerSelectedCount,

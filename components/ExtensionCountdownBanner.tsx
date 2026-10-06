@@ -2,15 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { theme, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
-import { formatIsraelDate } from '@/lib/israelTime';
-import { hebrewDateInIsrael } from '@/lib/galleryClient';
 import {
   EXTENSION_DAY_OPTIONS,
-  EXTENSION_LIMIT_REACHED_MESSAGE,
   deadlineWarning,
   extensionButtonMode,
 } from '@/lib/extensionRequests';
-import { gt, type ViewerGender } from '@/lib/gender';
+import type { ViewerGender } from '@/lib/gender';
+import { formatDateWithHebrew, localizedErrorFromBody, t, type Lang, type MessageKey, type MessageParams } from '@/lib/i18n';
 
 interface ExtensionStatus {
   available: boolean;
@@ -31,9 +29,13 @@ export default function ExtensionCountdownBanner(props: {
   accent: string;
   // לשון פנייה לצופה (lib/gender.ts) - חסר = נקבה כמו קודם
   gender?: ViewerGender;
+  // שפת התצוגה (lib/i18n) - חסר = עברית
+  lang?: Lang;
 }) {
   const { galleryId, expiresAt, isOwner, selectionOpen, accent } = props;
   const gender: ViewerGender = props.gender === undefined ? 'f' : props.gender;
+  const lang: Lang = props.lang ?? 'he';
+  const tr = (key: MessageKey, params?: MessageParams) => t(lang, key, params, gender);
   const [now, setNow] = useState(() => new Date());
   const [status, setStatus] = useState<ExtensionStatus | null>(null);
   const [choosing, setChoosing] = useState(false);
@@ -86,14 +88,14 @@ export default function ExtensionCountdownBanner(props: {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(data?.error ?? `שליחת הבקשה נכשלה, ${gt(gender, 'נסי', 'נסה', 'נסה/י')} שוב`);
+        setError(localizedErrorFromBody(lang, data, tr('ext.sendFailed'), gender));
         return;
       }
       if (data) setStatus(data);
       setChoosing(false);
-      setMessage(`הבקשה להארכה של ${days} ימים נשלחה לצלמת 💛`);
+      setMessage(tr('ext.sent', { count: days }));
     } catch {
-      setError(`שליחת הבקשה נכשלה - ${gt(gender, 'בדקי', 'בדוק', 'בדוק/י')} את החיבור ${gt(gender, 'ונסי', 'ונסה', 'ונסה/י')} שוב`);
+      setError(tr('ext.sendFailedNet'));
     } finally {
       setSending(false);
     }
@@ -107,9 +109,11 @@ export default function ExtensionCountdownBanner(props: {
         background: theme.warningBg, border: `1px solid ${accent}66`, color: theme.text, fontSize: 14,
       }}
     >
-      <div style={{ fontWeight: 700, color: accent }}>{warning.text}</div>
+      <div style={{ fontWeight: 700, color: accent }}>
+        {warning.daysLeft <= 0 ? tr('ext.lastDay') : tr('ext.daysLeft', { count: warning.daysLeft })}
+      </div>
       <div style={{ fontSize: 13, color: theme.textMuted, marginTop: 2 }}>
-        ניתן לבחור עד {formatIsraelDate(expiresAt)} · {hebrewDateInIsrael(new Date(expiresAt))}
+        {tr('ext.until', { date: formatDateWithHebrew(lang, expiresAt) })}
       </div>
 
       {mode === 'button' && !choosing && (
@@ -121,13 +125,13 @@ export default function ExtensionCountdownBanner(props: {
           }}
           style={{ ...outlineButtonStyle, marginTop: '0.6rem', borderColor: accent, color: accent }}
         >
-          לבקש הארכה
+          {tr('ext.request')}
         </button>
       )}
 
       {mode === 'button' && choosing && (
         <div style={{ marginTop: '0.6rem' }}>
-          <div style={{ fontSize: 13, marginBottom: '0.4rem' }}>לכמה ימים להאריך?</div>
+          <div style={{ fontSize: 13, marginBottom: '0.4rem' }}>{tr('ext.howMany')}</div>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             {EXTENSION_DAY_OPTIONS.map((days) => (
               <button
@@ -137,11 +141,11 @@ export default function ExtensionCountdownBanner(props: {
                 onClick={() => requestExtension(days)}
                 style={{ ...goldButtonStyle, opacity: sending ? 0.6 : 1 }}
               >
-                {days} ימים
+                {tr('ext.daysOption', { count: days })}
               </button>
             ))}
             <button type="button" disabled={sending} onClick={() => setChoosing(false)} style={outlineButtonStyle}>
-              ביטול
+              {tr('common.cancel')}
             </button>
           </div>
         </div>
@@ -149,16 +153,16 @@ export default function ExtensionCountdownBanner(props: {
 
       {mode === 'pending' && (
         <div style={{ fontSize: 13, marginTop: '0.5rem', color: theme.textMuted }}>
-          {message || `שלחת בקשה להארכה של ${status?.pending?.days} ימים - הצלמת תעדכן אותך בקרוב`}
+          {message || tr('ext.pending', { count: status?.pending?.days ?? 0 })}
         </div>
       )}
 
       {mode === 'limit_reached' && (
-        <div style={{ fontSize: 13, marginTop: '0.5rem', color: theme.textMuted }}>{EXTENSION_LIMIT_REACHED_MESSAGE}</div>
+        <div style={{ fontSize: 13, marginTop: '0.5rem', color: theme.textMuted }}>{tr('ext.limit')}</div>
       )}
 
       {mode !== 'pending' && status?.lastDecision?.status === 'declined' && (
-        <div style={{ fontSize: 12, marginTop: '0.4rem', color: theme.textFaint }}>הבקשה הקודמת להארכה לא אושרה.</div>
+        <div style={{ fontSize: 12, marginTop: '0.4rem', color: theme.textFaint }}>{tr('ext.declined')}</div>
       )}
 
       {error && <div style={{ fontSize: 13, marginTop: '0.5rem', color: theme.errorText }}>{error}</div>}

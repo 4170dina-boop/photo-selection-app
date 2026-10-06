@@ -144,6 +144,9 @@ create table galleries (
   -- לשון הפנייה ללקוח/ה הראשי/ת בגלריה ובמיילים (lib/gender.ts): 'f' = נקבה
   -- (ברירת המחדל), 'm' = זכר. נקבע ע"י הצלמת בטופס יצירה/עריכה של הגלריה.
   client_gender text default 'f' not null check (client_gender in ('f', 'm')),
+  -- שפת הגלריה והמיילים ללקוח/ה (lib/i18n): he/en/yi/es/fr, ברירת מחדל עברית.
+  -- הלקוח/ה עדיין יכול/ה להחליף שפה בבורר שבגלריה (נשמר רק בדפדפן).
+  language text default 'he' not null check (language in ('he', 'en', 'yi', 'es', 'fr')),
   created_at timestamptz default now()
 );
 
@@ -2185,3 +2188,13 @@ create policy "photographers read own logo" on storage.objects
 -- create index if not exists idx_photos_chapter on photos(chapter_id) where chapter_id is not null;
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: פרקים, שעת צילום ותמונות דומות =====
+
+-- ===== מיגרציה: שפת הגלריה והמיילים ללקוח/ה (galleries.language) =====
+-- להריץ פעם אחת על פרויקט קיים (הכל idempotent). עד שמריצים - הקוד לא נשבר:
+-- הגלריה מוצגת לפי שפת הדפדפן (או עברית), המיילים ללקוח/ה בעברית, והבחירה
+-- בטופס יצירה/עריכה פשוט לא נשמרת (ראו lib/i18n/galleryLanguage.ts).
+-- alter table galleries add column if not exists language text default 'he' not null;
+-- alter table galleries drop constraint if exists galleries_language_check;
+-- alter table galleries add constraint galleries_language_check check (language in ('he', 'en', 'yi', 'es', 'fr'));
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: שפת הגלריה =====

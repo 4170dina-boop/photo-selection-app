@@ -1,0 +1,37 @@
+// Français : mots courants et messages d’erreur (vouvoiement, ton chaleureux).
+import type { Section } from '../types';
+import type { common as he } from '../he/common';
+
+export const common: Section<typeof he> = {
+  'common.loading': 'Chargement...',
+  'common.loadingGallery': 'Chargement de votre galerie...',
+  'common.back': 'Retour',
+  'common.cancel': 'Annuler',
+  'common.save': 'Enregistrer',
+  'common.close': 'Fermer',
+  'common.closeNotice': 'Fermer le message',
+  'common.prev': 'Précédente',
+  'common.next': 'Suivante',
+  'common.processing': 'Traitement...',
+  'common.processingAria': 'Photo en cours de traitement',
+  'common.processingStill': 'Cette photo est encore en cours de traitement',
+  'common.photoN': 'Photo {n}',
+  'common.photographer': 'votre photographe',
+  'common.ownerFallback': { f: 'la cliente principale', m: 'le client principal' },
+  'common.language': 'Langue',
+
+  'err.noInternet': 'Pas de connexion internet. Vérifiez votre connexion et réessayez.',
+  'err.offlineRetryLater': 'Vous êtes hors ligne pour le moment : réessayez une fois la connexion revenue.',
+  'err.galleryExpired': 'Cette galerie a expiré',
+  'err.loadFailed': 'Impossible de charger la galerie. Essayez de rafraîchir la page.',
+  'err.downloadFailed': 'Le téléchargement a échoué, veuillez réessayer',
+  'err.zipFailed': 'Impossible de préparer le ZIP, veuillez réessayer',
+  'err.updateNotSaved': 'La modification n’a pas été enregistrée, veuillez réessayer.',
+  'err.noteNotSaved': 'La note n’a pas été enregistrée, veuillez réessayer.',
+  'err.offlineNotSaved': 'Certains choix faits hors ligne n’ont pas été enregistrés : la galerie est peut-être déjà verrouillée',
+  'err.finishPendingOffline': 'Certains choix ne sont pas encore enregistrés (pas de connexion). Votre sélection sera envoyée au retour de la connexion, ou vous pouvez réessayer.',
+  'err.finishFailed': 'Impossible d’envoyer votre sélection, veuillez réessayer.',
+  'err.clearFailed': 'Impossible d’effacer vos choix, veuillez réessayer.',
+  'err.aiFailed': 'L’analyse a échoué, veuillez réessayer.',
+  'err.identifyFailed': 'Impossible de rejoindre la galerie, veuillez réessayer',
+};

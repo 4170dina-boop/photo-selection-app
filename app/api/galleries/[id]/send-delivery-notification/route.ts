@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { sendFinalPhotosReadyEmail } from '@/lib/email';
 import { getManualEmailCooldown, recordManualEmailSend, cooldownResponse } from '@/lib/manualEmailLog';
+import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 
 // שליחה ידנית של התראה ללקוחה שהתמונות הסופיות מוכנות - בדיוק כמו
 // send-reminder/route.ts (אימות בעלות עם session הצלם, שליחה עם lib/email.ts),
@@ -58,6 +59,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
   const { sent: emailSent } = await sendFinalPhotosReadyEmail({
+    // שפת הגלריה (galleries.language) - עמודה חסרה = עברית
+    language: await fetchGalleryLanguageOrDefault(supabase, gallery.id),
     to: client.email,
     clientName: client.full_name,
     businessName: photographer.business_name,
