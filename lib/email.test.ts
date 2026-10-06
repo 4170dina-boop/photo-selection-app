@@ -331,3 +331,83 @@ describe('lib/email - לשון פנייה (clientGender)', () => {
     expect(bodyAt(4).subject).toBe('הלקוח דני ביקש הארכה של 2 ימים');
   });
 });
+
+describe('lib/email - אוטומציות (מייל "לפני שנה", תאריכים בסיכום היומי)', () => {
+  const originalFetch = global.fetch;
+  const originalKey = process.env.RESEND_API_KEY;
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = originalKey;
+    vi.resetModules();
+  });
+
+  it('sends the anniversary email in the gallery language and client gender, with logo and reply-to', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchSpy as unknown as typeof fetch;
+    const { sendAnniversaryEmail } = await import('./email');
+    const bodyAt = (i: number) => JSON.parse((fetchSpy.mock.calls[i] as [string, RequestInit])[1].body as string);
+
+    await sendAnniversaryEmail({
+      to: 'c@x.co',
+      clientName: 'דני',
+      clientGender: 'm',
+      businessName: 'סטודיו <b>',
+      logoUrl: 'https://x.supabase.co/storage/v1/object/public/photographer-logos/p/logo?t=1',
+      galleryUrl: 'https://x.co/gallery/1',
+      accessCode: 'ABCD1234',
+      replyTo: 'photographer@x.co',
+    });
+    const he = bodyAt(0);
+    expect(he.subject).toBe('לפני שנה צילמנו 💛');
+    expect(he.reply_to).toBe('photographer@x.co');
+    expect(he.html).toContain('מקווה שאתה עדיין נהנה');
+    expect(he.html).toContain('<img src="https://x.supabase.co/storage/v1/object/public/photographer-logos/p/logo?t=1"');
+    expect(he.html).toContain('סטודיו &lt;b&gt;');
+    expect(he.html).toContain('dir="rtl"');
+
+    await sendAnniversaryEmail({
+      language: 'en',
+      to: 'c@x.co',
+      clientName: 'Dan',
+      businessName: 'Studio',
+      logoUrl: 'javascript:alert(1)',
+      galleryUrl: 'https://x.co/gallery/1',
+    });
+    const en = bodyAt(1);
+    expect(en.subject).toBe('A year ago we did a photo shoot together 💛');
+    expect(en.html).toContain('dir="ltr"');
+    expect(en.html).not.toContain('<img');
+  });
+
+  it('daily summary: dates only (no shoots) still sends, with the reminder line and suggestion', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchSpy as unknown as typeof fetch;
+    const { sendShootsDailySummaryEmail, dailySummarySubject } = await import('./email');
+
+    const result = await sendShootsDailySummaryEmail({
+      to: 'p@x.co',
+      shootDate: '2026-10-07',
+      shoots: [],
+      dateReminders: [
+        { label: 'יום ההולדת של יוסי', clientLabel: 'משפחת כהן', daysAhead: 30, dateText: '5.11.2026', suggestion: 'ברכה' },
+      ],
+      dashboardUrl: 'https://x.co/dashboard/calendar',
+      datesDashboardUrl: 'https://x.co/dashboard/clients',
+    });
+    expect(result.sent).toBe(true);
+    const body = JSON.parse((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.subject).toBe('📅 בעוד 30 יום: יום ההולדת של יוסי');
+    expect(body.html).toContain('📅 בעוד 30 יום: <b>יום ההולדת של יוסי</b> (משפחת כהן)');
+    expect(body.html).toContain('https://x.co/dashboard/clients');
+    expect(body.html).not.toContain('מחר (');
+
+    expect(dailySummarySubject(2, [])).toBe('הצילומים שלך מחר: 2 צילומים');
+    expect(dailySummarySubject(1, [{ label: 'a', daysAhead: 30 }])).toBe('הצילומים שלך מחר: צילום אחד · תאריך חשוב אחד');
+    expect(dailySummarySubject(0, [{ label: 'a', daysAhead: 30 }, { label: 'b', daysAhead: 30 }])).toBe('📅 2 תאריכים חשובים של לקוחות מתקרבים');
+  });
+});

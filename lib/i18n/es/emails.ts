@@ -38,6 +38,12 @@ export const emails: Section<typeof he> = {
   'mail.ext.approvedNext': 'Puedes seguir eligiendo con el mismo enlace y código de acceso.',
   'mail.ext.declined': 'Esta vez no es posible ampliar el plazo; te recomendamos terminar de elegir antes de la fecha fijada. Si tienes dudas, responde a este correo.',
 
+  'mail.anniv.subject': 'Hace un año hicimos una sesión de fotos 💛',
+  'mail.anniv.memory': 'Hace casi un año hicimos juntos una sesión de fotos con <b>{business}</b>, y todavía me encanta recordar esos momentos ✨',
+  'mail.anniv.hope': 'Espero que sigas disfrutando las fotos 💛',
+  'mail.anniv.invite': 'Si te apetece reservar otra sesión (familia, niños o simplemente porque sí), ¡me encantaría! Solo tienes que responder a este correo.',
+  'mail.anniv.cta': 'Ver las fotos',
+
   'inv.hi': '¡Hola {name}! 📸',
   'inv.ready': 'Tu galería de fotos está lista para que elijas.',
   'inv.link': 'Enlace: {url}',
