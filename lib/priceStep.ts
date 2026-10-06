@@ -10,7 +10,9 @@ export const PRICE_STEP = 10;
 // בסיס הצעד כמחרוזת (הספרות אחרי הנקודה נשמרות כמו שהוקלדו, כדי שהדפדפן
 // יחשב את התקינות בלי שגיאות עיגול של נקודה צפה).
 export function priceStepBase(value: string): string {
-  const match = /^\s*\d*(\d)(\.\d*)?\s*$/.exec(value);
+  // ".5" (בלי ספרה לפני הנקודה) הוא ערך תקין בשדה מספר - מנרמלים ל-"0.5"
+  const normalised = value.replace(/^\s*\./, '0.');
+  const match = /^\s*\d*(\d)(\.\d*)?\s*$/.exec(normalised);
   if (!match) return '0';
   const frac = match[2] && match[2].length > 1 ? match[2] : '';
   return `${match[1]}${frac}`;

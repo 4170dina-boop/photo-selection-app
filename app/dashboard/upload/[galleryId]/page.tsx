@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { createClient } from '@/lib/supabase/client';
 import { theme, goldButtonStyle, inputStyle, outlineButtonStyle } from '@/lib/theme';
 import { useUploadQueue, type UploadItem } from '../../UploadProvider';
 import { GIFT_MESSAGE_MAX_LENGTH } from '@/lib/gifts';
@@ -105,6 +106,19 @@ export default function UploadPage({ params }: UploadPageProps) {
   // הגלריה הושלמה (ולא נפתחה מחדש) / פג תוקפה / המקור נמחק - העלאת מקור חדש
   // חסומה (השרת אוכף גם הוא, ראו .../photos/presign-upload).
   const [uploadBlockReason, setUploadBlockReason] = useState<string | null>(null);
+  // photographers.is_unlimited - למנוי לא מציגים את מונה "x/25 (חשבון חינמי)".
+  // null = עוד לא ידוע (לא מציגים כדי שלא יהבהב); שגיאה = מתנהגים כחשבון חינמי.
+  const [isUnlimited, setIsUnlimited] = useState<boolean | null>(null);
+  useEffect(() => {
+    createClient()
+      .from('photographers')
+      .select('is_unlimited')
+      .maybeSingle()
+      .then(
+        ({ data }) => setIsUnlimited(!!(data as { is_unlimited?: boolean } | null)?.is_unlimited),
+        () => setIsUnlimited(false)
+      );
+  }, []);
 
   // מוודאים שהגלריה שייכת לצלמת המחוברת (אותו דפוס כמו דף העריכה) לפני שמציגים
   // את ממשק ההעלאה - בלי זה, כל צלמת יכולה לנווט לפי galleryId של גלריה של
@@ -344,7 +358,7 @@ export default function UploadPage({ params }: UploadPageProps) {
     <div style={{ maxWidth: 900 }}>
       <h1 style={{ fontSize: 20, marginBottom: '0.5rem' }}>העלאת תמונות לגלריה</h1>
 
-      {totalPhotoCount !== null && (
+      {totalPhotoCount !== null && isUnlimited === false && (
         <p style={{ color: totalPhotoCount >= FREE_PHOTO_LIMIT ? theme.errorText : theme.textMuted, fontSize: 13, marginBottom: '1rem' }}>
           {totalPhotoCount}/{FREE_PHOTO_LIMIT} תמונות בגלריה (חשבון חינמי)
         </p>

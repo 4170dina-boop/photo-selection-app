@@ -71,6 +71,17 @@ export default function GalleryPaymentsSection({ galleryId }: { galleryId: strin
 
   async function handleAddPayment(e: React.FormEvent) {
     e.preventDefault();
+    // תשלום גדול מהיתרה - בדרך כלל אפס מיותר או סכום של גלריה אחרת
+    const outstanding = state?.summary.outstanding ?? 0;
+    if (
+      state &&
+      Number(amount) > outstanding &&
+      !window.confirm(
+        `הסכום (${formatShekels(Number(amount))}) גדול מהיתרה לתשלום (${formatShekels(outstanding)}). להוסיף בכל זאת?`
+      )
+    ) {
+      return;
+    }
     setWorking(true);
     const ok = await send(
       `/api/galleries/${galleryId}/payments`,
@@ -295,6 +306,7 @@ export default function GalleryPaymentsSection({ galleryId }: { galleryId: strin
           <input
             type="date"
             value={paidOn}
+            max={israelDateString(new Date())}
             onChange={(e) => setPaidOn(e.target.value)}
             style={{ ...inputStyle, flex: '1 1 140px' }}
             required

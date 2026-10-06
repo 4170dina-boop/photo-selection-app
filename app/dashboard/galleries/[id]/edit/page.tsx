@@ -63,6 +63,14 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [clientGender, setClientGender] = useState<Gender>('f');
   // שפת הגלריה והמיילים ללקוח/ה (galleries.language) - עמודה חסרה = עברית
   const [language, setLanguage] = useState<Lang>('he');
+  // הערכים השמורים בשרת (מ-loadGallery) - ההודעות המוכנות להעתקה נבנות מהם
+  // ולא מערכי הטופס, כדי שלא יישלח ללקוחה שם/שפה/תוקף שעוד לא נשמרו
+  const [savedInvite, setSavedInvite] = useState<{ clientName: string; clientGender: Gender; language: Lang; expiresAt: string }>({
+    clientName: '',
+    clientGender: 'f',
+    language: 'he',
+    expiresAt: '',
+  });
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -303,6 +311,12 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setOriginalsCleanedUpAt(data.originals_cleaned_up_at ?? null);
     setStatus(data.status ?? '');
     setReopenedForSelectionAt(data.reopened_for_selection_at ?? null);
+    setSavedInvite({
+      clientName: data.clients?.full_name ?? '',
+      clientGender: normalizeGender(data.client_gender) ?? 'f',
+      language: normalizeLang(data.language) ?? 'he',
+      expiresAt: data.expires_at ? data.expires_at.slice(0, 10) : '',
+    });
     setLoading(false);
   }
 
@@ -567,10 +581,10 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
               <ClientInviteMessageCopy
                 galleryId={galleryId}
                 accessCode={accessCode}
-                clientName={clientName}
-                clientGender={clientGender}
-                language={language}
-                expiresAt={expiresAt || null}
+                clientName={savedInvite.clientName}
+                clientGender={savedInvite.clientGender}
+                language={savedInvite.language}
+                expiresAt={savedInvite.expiresAt || null}
                 businessName={businessName}
                 logoUrl={logoUrl}
                 warnings={inviteWarnings}
@@ -578,10 +592,10 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
               <StageMessagesMenu
                 galleryId={galleryId}
                 accessCode={accessCode}
-                clientName={clientName}
-                clientGender={clientGender}
-                language={language}
-                expiresAt={expiresAt || null}
+                clientName={savedInvite.clientName}
+                clientGender={savedInvite.clientGender}
+                language={savedInvite.language}
+                expiresAt={savedInvite.expiresAt || null}
                 businessName={businessName}
                 logoUrl={logoUrl}
                 deliveredCount={deliveredPhotos.length}

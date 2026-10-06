@@ -98,7 +98,12 @@ export default function GalleriesDashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: !row.editing_started_at }),
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        // למשל 409 - הלקוחה עוד לא סיימה לבחור; בלי ההודעה הלחיצה "לא עושה כלום"
+        const data = await res.json().catch(() => ({}));
+        if (data.error) window.alert(data.error);
+        return;
+      }
       const data = await res.json();
       setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, editing_started_at: data.editingStartedAt } : r)));
     } catch {

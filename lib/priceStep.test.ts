@@ -12,6 +12,7 @@ describe('priceStepBase', () => {
     expect(priceStepBase('355.5')).toBe('5.5');
     expect(priceStepBase('12.75')).toBe('2.75');
     expect(priceStepBase('40.')).toBe('0');
+    expect(priceStepBase('.5')).toBe('0.5');
   });
   it('falls back to 0 for empty / negative / odd input', () => {
     expect(priceStepBase('')).toBe('0');

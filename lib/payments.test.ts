@@ -165,6 +165,12 @@ describe('parsePaymentInput', () => {
     }
   });
 
+  it('rejects amounts that round to 0 agorot and future dates', () => {
+    expect(parsePaymentInput({ amount: 0.004 }, today).ok).toBe(false);
+    expect(parsePaymentInput({ amount: 10, paidOn: '2026-10-06' }, today).ok).toBe(false);
+    expect(parsePaymentInput({ amount: 10, paidOn: today }, today).ok).toBe(true);
+  });
+
   it('rejects invalid dates', () => {
     expect(parsePaymentInput({ amount: 10, paidOn: '2026-02-30' }, today).ok).toBe(false);
     expect(parsePaymentInput({ amount: 10, paidOn: '05/10/2026' }, today).ok).toBe(false);

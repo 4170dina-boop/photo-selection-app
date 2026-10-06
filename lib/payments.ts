@@ -141,7 +141,10 @@ export function parsePaymentInput(
   todayDate: string
 ): { ok: true; value: PaymentInput } | { ok: false; error: string } {
   const b = (body ?? {}) as Record<string, unknown>;
-  const amount = typeof b.amount === 'string' && b.amount.trim() !== '' ? Number(b.amount) : b.amount;
+  const rawAmount = typeof b.amount === 'string' && b.amount.trim() !== '' ? Number(b.amount) : b.amount;
+  // עיגול לאגורות *לפני* הבדיקה - אחרת 0.004 עובר "> 0", נשמר כ-0.00 ונופל
+  // על ה-CHECK ב-DB (שגיאת 500 במקום הודעה ברורה)
+  const amount = typeof rawAmount === 'number' && Number.isFinite(rawAmount) ? Math.round(rawAmount * 100) / 100 : rawAmount;
 
   if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
     return { ok: false, error: 'סכום התשלום חייב להיות מספר גדול מ-0' };
@@ -154,11 +157,16 @@ export function parsePaymentInput(
   if (!isValidDateString(paidOn)) {
     return { ok: false, error: 'תאריך התשלום לא תקין' };
   }
+  // תשלום עתידי נספר כבר עכשיו ב"שולם" ובדוחות - כמעט תמיד טעות הקלדה
+  // (השוואת מחרוזות YYYY-MM-DD תקינה לסדר כרונולוגי)
+  if (paidOn > todayDate) {
+    return { ok: false, error: 'תאריך התשלום לא יכול להיות בעתיד' };
+  }
 
   const method = typeof b.method === 'string' && b.method.trim() ? b.method.trim().slice(0, 50) : null;
   const note = typeof b.note === 'string' && b.note.trim() ? b.note.trim().slice(0, 500) : null;
 
-  return { ok: true, value: { amount: Math.round(amount * 100) / 100, paidOn, method, note } };
+  return { ok: true, value: { amount, paidOn, method, note } };
 }
 
 // אימות הסכום לתשלום שהצלמת דורסת ידנית. null/"" = חזרה לחישוב האוטומטי מהחבילה.
