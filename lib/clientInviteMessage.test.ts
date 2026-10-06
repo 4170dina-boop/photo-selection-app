@@ -40,6 +40,19 @@ describe('buildInviteMessageText', () => {
 });
 
 describe('buildInviteMessageHtml', () => {
+  it('escapes free-text values and drops non-http logo URLs', () => {
+    const html = buildInviteMessageHtml({
+      ...base,
+      clientName: '<b>רחל</b>',
+      businessName: 'A"B <script>',
+      logoUrl: 'javascript:alert(1)',
+    });
+    expect(html).not.toContain('<b>רחל</b>');
+    expect(html).toContain('&lt;b&gt;רחל&lt;/b&gt;');
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('javascript:');
+  });
+
   it('contains greeting, access code, CTA link and business name', () => {
     const html = buildInviteMessageHtml({ ...base, businessName: 'דינה צילום' });
     expect(html).toContain('היי רחל! 📸');

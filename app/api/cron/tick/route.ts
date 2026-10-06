@@ -240,8 +240,26 @@ async function clientSendBlockedToday(ctx: RunContext, photographerId: string | 
 // 2. גלריות שמתקרבות לתוקף ועוד לא נשלחה עליהן תזכורת - שולחים אחת (חד-פעמית).
 // כולל גלריות 'completed' שהצלמת פתחה מחדש לבחירה (reopened_for_selection_at) -
 // הלקוחה שוב בוחרת בהן, אז התזכורת רלוונטית.
+// גלריות דוגמה (galleries.is_sample, מאשף הפתיחה) - הלקוחה בהן היא הצלמת
+// עצמה, אז לא שולחים להן מיילים "ללקוחה" (תזכורת תפוגה, "לפני שנה").
+// best-effort בשאילתה נפרדת: עמודה חסרה (מיגרציה שלא רצה) = אין גלריות
+// דוגמה, במקום להפיל את שאילתות השלבים עצמם.
+async function loadSampleGalleryIds(): Promise<Set<string>> {
+  const { rows, error } = await fetchAllPages((from, to) =>
+    supabaseAdmin.from('galleries').select('id').eq('is_sample', true).order('id', { ascending: true }).range(from, to)
+  , PAGE_SIZE);
+  if (error) {
+    if (!isMissingColumnError(error as { code?: string; message?: string })) {
+      console.warn('[cron/tick] שליפת גלריות דוגמה נכשלה - ממשיכים בלי סינון', errorMessage(error));
+    }
+    return new Set();
+  }
+  return new Set(rows.map((r) => r.id as string));
+}
+
 async function sendExpiryReminders(ctx: RunContext) {
   const { now, siteUrl } = ctx;
+  const sampleIds = await loadSampleGalleryIds();
   const { rows: candidates, error } = await fetchAllPages((from, to) =>
     supabaseAdmin
       .from('galleries')
@@ -269,6 +287,7 @@ async function sendExpiryReminders(ctx: RunContext) {
       const client = (gallery as any).clients;
       const photographer = (gallery as any).photographers;
       if (!client?.email || !photographer || !gallery.expires_at) continue;
+      if (sampleIds.has(gallery.id)) continue;
 
       const reminderDays = resolveExpiryReminderDays(gallery.reminder_days, photographer.reminder_days_default);
       if (!isExpiryReminderDue(gallery.expires_at, reminderDays, now)) continue;
@@ -751,7 +770,9 @@ async function sendShootSummaries(ctx: RunContext) {
         await supabaseAdmin
           .from('photographers')
           .update({ shoot_summary_sent_on: photographer.shoot_summary_sent_on ?? null })
-          .eq('id', photographerId);
+          .eq('id', photographerId)
+          // רק אם הסימון עדיין "היום" שכתבנו - לא לדרוס סימון של ריצה מקבילה/מאוחרת יותר
+          .eq('shoot_summary_sent_on', todayIsrael);
         itemError(ctx, 'shootSummaries', photographerId, result.error ?? 'send failed');
       }
     } catch (err) {
@@ -849,6 +870,7 @@ async function sendAnniversaryEmails(ctx: RunContext) {
     candidates.push(...rows);
   }
 
+  const sampleIds = await loadSampleGalleryIds();
   let anniversaryEmailsSent = 0;
   let anniversaryDeferredForShabbat = 0;
   if (ctx.todayIsRestDay) await ctx.respectShabbat.preload(candidates.map((g) => g.photographer_id));
@@ -859,6 +881,7 @@ async function sendAnniversaryEmails(ctx: RunContext) {
       const client = gallery.clients;
       const photographer = photographerById.get(gallery.photographer_id);
       if (!client?.email || !photographer) continue;
+      if (sampleIds.has(gallery.id)) continue;
       if (!isAnniversaryEmailDue(gallery.delivered_at, gallery.anniversary_sent_at, now)) continue;
       if (await clientSendBlockedToday(ctx, gallery.photographer_id)) {
         anniversaryDeferredForShabbat++;

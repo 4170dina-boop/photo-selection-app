@@ -34,7 +34,7 @@ export const emails: Section<typeof he> = {
   'mail.ext.subjectApproved': 'Tu plazo para elegir se amplió hasta el {date}',
   'mail.ext.subjectDeclined': 'Novedades sobre tu solicitud de prórroga',
   'mail.ext.subjectDeclinedAt': 'Novedades sobre tu solicitud de prórroga en {business}',
-  'mail.ext.approved': 'Tu fotógrafa amplió el plazo para elegir hasta el <b>{date}</b> 💛',
+  'mail.ext.approved': 'Tu plazo para elegir se amplió hasta el <b>{date}</b> 💛',
   'mail.ext.approvedNext': 'Puedes seguir eligiendo con el mismo enlace y código de acceso.',
   'mail.ext.declined': 'Esta vez no es posible ampliar el plazo; te recomendamos terminar de elegir antes de la fecha fijada. Si tienes dudas, responde a este correo.',
 

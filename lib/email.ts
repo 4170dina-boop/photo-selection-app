@@ -4,6 +4,7 @@ import { formatShootDateLabel, formatShootTime } from '@/lib/shoots';
 import { googleMapsUrl, wazeUrl } from '@/lib/navLinks';
 import { DEFAULT_CLIENT_GENDER, gt, type Gender } from '@/lib/gender';
 import { DEFAULT_LANG, formatDateWithHebrew, formatGalleryDate, langDir, t, type Lang, type MessageKey } from '@/lib/i18n';
+import { escapeHtml, safeHref } from '@/lib/htmlEscape';
 
 // שליחת מייל דרך Resend (REST API ישיר, בלי SDK נוסף). אם RESEND_API_KEY לא
 // מוגדר - לא זורקים שגיאה, רק מדלגים ומדפיסים אזהרה. כך גם app/api/cron/tick/route.ts
@@ -174,30 +175,8 @@ async function sendEmail(to: string, subject: string, html: string, options: Sen
 
 // ---------- נטרול ערכים בתוך HTML ----------
 
-// כל ערך שמוכנס לתבנית HTML (שם לקוחה, שם עסק, קוד גישה, שמות קבצים, מיקום,
-// הערות) הוא טקסט חופשי - מנטרלים תווים מיוחדים כדי שלא ישברו את המייל או
-// יזריקו HTML/קישורים.
-export function escapeHtml(value: string | number | null | undefined): string {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-// כתובת לשימוש בתוך href: רק http/https (לא javascript:, data: וכו'), ומנוטרלת
-// לתוך attribute. null = כתובת לא תקינה - הכפתור פשוט לא יוצג.
-export function safeHref(url: string | null | undefined): string | null {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url.trim());
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
-    return escapeHtml(parsed.toString());
-  } catch {
-    return null;
-  }
-}
+// המימוש ב-lib/htmlEscape.ts (בלי תלויות - משותף גם לדפדפן)
+export { escapeHtml, safeHref };
 
 // ערכים דינמיים בתוך תבנית מתורגמת - כולם עוברים escapeHtml (התבנית עצמה
 // מהמילון, lib/i18n, ומותר בה <b>).
@@ -654,10 +633,10 @@ export async function sendShootReminderEmail(params: ShootClientEmailParams & { 
     headerText: params.businessName,
     bodyHtml: `
       <p style="margin: 0 0 8px;">היי ${escapeHtml(params.clientName)},</p>
-      <p style="margin: 0 0 8px;">רק מזכירה - הצילום שלך אצל <b>${escapeHtml(params.businessName)}</b> ${escapeHtml(params.whenLabel)} 💛</p>
+      <p style="margin: 0 0 8px;">תזכורת קטנה - הצילום שלך אצל <b>${escapeHtml(params.businessName)}</b> ${escapeHtml(params.whenLabel)} 💛</p>
       ${shootDetailsCard(params)}
       <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">
-        מחכה לראות אותך! אם משהו השתנה, אפשר פשוט להשיב למייל הזה.
+        מחכים לראות אותך! אם משהו השתנה, אפשר פשוט להשיב למייל הזה.
       </p>
     `,
   });

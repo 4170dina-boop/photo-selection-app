@@ -43,7 +43,7 @@ lib/email.ts                                 → שליחת מייל דרך Rese
 lib/sharpness.ts                             → ציון חדות היוריסטי (Laplacian variance) - לתג "ייתכן שמטושטשת" בגלריית הלקוחה
 lib/galleryAccess.ts                         → בדיקה משותפת: אסור לערוך גלריה שהושלמה/פג תוקפה
 lib/theme.ts                                 → פלטת הצבעים המשותפת (טוקנים + סגנונות input/button) - כל הדפים משתמשים בה
-vercel.json                                  → תזמון Vercel Cron ל-/api/cron/tick (פעם ביום)
+vercel.json                                  → תזמון Vercel Cron ל-/api/cron/tick (פעמיים ביום)
 components/MagicButton.tsx                   → כפתור הקסם (File System Access API) + ZIP fallback, בדף העריכה של הצלמת
 app/api/galleries/[id]/selected-photos/route.ts → signed URLs לתמונות שסומנו "נבחר" (לצלמת המחוברת, לא ללקוחה)
 app/api/galleries/[id]/selections-export/route.ts → הורדת CSV (שם קובץ + הערה) של התמונות שנבחרו - למסירה למעבדת הדפסה
@@ -520,7 +520,7 @@ npm test
 
 **הפעלת ה-cron בפועל** - `app/api/cron/tick` מוגן ב-`CRON_SECRET`, ומצפה לו כ-
 `Authorization: Bearer <secret>` בלבד (לא ב-query string - כתובות URL נשמרות בלוגים). יש כמה אופציות:
-- **Vercel Cron** (אם מפרסמים ב-Vercel): הוגדר כבר ב-`vercel.json` (פעם ביום, 08:00 UTC).
+- **Vercel Cron** (אם מפרסמים ב-Vercel): הוגדר כבר ב-`vercel.json` (פעמיים ביום, 08:00 ו-14:00 UTC - הריצה השנייה משלימה מה שנעצר בגלל תקציב הזמן; כל השלבים idempotent. Vercel Hobby מתיר רק תזמונים יומיים, אבל כמה רשומות כאלה).
   צריך רק להגדיר `CRON_SECRET` במשתני הסביבה של הפרויקט ב-Vercel - Vercel שולח אותו
   אוטומטית כ-Authorization header.
 - **שירות cron חיצוני** (cron-job.org וכו') או **Supabase pg_cron + pg_net**: קוראים

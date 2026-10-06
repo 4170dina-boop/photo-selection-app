@@ -1,5 +1,6 @@
 import { DEFAULT_CLIENT_GENDER, type Gender } from './gender';
 import { DEFAULT_LANG, formatGalleryDate, langDir, t, type Lang } from './i18n';
+import { escapeHtml, safeHref } from './htmlEscape';
 
 // "הודעה מוכנה לשליחה" ללקוחה (קישור + קוד גישה) - הגיבוי הידני כשמייל
 // ההזמנה האוטומטי לא נשלח/הגיע. הוצא מ-app/dashboard/galleries/[id]/edit
@@ -56,8 +57,14 @@ export function buildInviteMessageHtml(params: InviteMessageParams): string {
   const lang = params.language ?? DEFAULT_LANG;
   const expiry = expiryDateText(lang, params.expiresAt);
   const expiryLine = expiry ? `<br />${t(lang, 'inv.expiry', { date: expiry })}` : '';
-  const { logoUrl, businessName, clientName, accessCode, galleryUrl } = params;
-  const fallbackName = t(lang, 'inv.yourGallery');
+  // שם לקוחה/עסק הם טקסט חופשי, והלוגו/הקישור נכנסים ל-attribute - מנטרלים
+  // הכול (ולוגו/קישור רק http/https), כמו במיילים האוטומטיים
+  const logoUrl = safeHref(params.logoUrl);
+  const businessName = params.businessName ? escapeHtml(params.businessName) : '';
+  const clientName = escapeHtml(params.clientName);
+  const accessCode = escapeHtml(params.accessCode);
+  const galleryUrl = safeHref(params.galleryUrl) ?? escapeHtml(params.galleryUrl);
+  const fallbackName = escapeHtml(t(lang, 'inv.yourGallery'));
   return `
       <div dir="${langDir(lang)}" lang="${lang}" style="font-family: sans-serif; background: #f4f1ec; padding: 32px 16px;">
         <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e7e0d5;">
@@ -130,14 +137,6 @@ const STAGE_PARTS: Record<MessageStage, { link: boolean; code: boolean }> = {
   ready: { link: true, code: false },
 };
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 interface StageContent {
   lang: Lang;
@@ -184,7 +183,7 @@ export function buildStageMessageHtml(params: StageMessageParams): string {
   const c = stageContent(params);
   const lang = c.lang;
   const brand = escapeHtml(params.businessName || t(lang, 'inv.yourGallery'));
-  const logoUrl = params.logoUrl ? escapeHtml(params.logoUrl) : '';
+  const logoUrl = safeHref(params.logoUrl) ?? '';
   const url = escapeHtml(params.galleryUrl);
   const cta = params.stage === 'ready' ? t(lang, 'stg.cta.view') : t(lang, 'mail.enterCta');
   const logo = logoUrl

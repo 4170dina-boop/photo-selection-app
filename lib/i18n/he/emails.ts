@@ -33,10 +33,10 @@ export const emails = {
   'mail.review.ask': 'אם יש לך רגע, ביקורת קצרה ממך תעזור לי המון להמשיך לצלם עוד אירועים כמו שלך.',
   'mail.review.cta': 'כתיבת ביקורת',
 
-  'mail.ext.subjectApproved': 'הצלמת האריכה את הבחירה עד {date}',
+  'mail.ext.subjectApproved': 'הגלריה הוארכה עד {date}',
   'mail.ext.subjectDeclined': 'עדכון לגבי בקשת ההארכה שלך',
   'mail.ext.subjectDeclinedAt': 'עדכון לגבי בקשת ההארכה שלך אצל {business}',
-  'mail.ext.approved': 'הצלמת האריכה את הבחירה עד <b>{date}</b> 💛',
+  'mail.ext.approved': 'הגלריה הוארכה עד <b>{date}</b> 💛',
   'mail.ext.approvedNext': 'אפשר להמשיך לבחור באותו קישור וקוד גישה.',
   'mail.ext.declined': 'הפעם לא ניתן להאריך את תקופת הבחירה - כדאי לסיים לבחור עד התאריך שנקבע. לשאלות אפשר להשיב למייל הזה.',
 
