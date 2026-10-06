@@ -122,8 +122,13 @@ create table galleries (
   originals_cleaned_up_at timestamptz,
   -- מתי נשלחה לצלמת התראה שתמונות המקור עומדות להימחק בקרוב (ראו
   -- sendOriginalsDeletionWarningEmail ב-lib/email.ts) - null = טרם נשלחה.
-  -- חד-פעמית, אותו דפוס בדיוק כמו last_reminder_sent_at למעלה.
+  -- נכתב רק *אחרי* שליחה מוצלחת - שלב המחיקה (שלב 4 ב-cron) דורש אותו, כך
+  -- שמחיקה בלתי-הפיכה אף פעם לא קורית בלי שההתראה באמת יצאה.
   originals_deletion_warning_sent_at timestamptz,
+  -- "תפיסה" זמנית של שליחת ההתראה (שתי ריצות cron מקבילות לא ישלחו פעמיים).
+  -- לא נחשבת "נשלחה": ריצה שנהרגה באמצע משאירה תפיסה שמתיישנת אחרי שעה
+  -- (WARNING_CLAIM_STALE_MS ב-lib/cronTick.ts) והריצה הבאה מנסה שוב.
+  originals_deletion_warning_claimed_at timestamptz,
   -- מונה צפיות של הלקוחה בגלריה (כל טעינה מוצלחת, לא ייחודי) - כדי שהצלמת
   -- תדע אם הלקוחה בכלל פתחה את הקישור, לא רק שהמייל "נשלח" (יכול להיחסם
   -- אצל הלקוחה בלי שום דרך אחרת לדעת - ראו app/api/gallery/[id]/route.ts).
@@ -2185,3 +2190,12 @@ create policy "photographers read own logo" on storage.objects
 -- create index if not exists idx_photos_chapter on photos(chapter_id) where chapter_id is not null;
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: פרקים, שעת צילום ותמונות דומות =====
+
+-- ===== מיגרציה: תפיסת שליחה נפרדת להתראת מחיקת המקור (originals_deletion_warning_claimed_at) =====
+-- להריץ פעם אחת על פרויקט קיים (idempotent). originals_deletion_warning_sent_at
+-- נכתב מעכשיו רק אחרי שליחה מוצלחת, והתפיסה (נגד שליחה כפולה) עברה לעמודה
+-- הזו. עד שמריצים - הקוד לא נשבר: ה-cron שולח בלי תפיסה (במקרה נדיר של שתי
+-- ריצות מקבילות - התראה כפולה), ועדיין מסמן "נשלחה" רק אחרי שליחה מוצלחת.
+-- alter table galleries add column if not exists originals_deletion_warning_claimed_at timestamptz;
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: תפיסת שליחה להתראת מחיקת המקור =====

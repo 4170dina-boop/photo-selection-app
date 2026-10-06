@@ -53,6 +53,8 @@ describe('lib/email', () => {
     const [url, options] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.resend.com/emails');
     expect((options.headers as Record<string, string>).Authorization).toBe('Bearer re_test_key');
+    // תקרת זמן - בקשה תקועה לא מחזיקה את ריצת ה-cron עד שהיא נהרגת
+    expect(options.signal).toBeInstanceOf(AbortSignal);
 
     const body = JSON.parse(options.body as string);
     expect(body.to).toBe('client@example.com');

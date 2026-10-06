@@ -8,10 +8,62 @@ import {
   deletableOriginalPaths,
   fetchAllPages,
   MAX_EXPIRY_REMINDER_DAYS,
+  canClaimOriginalsWarning,
+  originalsWarningClaimGuard,
+  originalsWarningAfterSendPatch,
+  WARNING_CLAIM_STALE_MS,
 } from './cronTick';
 import { israelEndOfDayIso } from './israelTime';
 
 const DAY = 24 * 60 * 60 * 1000;
+
+describe('originals deletion warning claim (sent only after a real send)', () => {
+  const now = new Date('2026-10-05T08:00:00Z');
+
+  it('claims only when not sent and no active claim', () => {
+    expect(canClaimOriginalsWarning({ originals_deletion_warning_sent_at: null, originals_deletion_warning_claimed_at: null }, now)).toBe(true);
+    expect(canClaimOriginalsWarning({ originals_deletion_warning_sent_at: null }, now)).toBe(true);
+    expect(canClaimOriginalsWarning({ originals_deletion_warning_sent_at: '2026-10-01T00:00:00Z', originals_deletion_warning_claimed_at: null }, now)).toBe(false);
+    const fresh = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
+    expect(canClaimOriginalsWarning({ originals_deletion_warning_sent_at: null, originals_deletion_warning_claimed_at: fresh }, now)).toBe(false);
+  });
+
+  it('a stale claim (run killed mid-send) can be re-claimed', () => {
+    const stale = new Date(now.getTime() - WARNING_CLAIM_STALE_MS - 1).toISOString();
+    expect(canClaimOriginalsWarning({ originals_deletion_warning_sent_at: null, originals_deletion_warning_claimed_at: stale }, now)).toBe(true);
+    expect(originalsWarningClaimGuard({ originals_deletion_warning_sent_at: null, originals_deletion_warning_claimed_at: stale })).toEqual({
+      originals_deletion_warning_sent_at: null,
+      originals_deletion_warning_claimed_at: stale,
+    });
+    expect(originalsWarningClaimGuard({ originals_deletion_warning_sent_at: null })).toEqual({
+      originals_deletion_warning_sent_at: null,
+      originals_deletion_warning_claimed_at: null,
+    });
+  });
+
+  it('marks sent only after a successful send; failure never marks sent', () => {
+    const at = now.toISOString();
+    expect(originalsWarningAfterSendPatch(true, at, true)).toEqual({ originals_deletion_warning_sent_at: at, originals_deletion_warning_claimed_at: null });
+    expect(originalsWarningAfterSendPatch(true, at, false)).toEqual({ originals_deletion_warning_sent_at: at });
+    expect(originalsWarningAfterSendPatch(false, at, true)).toEqual({ originals_deletion_warning_claimed_at: null });
+    expect(originalsWarningAfterSendPatch(false, at, false)).toBeNull();
+  });
+
+  it('a claimed-but-unsent gallery is never due for cleanup', () => {
+    expect(
+      isOriginalsCleanupDue(
+        {
+          status: 'completed',
+          reopened_for_selection_at: null,
+          delivered_at: '2026-08-01T00:00:00Z',
+          originals_cleaned_up_at: null,
+          originals_deletion_warning_sent_at: null,
+        },
+        now
+      )
+    ).toBe(false);
+  });
+});
 
 describe('isCronAuthorized', () => {
   it('accepts only the exact Bearer header', () => {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { listAllKeys, deleteObjects } from '@/lib/r2';
 import { parseAdditionalInviteEmails, isValidEmail } from '@/lib/email';
-import { syncPaidAtAfterTotalChange } from '@/lib/galleryPayments';
+import { captureAmountDueBefore, syncPaidAtAfterTotalChange } from '@/lib/galleryPayments';
 import { parseGalleryNumbers } from '@/lib/galleryValidation';
 import {
   expiresAtChanged,
@@ -229,6 +229,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
   }
 
+  // הסכום לתשלום לפני עדכון החבילה - paid_at מסונכרן רק אם הוא באמת השתנה
+  const amountBefore = await captureAmountDueBefore(supabase, gallery.id);
+
   // upsert ולא update: גלריה ישנה בלי שורת packages (למשל יצירה שנקטעה) הייתה
   // "מצליחה" ב-update שתואם 0 שורות, והחבילה לא הייתה נשמרת בשקט.
   const { error: packageError } = await supabase
@@ -242,8 +245,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'עדכון החבילה נכשל' }, { status: 500 });
   }
 
-  // מחיר/מכסת החבילה אולי השתנו - paid_at נגזר מהיתרה כשיש תשלומים (best-effort)
-  await syncPaidAtAfterTotalChange(supabase, gallery.id);
+  // מחיר/מכסת החבילה אולי השתנו - paid_at מסומן אם התשלומים מכסים (best-effort)
+  await syncPaidAtAfterTotalChange(supabase, amountBefore);
 
   return NextResponse.json({ success: true, status: reactivatedStatus ?? current.status });
 }

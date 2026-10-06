@@ -1,7 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { giftExclusionFilter } from '@/lib/gifts';
-import { computePaymentSummary, nextPaidAt, type PaymentChange, type PaymentSummary } from '@/lib/payments';
+import {
+  computePaymentSummary,
+  nextPaidAt,
+  paidAtAfterTotalChange,
+  type PaymentChange,
+  type PaymentSummary,
+} from '@/lib/payments';
 
 // עזרי DB למעקב תשלומים (app/api/galleries/[id]/payments/*) - רץ תמיד עם
 // session הצלם (createClient מ-lib/supabase/server), כך שגם ה-RLS על
@@ -134,29 +140,77 @@ export async function syncPaidAtAndLoad(
 }
 
 // לקריאה מ-routes שמשנים את הסכום לתשלום בעקיפין (בחירה של הלקוחה, סימון
-// מתנה, עריכת החבילה): מסנכרן את paid_at רק כשיש לגלריה לפחות תשלום רשום
-// אחד (בלי תשלומים nextPaidAt ממילא לא נוגע בו), ורק כשאין דריסה ידנית של
-// הסכום (אז הסכום לא השתנה בכלל). best-effort - לעולם לא זורק, רק רושם ללוג,
-// כדי לא להכשיל את הבקשה העיקרית שכבר הצליחה.
-export async function syncPaidAtAfterTotalChange(supabase: SupabaseClient, galleryId: string): Promise<void> {
+// מתנה, עריכת החבילה), בשני שלבים: captureAmountDueBefore *לפני* השינוי, ו-
+// syncPaidAtAfterTotalChange אחריו עם התוצאה. מסנכרנים רק כשיש לגלריה לפחות
+// תשלום רשום אחד, כשאין דריסה ידנית של הסכום (אז הסכום לא משתנה בכלל), ורק אם
+// הסכום באמת השתנה - ואז רק מסמנים "שולם", אף פעם לא מבטלים (ראו
+// paidAtAfterTotalChange ב-lib/payments.ts). best-effort - לעולם לא זורקות, רק
+// רושמות ללוג, כדי לא להכשיל את הבקשה העיקרית.
+export interface AmountDueSnapshot {
+  galleryId: string;
+  total: number;
+}
+
+// null = אין מה לסנכרן (אין תשלומים / דריסה ידנית / לא הבעלים / שגיאה).
+// ownerParticipantId: כשנמסר, רק בחירות של הבעלים נספרות לחיוב - בן משפחה
+// אחר לא משנה את הסכום, וחוסכים את השאילתות.
+export async function captureAmountDueBefore(
+  supabase: SupabaseClient,
+  galleryId: string,
+  ownerParticipantId?: string
+): Promise<AmountDueSnapshot | null> {
   try {
     const { count, error: countError } = await supabase
       .from('gallery_payments')
       .select('id', { count: 'exact', head: true })
       .eq('gallery_id', galleryId);
     if (countError) throw countError;
-    if (!count) return;
+    if (!count) return null;
 
-    const { data: gallery, error: galleryError } = await supabase
+    const gallery = await loadGalleryForTotalSync(supabase, galleryId);
+    if (!gallery) return null;
+    if (ownerParticipantId !== undefined && gallery.owner_participant_id !== ownerParticipantId) return null;
+
+    const state = await loadPaymentsState(supabase, gallery);
+    return state ? { galleryId, total: state.summary.total } : null;
+  } catch (err) {
+    console.error('[payments] קריאת הסכום לתשלום לפני שינוי נכשלה:', err);
+    return null;
+  }
+}
+
+export async function syncPaidAtAfterTotalChange(supabase: SupabaseClient, before: AmountDueSnapshot | null): Promise<void> {
+  if (!before) return;
+  try {
+    const gallery = await loadGalleryForTotalSync(supabase, before.galleryId);
+    if (!gallery) return;
+
+    const state = await loadPaymentsState(supabase, gallery);
+    if (!state) return;
+
+    const newPaidAt = paidAtAfterTotalChange(gallery.paid_at, before.total, state.summary, new Date().toISOString());
+    if (newPaidAt === gallery.paid_at) return;
+
+    // מותנה ב-paid_at שנקרא - לא דורסים סימון ידני שנעשה בינתיים
+    const { error } = await supabase
       .from('galleries')
-      .select('id, paid_at, amount_due_override, owner_participant_id')
-      .eq('id', galleryId)
-      .single();
-    if (galleryError || !gallery) throw galleryError ?? new Error('gallery not found');
-    if (gallery.amount_due_override != null) return;
-
-    await syncPaidAtAndLoad(supabase, gallery as OwnedGallery, 'total_changed');
+      .update({ paid_at: newPaidAt })
+      .eq('id', gallery.id)
+      .is('paid_at', null);
+    if (error) throw error;
   } catch (err) {
     console.error('[payments] סנכרון paid_at אחרי שינוי בסכום נכשל:', err);
   }
+}
+
+// הגלריה לסנכרון, או null כשיש דריסה ידנית של הסכום (אז שינוי עקיף לא משנה אותו).
+async function loadGalleryForTotalSync(supabase: SupabaseClient, galleryId: string): Promise<OwnedGallery | null> {
+  const { data: gallery, error } = await supabase
+    .from('galleries')
+    .select('id, paid_at, amount_due_override, owner_participant_id')
+    .eq('id', galleryId)
+    .single();
+  if (error || !gallery) throw error ?? new Error('gallery not found');
+  if (gallery.amount_due_override != null) return null;
+  return gallery as OwnedGallery;
 }

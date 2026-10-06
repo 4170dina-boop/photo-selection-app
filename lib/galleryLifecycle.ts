@@ -92,6 +92,8 @@ export type ReopenToggleDecision =
   | {
       ok: true;
       newReopenedForSelectionAt: string | null;
+      // כל העמודות שה-UPDATE כותב (כולל newReopenedForSelectionAt).
+      patch: ReopenTogglePatch;
       // תנאי ה-UPDATE המותנה: רק אם השורה עדיין במצב שעליו התקבלה ההחלטה.
       // בפתיחה - כולל originals_cleaned_up_at is null, הצד השני של התפיסה
       // המותנית של ה-cron (originalsCleanupClaimGuard ב-lib/cronTick.ts):
@@ -99,6 +101,12 @@ export type ReopenToggleDecision =
       guard: RowGuard;
     }
   | { ok: false; httpStatus: 400 | 409; error: string };
+
+export interface ReopenTogglePatch {
+  reopened_for_selection_at: string | null;
+  delivered_at?: null;
+  originals_deletion_warning_sent_at?: null;
+}
 
 export const REOPEN_NOT_COMPLETED_MESSAGE = 'אפשר לפתוח מחדש רק גלריה שהבחירה בה כבר הושלמה';
 export const REOPEN_ORIGINALS_DELETED_MESSAGE = 'אי אפשר לפתוח מחדש את הבחירה - תמונות המקור של הגלריה כבר נמחקו';
@@ -111,6 +119,7 @@ export function decideReopenToggle(gallery: ReopenToggleState, now: Date): Reope
     return {
       ok: true,
       newReopenedForSelectionAt: null,
+      patch: { reopened_for_selection_at: null },
       guard: { reopened_for_selection_at: gallery.reopened_for_selection_at },
     };
   }
@@ -124,9 +133,16 @@ export function decideReopenToggle(gallery: ReopenToggleState, now: Date): Reope
   if (gallery.originals_cleaned_up_at) {
     return { ok: false, httpStatus: 409, error: REOPEN_ORIGINALS_DELETED_MESSAGE };
   }
+  // פתיחה מחדש מאפסת גם את המסירה ואת התראת המחיקה: הלקוחה תבחר תמונות
+  // נוספות שעוד לא נערכו ולא נמסרו. בלי האיפוס, אחרי "סיימתי לבחור" שוב
+  // isOriginalsCleanupDue הייתה רואה delivered_at ישן + התראה שכבר נשלחה,
+  // וה-cron היה מוחק את המקור (כולל הבחירות החדשות) כבר בריצה הבאה. ספירת
+  // 30 הימים תתחיל מחדש מהמסירה הבאה (סימון "נמסר" / העלאת תמונה סופית).
+  const reopenedAt = now.toISOString();
   return {
     ok: true,
-    newReopenedForSelectionAt: now.toISOString(),
+    newReopenedForSelectionAt: reopenedAt,
+    patch: { reopened_for_selection_at: reopenedAt, delivered_at: null, originals_deletion_warning_sent_at: null },
     guard: { status: 'completed', reopened_for_selection_at: null, originals_cleaned_up_at: null },
   };
 }
