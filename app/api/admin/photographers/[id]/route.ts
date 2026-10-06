@@ -10,6 +10,8 @@ const supabaseAdmin = createAdminClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY as string
 );
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const admin = await requireAdmin();
   if (!admin) {
@@ -27,13 +29,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'חסר isUnlimited' }, { status: 400 });
   }
 
-  const { error } = await supabaseAdmin
+  // id לא תקין היה מגיע ל-Postgres ונופל כ-500 (invalid input syntax for uuid)
+  if (!UUID_RE.test(params.id)) {
+    return NextResponse.json({ error: 'צלם/ת לא נמצא/ה' }, { status: 404 });
+  }
+
+  // select('id') - בלעדיו update על id שלא קיים "מצליח" בלי לעדכן כלום
+  const { data, error } = await supabaseAdmin
     .from('photographers')
     .update({ is_unlimited: body.isUnlimited })
-    .eq('id', params.id);
+    .eq('id', params.id)
+    .select('id');
 
   if (error) {
     return NextResponse.json({ error: 'העדכון נכשל' }, { status: 500 });
+  }
+  if (!data || data.length === 0) {
+    return NextResponse.json({ error: 'צלם/ת לא נמצא/ה' }, { status: 404 });
   }
 
   return NextResponse.json({ success: true });

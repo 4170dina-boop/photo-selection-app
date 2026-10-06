@@ -5,7 +5,17 @@ import {
   classifySignInError,
   isExistingUserSignup,
   isRateLimitError,
+  updatePasswordErrorMessage,
 } from './authErrors';
+
+describe('updatePasswordErrorMessage', () => {
+  it('maps specific codes', () => {
+    expect(updatePasswordErrorMessage({ code: 'weak_password' })).toContain('חלשה');
+    expect(updatePasswordErrorMessage({ code: 'same_password' })).toContain('זהה');
+    expect(updatePasswordErrorMessage({ status: 429 })).toContain('יותר מדי');
+    expect(updatePasswordErrorMessage({ code: 'other' })).toContain('ייתכן');
+  });
+});
 
 describe('isExistingUserSignup', () => {
   it('detects the obfuscated user Supabase returns for an already-registered email', () => {

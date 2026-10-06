@@ -20,7 +20,7 @@ export default function AdminPage() {
   const [rows, setRows] = useState<PhotographerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [updatingIds, setUpdatingIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState('');
 
   const [fromEmail, setFromEmail] = useState('');
@@ -60,9 +60,10 @@ export default function AdminPage() {
   }
 
   async function loadSettings() {
-    const res = await fetch('/api/admin/settings');
-    if (!res.ok) return;
-    const data = await res.json();
+    const res = await fetch('/api/admin/settings').catch(() => null);
+    if (!res?.ok) return;
+    const data = await res.json().catch(() => null);
+    if (!data) return;
     setFromEmail(data.resendFromEmail ?? '');
     setFromEmailInput(data.resendFromEmail ?? '');
   }
@@ -70,63 +71,83 @@ export default function AdminPage() {
   async function saveFromEmail() {
     setFromEmailMessage('');
     setSavingFromEmail(true);
+    // try/finally - שגיאת רשת לא תשאיר את הכפתור תקוע על "שומר..."
+    try {
+      const value = fromEmailInput.trim();
+      const res = await fetch('/api/admin/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resendFromEmail: value }),
+      });
 
-    const res = await fetch('/api/admin/settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ resendFromEmail: fromEmailInput.trim() }),
-    });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setFromEmailMessage(data.error || 'העדכון נכשל');
+        return;
+      }
 
-    setSavingFromEmail(false);
-
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setFromEmailMessage(data.error || 'העדכון נכשל');
-      return;
+      setFromEmail(value);
+      setFromEmailMessage('נשמר ✓ - מיילים חדשים יישלחו מהכתובת הזו');
+    } catch {
+      setFromEmailMessage('העדכון נכשל - בדקי את החיבור ונסי שוב');
+    } finally {
+      setSavingFromEmail(false);
     }
-
-    setFromEmail(fromEmailInput.trim());
-    setFromEmailMessage('נשמר ✓ - מיילים חדשים יישלחו מהכתובת הזו');
   }
 
   async function loadPhotographers() {
     setLoading(true);
-    const res = await fetch('/api/admin/photographers');
+    try {
+      const res = await fetch('/api/admin/photographers');
 
-    if (res.status === 403) {
-      setForbidden(true);
-      setLoading(false);
-      return;
-    }
-    if (!res.ok) {
+      if (res.status === 403) {
+        setForbidden(true);
+        return;
+      }
+      if (!res.ok) {
+        setError('טעינת הרשימה נכשלה');
+        return;
+      }
+
+      const data = await res.json();
+      setRows(data.photographers ?? []);
+    } catch {
       setError('טעינת הרשימה נכשלה');
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const data = await res.json();
-    setRows(data.photographers ?? []);
-    setLoading(false);
   }
 
   async function toggleUnlimited(row: PhotographerRow) {
+    if (updatingIds.has(row.id)) return;
     setError('');
-    setUpdatingId(row.id);
+    // הערך שנשלח - ולא "היפוך" של מה שיש ב-state, כדי ששתי לחיצות/תשובות
+    // שמגיעות בסדר אחר לא יהפכו את התצוגה לשקרית
+    const next = !row.isUnlimited;
+    setUpdatingIds((prev) => new Set(prev).add(row.id));
 
-    const res = await fetch(`/api/admin/photographers/${row.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isUnlimited: !row.isUnlimited }),
-    });
+    try {
+      const res = await fetch(`/api/admin/photographers/${row.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isUnlimited: next }),
+      });
 
-    setUpdatingId(null);
+      if (!res.ok) {
+        setError('העדכון נכשל, נסי שוב');
+        return;
+      }
 
-    if (!res.ok) {
+      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, isUnlimited: next } : r)));
+    } catch {
       setError('העדכון נכשל, נסי שוב');
-      return;
+    } finally {
+      setUpdatingIds((prev) => {
+        const copy = new Set(prev);
+        copy.delete(row.id);
+        return copy;
+      });
     }
-
-    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, isUnlimited: !r.isUnlimited } : r)));
   }
 
   if (loading) return <p style={{ color: theme.textMuted }}>טוען...</p>;
@@ -228,14 +249,14 @@ export default function AdminPage() {
               </span>
               <button
                 onClick={() => toggleUnlimited(row)}
-                disabled={updatingId === row.id}
+                disabled={updatingIds.has(row.id)}
                 style={{
                   ...(row.isUnlimited ? outlineButtonStyle : goldButtonStyle),
                   padding: '0.4rem 0.9rem', fontSize: 13,
-                  opacity: updatingId === row.id ? 0.6 : 1,
+                  opacity: updatingIds.has(row.id) ? 0.6 : 1,
                 }}
               >
-                {updatingId === row.id ? 'מעדכן...' : row.isUnlimited ? 'הסרת הגבלה מיוחדת' : 'סימון כללא הגבלה'}
+                {updatingIds.has(row.id) ? 'מעדכן...' : row.isUnlimited ? 'הסרת הגבלה מיוחדת' : 'סימון כללא הגבלה'}
               </button>
             </div>
           </div>

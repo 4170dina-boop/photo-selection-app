@@ -41,6 +41,26 @@ export const SIGN_IN_ERROR_MESSAGES: Record<SignInErrorKind, string> = {
   generic: 'ההתחברות נכשלה, נסי שוב בעוד רגע',
 };
 
+// שגיאות updateUser בדף קביעת סיסמה חדשה - הודעה לפי הקוד במקום תמיד "הקישור פג תוקף"
+export function updatePasswordErrorMessage(err: AuthErrorLike): string {
+  if (isRateLimitError(err)) return 'יותר מדי ניסיונות. חכי כמה דקות ונסי שוב';
+  switch (err.code) {
+    case 'weak_password':
+      return 'הסיסמה חלשה מדי - בחרי סיסמה ארוכה יותר, עם שילוב של אותיות ומספרים';
+    case 'same_password':
+      return 'הסיסמה החדשה זהה לסיסמה הקודמת - בחרי סיסמה אחרת';
+    case 'session_not_found':
+    case 'session_expired':
+    case 'refresh_token_not_found':
+    case 'bad_jwt':
+      return 'עדכון הסיסמה נכשל - הקישור פג תוקף, בקשי קישור חדש';
+    case 'reauthentication_needed':
+    case 'reauthentication_not_valid':
+      return 'נדרש אימות מחדש - בקשי קישור איפוס חדש ונסי שוב';
+  }
+  return 'עדכון הסיסמה נכשל - ייתכן שהקישור פג תוקף, נסי לבקש קישור חדש';
+}
+
 export const RATE_LIMIT_MESSAGE = 'יותר מדי ניסיונות. חכי כמה דקות ונסי שוב';
 
 export const ALREADY_REGISTERED_MESSAGE = 'כתובת המייל כבר רשומה - אפשר להתחבר או לאפס סיסמה';

@@ -20,7 +20,18 @@ export async function GET() {
     return NextResponse.json({ error: 'אין הרשאה' }, { status: 403 });
   }
 
-  const { data } = await supabaseAdmin.from('app_settings').select('value').eq('key', RESEND_FROM_EMAIL_KEY).single();
+  const { data, error } = await supabaseAdmin
+    .from('app_settings')
+    .select('value')
+    .eq('key', RESEND_FROM_EMAIL_KEY)
+    .single();
+
+  // רק PGRST116 (אין שורה) פירושו "עוד לא הוגדר" - כל שגיאה אחרת היא תקלה
+  // אמיתית, ולא להציג למנהלת את ברירת המחדל כאילו זו ההגדרה השמורה
+  if (error && error.code !== 'PGRST116') {
+    console.error('admin settings: load failed', error);
+    return NextResponse.json({ error: 'טעינת ההגדרות נכשלה' }, { status: 500 });
+  }
 
   return NextResponse.json({
     resendFromEmail: data?.value ?? process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',

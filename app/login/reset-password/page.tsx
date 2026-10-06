@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { theme, inputStyle, goldButtonStyle } from '@/lib/theme';
+import { updatePasswordErrorMessage } from '@/lib/authErrors';
 
 export default function ResetPasswordPage() {
   const router = useRouter();
@@ -39,7 +40,7 @@ export default function ResetPasswordPage() {
     setLoading(false);
 
     if (updateError) {
-      setError('עדכון הסיסמה נכשל - ייתכן שהקישור פג תוקף, נסי לבקש קישור חדש');
+      setError(updatePasswordErrorMessage(updateError));
       return;
     }
 
