@@ -4,6 +4,8 @@ import { MAX_SHOOT_REMINDER_DAYS } from '@/lib/shoots';
 import { parseLogoUrl, parseNonNegativeInt, parsePrice, parseReminderDays } from '@/lib/galleryValidation';
 import { isMissingColumnError } from '@/lib/gender';
 import { parseBankDetails, parsePaymentUrl } from '@/lib/paymentLinks';
+import { legacyColumnsFromMethods, parsePaymentMethodsInput } from '@/lib/paymentMethods';
+import { loadPaymentMethods } from '@/lib/paymentMethodsQuery';
 
 // פרופיל הצלמת המחוברת - watermark_text (מוטבע על תצוגות התמונות, ראו
 // lib/watermark.ts), brand_color, logo_url, וברירות המחדל למילוי אוטומטי
@@ -54,7 +56,12 @@ export async function GET(req: NextRequest) {
     // בכוונה שקט - ראו הערה למעלה
   }
 
-  return NextResponse.json({ ...photographer, ...paymentFields });
+  // אמצעי תשלום (lib/paymentMethods.ts) - תמיד כל 6 האמצעים, גם כשהעמודה
+  // payment_methods עוד חסרה (אז נגזר מהעמודות הישנות). payment_methods_source:
+  // 'methods' = הכל נשמר; 'legacy' = רק בנק/ביט/PayBox נשמרים; 'none' = כלום.
+  const { methods, source } = await loadPaymentMethods(supabase, photographer.id);
+
+  return NextResponse.json({ ...photographer, ...paymentFields, payment_methods: methods, payment_methods_source: source });
 }
 
 export async function PATCH(req: NextRequest) {
@@ -82,6 +89,7 @@ export async function PATCH(req: NextRequest) {
     paymentBitUrl?: string | null;
     paymentPayboxUrl?: string | null;
     paymentBankDetails?: string | null;
+    paymentMethods?: unknown;
   };
   try {
     body = await req.json();
@@ -203,6 +211,13 @@ export async function PATCH(req: NextRequest) {
     paymentUpdate.payment_bank_details = r.value;
   }
 
+  // אמצעי תשלום (lib/paymentMethods.ts) - נשמרים בנפרד אחרי שאר ההגדרות
+  let paymentMethods: ReturnType<typeof parsePaymentMethodsInput> | null = null;
+  if ('paymentMethods' in body) {
+    paymentMethods = parsePaymentMethodsInput(body.paymentMethods);
+    if (!paymentMethods.ok) return NextResponse.json({ error: paymentMethods.error }, { status: 400 });
+  }
+
   if (Object.keys(update).length > 0) {
     const { error } = await supabase
       .from('photographers')
@@ -232,5 +247,33 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ success: true, ...(paymentLinksSaved === undefined ? {} : { paymentLinksSaved }) });
+  // paymentMethodsSaved: 'methods' = נשמר במלואו; 'legacy' = העמודה החדשה
+  // חסרה, נשמרו רק בנק/ביט/PayBox לעמודות הישנות; 'none' = לא נשמר (מיגרציות חסרות)
+  let paymentMethodsSaved: 'methods' | 'legacy' | 'none' | undefined;
+  if (paymentMethods?.ok) {
+    const { error: methodsError } = await supabase
+      .from('photographers')
+      .update({ payment_methods: paymentMethods.value })
+      .eq('auth_user_id', user.id);
+    if (!methodsError) {
+      paymentMethodsSaved = 'methods';
+    } else if (!isMissingColumnError(methodsError)) {
+      return NextResponse.json({ error: 'שמירת אמצעי התשלום נכשלה' }, { status: 500 });
+    } else {
+      const { error: legacyError } = await supabase
+        .from('photographers')
+        .update(legacyColumnsFromMethods(paymentMethods.value))
+        .eq('auth_user_id', user.id);
+      if (legacyError && !isMissingColumnError(legacyError)) {
+        return NextResponse.json({ error: 'שמירת אמצעי התשלום נכשלה' }, { status: 500 });
+      }
+      paymentMethodsSaved = legacyError ? 'none' : 'legacy';
+    }
+  }
+
+  return NextResponse.json({
+    success: true,
+    ...(paymentLinksSaved === undefined ? {} : { paymentLinksSaved }),
+    ...(paymentMethodsSaved === undefined ? {} : { paymentMethodsSaved }),
+  });
 }
