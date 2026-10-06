@@ -6,6 +6,26 @@ import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/th
 import { computePackageUsage } from '@/lib/gifts';
 import ExtensionCountdownBanner from '@/components/ExtensionCountdownBanner';
 import GiftCollage from '@/components/GiftCollage';
+import LanguagePicker from '@/components/LanguagePicker';
+import {
+  type Lang,
+  type MessageKey,
+  type MessageParams,
+  t as translate,
+  resolveMessage,
+  interpolateParts,
+  langDir,
+  arrowNavDelta,
+  swipeNavDeltaForLang,
+  formatGalleryDate,
+  formatCurrency,
+  localizeServerError,
+  localizedErrorFromBody,
+  resolveInitialLang,
+  loadStoredLang,
+  saveStoredLang,
+  browserLanguages,
+} from '@/lib/i18n';
 import {
   type PendingAction,
   NOTE_MAX_LENGTH,
@@ -17,15 +37,9 @@ import {
   planSwipeTap,
   uniqueFileName,
   normalizeAccessCode,
-  errorMessageFromBody,
-  accessCodeFallbackError,
-  hebrewDateInIsrael,
-  rtlArrowDelta,
   isGalleryDataStale,
-  zipDownloadSummary,
   toggleStatusTo,
   shouldAutoAdvance,
-  swipeNavDelta,
   enlargedShortcutStatus,
   tapHintKey,
   neighborPrefetchUrls,
@@ -37,15 +51,12 @@ import {
   onlyParticipantKey,
   mergeOthersMarks,
   newMarksByOthers,
-  newMarksToastText,
   marksPollDelay,
   MARKS_POLL_MS,
   othersWhoSelected,
 } from '@/lib/choosingTogether';
 import {
   type ResumeState,
-  formatShekels,
-  extraPriceLabel,
   crossedIncludedQuota,
   extraPriceToastKey,
   computeFinishSummary,
@@ -57,7 +68,7 @@ import {
   resumeStateKey,
   viewedProgress,
 } from '@/lib/galleryReview';
-import { gt, normalizeGender, type Gender, type ViewerGender } from '@/lib/gender';
+import { normalizeGender, type Gender, type ViewerGender } from '@/lib/gender';
 
 interface GalleryPageProps {
   params: { id: string };
@@ -210,18 +221,18 @@ function useModalFocus(open: boolean, ref: React.RefObject<HTMLElement>) {
 
 // תמונה שעוד לא עובדה (אין גרסה מוקטנת/עם סימן מים) - placeholder ניטרלי,
 // אף פעם לא המקור.
-function ProcessingPlaceholder({ height }: { height?: number | string }) {
+function ProcessingPlaceholder({ height, lang }: { height?: number | string; lang: Lang }) {
   return (
     <div
       role="img"
-      aria-label="התמונה בעיבוד"
+      aria-label={translate(lang, 'common.processingAria')}
       style={{
         width: '100%', height: height ?? undefined, aspectRatio: height ? undefined : '4 / 3',
         background: theme.panelInput, color: theme.textFaint, fontSize: 13,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
     >
-      בעיבוד...
+      {translate(lang, 'common.processing')}
     </div>
   );
 }
@@ -289,6 +300,16 @@ function saveViewerGender(galleryId: string, gender: ViewerGender) {
     if (gender) localStorage.setItem(viewerGenderKey(galleryId), gender);
     else localStorage.removeItem(viewerGenderKey(galleryId));
   } catch {}
+}
+
+// הודעת ברירת מחדל לכשל באימות קוד, לפי סטטוס (כמו accessCodeFallbackError
+// ב-lib/galleryClient.ts, אבל כמפתח מילון)
+function accessCodeFallbackKey(status: number): MessageKey {
+  if (status === 429) return 'code.tooMany';
+  if (status === 503) return 'code.unavailable';
+  if (status === 401) return 'code.wrong';
+  if (status === 410) return 'err.galleryExpired';
+  return 'code.authFailed';
 }
 
 // גלילה עדינה - בלי אנימציה למי שביקשה להפחית תנועה
@@ -362,12 +383,44 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [viewerGender, setViewerGender] = useState<ViewerGender>(null);
   // הבעלים בגוף שלישי ("רק X יכולה לסיים") - גם כשהצופה הוא/היא אורח/ת
   const [ownerGender, setOwnerGender] = useState<Gender>('f');
-  // t('בחרי', 'בחר') / t('בואי', 'בוא', 'בוא/י') - לפי הצופה הנוכחי/ת
-  const t = (f: string, m: string, n?: string) => gt(viewerGender, f, m, n);
-  const tOwner = (f: string, m: string) => gt(ownerGender, f, m);
   useEffect(() => {
     setViewerGender(loadViewerGender(galleryId));
   }, [galleryId]);
+
+  // שפת התצוגה (lib/i18n): בחירה שמורה בבורר > שפת הגלריה (galleries.language,
+  // מגיעה מה-API גם במסך הקוד) > שפת הדפדפן > עברית. dir מוחל רק על שורש הגלריה.
+  const [lang, setLang] = useState<Lang>('he');
+  // הלקוח/ה בחר/ה שפה בבורר (או שיש בחירה שמורה) - שפת הגלריה מהשרת לא דורסת
+  const userChoseLangRef = useRef(false);
+  useEffect(() => {
+    const stored = loadStoredLang(galleryId);
+    userChoseLangRef.current = stored !== null;
+    setLang(resolveInitialLang({ stored, browserLangs: browserLanguages() }));
+  }, [galleryId]);
+  function applyGalleryLanguage(serverLang: unknown) {
+    if (userChoseLangRef.current) return;
+    setLang(resolveInitialLang({ galleryLang: serverLang, browserLangs: browserLanguages() }));
+  }
+  function changeLang(next: Lang) {
+    userChoseLangRef.current = true;
+    setLang(next);
+    saveStoredLang(galleryId, next);
+  }
+  const dir = langDir(lang);
+  // tr('err.loadFailed') - לפי הצופה הנוכחי/ת; trOwner - לפי מגדר הבעלים
+  // (טקסטים בגוף שלישי, "רק X יכולה לסיים"); trG - מגדר מפורש.
+  const tr = (key: MessageKey, params?: MessageParams) => translate(lang, key, params, viewerGender);
+  const trOwner = (key: MessageKey, params?: MessageParams) => translate(lang, key, params, ownerGender);
+  const trG = (gender: ViewerGender, key: MessageKey, params?: MessageParams) => translate(lang, key, params, gender);
+  // כמו tr, אבל פרמטרים יכולים להיות אלמנטים (מספר מודגש, <bdi> וכו')
+  const rich = (key: MessageKey, params: Record<string, React.ReactNode>, count?: number) =>
+    interpolateParts<React.ReactNode>(resolveMessage(lang, key, viewerGender, count), params as Record<string, React.ReactNode | string | number>).map(
+      (part, i) => <React.Fragment key={i}>{part}</React.Fragment>
+    );
+  const money = (amount: number) => formatCurrency(lang, amount);
+  const dateText = (iso: string) => formatGalleryDate(lang, iso);
+  // "בעלים" ברירת מחדל ("הלקוחה הראשית") כשאין שם
+  const ownerLabel = (name: string | undefined) => name ?? trOwner('common.ownerFallback');
 
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
@@ -376,7 +429,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // 'together' | 'onlyMe' | 'only:<participantId>'
   const [viewFilter, setViewFilter] = useState<string>('all');
   // הודעה קופצת "🔔 יוסי סימן/ה 3 תמונות חדשות" מהסקר החי של הסימונים
-  const [othersToast, setOthersToast] = useState<string | null>(null);
+  const [othersToast, setOthersToast] = useState<{ displayName: string; count: number }[] | null>(null);
   const [isOffline, setIsOffline] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [compareMode, setCompareMode] = useState(false);
@@ -503,7 +556,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       // חלון ההערה פתוח מעל התצוגה המוגדלת - הקלדה בתיבה (S/M/חצים) לא
       // אמורה לסמן או לדפדף, ו-Escape סוגר רק את חלון ההערה.
       if (noteEditingId) return;
-      const delta = rtlArrowDelta(e.key);
+      const delta = arrowNavDelta(e.key, lang);
       if (delta !== 0) {
         navigateEnlarged(delta);
         return;
@@ -522,7 +575,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enlargedId, myMarks, isLocked, photos, noteEditingId]);
+  }, [enlargedId, myMarks, isLocked, photos, noteEditingId, lang]);
 
   // כל ניווט/סגירה של התצוגה המוגדלת מבטל מעבר אוטומטי שעוד ממתין
   useEffect(() => {
@@ -540,7 +593,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (!slideshowActive) return;
 
     function handleKeyDown(e: KeyboardEvent) {
-      const delta = rtlArrowDelta(e.key);
+      const delta = arrowNavDelta(e.key, lang);
       if (delta !== 0) navigateSlideshow(delta);
       else if (e.key === 'Escape') setSlideshowActive(false);
     }
@@ -548,7 +601,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slideshowActive]);
+  }, [slideshowActive, lang]);
 
   // Escape סוגר את חלון ההערה / תצוגת ההשוואה
   useEffect(() => {
@@ -779,8 +832,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         othersMarksBaselineRef.current = serverMarks;
         setAllMarks((prev) => mergeOthersMarks(prev, serverMarks, myId));
         if (Array.isArray(data.participants)) setParticipants(data.participants);
-        const text = newMarksToastText(fresh);
-        if (text) setOthersToast(text);
+        if (fresh.length > 0) setOthersToast(fresh.map((f) => ({ displayName: f.displayName, count: f.count })));
       } catch {
         failures += 1;
       }
@@ -894,7 +946,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       res = await fetch(`/api/gallery/${galleryId}`, { cache: 'no-store' });
     } catch {
       if (!silent) {
-        setAuthError(`אין חיבור לאינטרנט. ${t('בדקי', 'בדוק', 'בדוק/י')} את החיבור ${t('ונסי', 'ונסה', 'ונסה/י')} שוב.`);
+        setAuthError(tr('err.noInternet'));
         setCheckingAuth(false);
         setLoading(false);
       }
@@ -902,6 +954,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
 
     if (res.status === 401) {
+      // שפת הגלריה מגיעה גם בלי אימות - מסך הקוד כבר בשפה הנכונה
+      const body401 = await res.json().catch(() => null);
+      applyGalleryLanguage(body401?.language);
       setAuthorized(false);
       setCheckingAuth(false);
       setLoading(false);
@@ -913,8 +968,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         const body = await res.json().catch(() => null);
         setActionError(
           res.status === 410
-            ? errorMessageFromBody(body, 'תוקף הגלריה פג')
-            : `שגיאה בטעינת הגלריה. ${t('נסי', 'נסה', 'נסה/י')} לרענן.`
+            ? localizedErrorFromBody(lang, body, tr('err.galleryExpired'), viewerGender)
+            : tr('err.loadFailed')
         );
         setCheckingAuth(false);
         setLoading(false);
@@ -927,7 +982,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       data = await res.json();
     } catch {
       if (!silent) {
-        setActionError(`שגיאה בטעינת הגלריה. ${t('נסי', 'נסה', 'נסה/י')} לרענן.`);
+        setActionError(tr('err.loadFailed'));
         setCheckingAuth(false);
         setLoading(false);
       }
@@ -935,6 +990,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
     setAuthorized(true);
     lastFetchedAtRef.current = Date.now();
+    applyGalleryLanguage(data.language);
 
     if (data.needsIdentity) {
       setNeedsIdentity(true);
@@ -1073,7 +1129,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         blob = await fetchBlobOk(freshUrl);
       }
       if (!blob) {
-        setActionError(`הורדת התמונה נכשלה, ${t('נסי', 'נסה', 'נסה/י')} שוב`);
+        setActionError(tr('err.downloadFailed'));
         return;
       }
       setActionError('');
@@ -1116,16 +1172,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       }
 
       if (done === 0) {
-        setActionError(`הכנת ה-ZIP נכשלה, ${t('נסי', 'נסה', 'נסה/י')} שוב`);
+        setActionError(tr('err.zipFailed'));
         return;
       }
 
       const blob = await zip.generateAsync({ type: 'blob' });
-      triggerBlobDownload(blob, 'תמונות-סופיות.zip');
+      triggerBlobDownload(blob, tr('dl.zipFileName'));
       setActionError('');
-      setZipMessage(done < total ? `${zipDownloadSummary(done, total)} - ${t('נסי', 'נסה', 'נסה/י')} שוב כדי להוריד את השאר` : zipDownloadSummary(done, total));
+      setZipMessage(done < total ? tr('dl.zipPartial', { done, total }) : tr('dl.zipSummary', { done, total }));
     } catch {
-      setActionError(`הכנת ה-ZIP נכשלה, ${t('נסי', 'נסה', 'נסה/י')} שוב`);
+      setActionError(tr('err.zipFailed'));
     } finally {
       setDownloadingZip(false);
     }
@@ -1164,14 +1220,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       const text = await navigator.clipboard.readText();
       const code = extractAccessCode(text || '');
       if (!code) {
-        setAuthError('לא נמצא קוד בהעתקה - אפשר להקליד אותו ידנית');
+        setAuthError(tr('code.pasteNoCode'));
         return;
       }
       setCodeInput(code);
       setAuthError('');
     } catch {
       // הרשאה נדחתה / דפדפן שחוסם קריאה מהלוח
-      setAuthError('לא הצלחנו לקרוא את ההעתקה - אפשר להדביק בתיבה בלחיצה ארוכה');
+      setAuthError(tr('code.pasteFailed'));
     }
   }
 
@@ -1180,7 +1236,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (submittingCode) return;
     const code = normalizeAccessCode(codeInput);
     if (!code) {
-      setAuthError(`${t('הזיני', 'הזן', 'הזן/י')} את קוד הגישה`);
+      setAuthError(tr('code.enterCode'));
       return;
     }
     setAuthError('');
@@ -1195,7 +1251,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           body: JSON.stringify({ galleryId, accessCode: code }),
         });
       } catch {
-        setAuthError(`אין חיבור לאינטרנט. ${t('בדקי', 'בדוק', 'בדוק/י')} את החיבור ${t('ונסי', 'ונסה', 'ונסה/י')} שוב.`);
+        setAuthError(tr('err.noInternet'));
         return;
       }
 
@@ -1205,9 +1261,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       }
       // 429/503 וכו' - השרת מחזיר JSON עם error, אבל דף שגיאה של פרוקסי לא יהיה JSON
       const body = await res.json().catch(() => null);
-      setAuthError(errorMessageFromBody(body, accessCodeFallbackError(res.status)));
+      setAuthError(localizedErrorFromBody(lang, body, tr(accessCodeFallbackKey(res.status)), viewerGender));
     } catch {
-      setAuthError(`שגיאה באימות, ${t('נסי', 'נסה', 'נסה/י')} שוב`);
+      setAuthError(tr('code.authFailed'));
     } finally {
       setSubmittingCode(false);
     }
@@ -1227,7 +1283,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      setIdentityError(data.error ?? 'ההצטרפות נכשלה, אפשר לנסות שוב');
+      setIdentityError(typeof data.error === 'string' ? localizeServerError(lang, data.error, viewerGender) : tr('err.identifyFailed'));
       return;
     }
 
