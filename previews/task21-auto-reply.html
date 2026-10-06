@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>קליטה אוטומטית</title>
+<style>
+:root{--panel:#161c2d;--input:#1b2236;--text:#efe8db;--muted:rgba(239,232,219,.64);--faint:rgba(239,232,219,.42);--gold:#c98f89;--goldb:#e3b3ac;--green:#7fae86;--red:#e08a8a;--border:rgba(232,224,210,.14)}
+*{box-sizing:border-box}body{margin:0;background:#0a0f1b;color:var(--text);font-family:system-ui,"Segoe UI",Arial,sans-serif;padding:24px 16px 50px}
+h1{text-align:center;font-size:22px;margin:0 0 6px}.sub{text-align:center;color:var(--muted);margin:0 0 24px;font-size:14px}
+.wrap{display:flex;gap:22px;justify-content:center;flex-wrap:wrap;align-items:flex-start}
+.col{width:340px;max-width:100%}.label{text-align:center;font-weight:700;margin-bottom:10px;color:var(--goldb)}
+.step{text-align:center;font-size:12px;color:var(--faint);margin-bottom:6px}
+.mail{background:#fff;color:#222;border-radius:8px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.5);font-size:14px}
+.mh{background:#f1f1f1;padding:10px 14px;font-size:12px;color:#555;line-height:1.7;border-bottom:1px solid #ddd}
+.mb{padding:14px;line-height:1.7}
+textarea{width:100%;border:1px solid #ccc;border-radius:6px;padding:8px;font-size:15px;font-family:inherit;resize:vertical}
+.quote{color:#999;font-size:12px;border-right:3px solid #ddd;padding-right:8px;margin-top:10px}
+.send{background:#1a73e8;color:#fff;border:none;border-radius:16px;padding:7px 18px;font-size:14px;cursor:pointer;margin-top:8px}
+.arrow{text-align:center;font-size:22px;color:var(--gold);margin:8px 0}
+.card{background:var(--panel);border:1px solid var(--gold);border-radius:12px;padding:14px;font-size:14px;line-height:1.7}
+.card.wait{border-color:var(--border);color:var(--faint);text-align:center}
+.ok{color:var(--green)}.bad{color:var(--red)}
+.chips span{display:inline-block;background:var(--input);border:1px solid var(--border);border-radius:6px;padding:1px 7px;margin:2px;font-size:13px}
+.row{display:flex;gap:8px;margin-top:10px}
+.btn{flex:1;background:linear-gradient(135deg,var(--goldb),var(--gold));color:#20120f;border:none;border-radius:8px;padding:10px;font-weight:700;cursor:pointer}
+.btn2{flex:1;background:transparent;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer}
+.toast{background:#1f3326;color:#9bc6a2;border-radius:8px;padding:10px;margin-top:10px;text-align:center;display:none}
+.bell{background:#1b2236;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:13px;display:flex;gap:8px;align-items:center}
+.bell .dot{width:8px;height:8px;border-radius:50%;background:var(--gold)}
+</style></head><body>
+<h1>🤖 קליטה אוטומטית של התשובה - תצוגה מקדימה</h1>
+<p class="sub">נסי: כתבי במייל של הלקוחה מספרים (או משפט חופשי) ולחצי "שליחה" - ותראי מה קורה אצלך</p>
+<div class="wrap">
+ <div class="col"><div class="label">👩 הלקוחה עונה למייל</div><div class="step">שלב 1</div>
+  <div class="mail"><div class="mh">אל: דינה שוורץ - צילום<br>נושא: <b>Re: התמונות שלך מהצילום 📸</b></div>
+   <div class="mb"><textarea id="reply" rows="4">שלום דינה, תודה רבה!
+בחרנו: 3, 7, 12-15, 22</textarea>
+    <button class="send" id="send">שליחה</button>
+    <div class="quote">ב-10.10 כתבה דינה שוורץ:<br>"השיבי למייל הזה עם המספרים שבחרת..."</div></div></div>
+ </div>
+ <div class="col"><div class="label">🤖 המערכת קוראת לבד</div><div class="step">שלב 2</div>
+  <div class="card wait" id="robot">מחכה לתשובה מהלקוחה...</div>
+ </div>
+ <div class="col"><div class="label">⚙️ אצלך</div><div class="step">שלב 3</div>
+  <div id="me" class="card wait">עוד אין עדכון</div>
+ </div>
+</div>
+<script>
+const N=24,INC=20,PRICE=40;
+function parse(s){const ok=new Set(),bad=[];(s.match(/\d+\s*-\s*\d+|\d+/g)||[]).forEach(p=>{const m=p.match(/^(\d+)\s*-\s*(\d+)$/);if(m){for(let i=+m[1];i<=+m[2];i++)(i>=1&&i<=N?ok.add(i):bad.push(i))}else(+p>=1&&+p<=N)?ok.add(+p):bad.push(p)});return{ok:[...ok].sort((a,b)=>a-b),bad}}
+document.getElementById('send').onclick=()=>{
+ const txt=document.getElementById('reply').value,{ok,bad}=parse(txt),robot=document.getElementById('robot'),me=document.getElementById('me');
+ robot.className='card';me.className='card';
+ if(!ok.length){
+  robot.innerHTML='📩 התקבלה תשובה<br><span class="bad">✗ לא נמצאו מספרי תמונות</span><br><span style="color:var(--faint);font-size:13px">לא שומרים כלום - מעבירים אלייך</span>';
+  me.innerHTML=`<div class="bell"><span class="dot"></span>📩 משפחת כהן ענתה, אבל לא הבנתי את הבחירה</div><div style="background:var(--input);border-radius:8px;padding:8px;font-size:13px;white-space:pre-wrap">${txt.replace(/</g,'&lt;')}</div><div class="row"><button class="btn2">✍️ להקליד בעצמי</button></div>`;return}
+ const extra=Math.max(0,ok.length-INC);
+ robot.innerHTML=`📩 התקבלה תשובה מ-<b>משפחת כהן</b> ✓<br>🔢 זוהו ${ok.length} תמונות:<div class="chips">${ok.map(n=>'<span>'+n+'</span>').join('')}</div>`+(bad.length?`<span class="bad">✗ לא קיימות: ${bad.join(', ')}</span><br>`:'')+`💰 תוספת: ${extra*PRICE} ₪`;
+ me.innerHTML=`<div class="bell"><span class="dot"></span>📧 משפחת כהן בחרה במייל - ${ok.length} תמונות</div>נבחרו: <b>${ok.join(', ')}</b><br>`+(bad.length?`<span class="bad">⚠️ היא כתבה גם ${bad.join(', ')} - לא קיימות בגלריה</span><br>`:'')+`כלולות ${Math.min(ok.length,INC)} · נוספות ${extra} · תוספת <b>${extra*PRICE} ₪</b><div class="row"><button class="btn" id="ap">✓ אישור</button><button class="btn2">✎ תיקון</button></div><div class="toast" id="t">✓ נשמר כבחירה של משפחת כהן · "מה הלאה" התקדם לעריכה</div>`;
+ document.getElementById('ap').onclick=()=>document.getElementById('t').style.display='block';
+};
+</script></body></html>

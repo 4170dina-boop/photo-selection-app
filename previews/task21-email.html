@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>בחירה במייל</title>
+<style>
+:root{--panel:#161c2d;--input:#1b2236;--text:#efe8db;--muted:rgba(239,232,219,.64);--faint:rgba(239,232,219,.42);--gold:#c98f89;--goldb:#e3b3ac;--green:#7fae86;--red:#e08a8a;--border:rgba(232,224,210,.14)}
+*{box-sizing:border-box}body{margin:0;background:#0a0f1b;color:var(--text);font-family:system-ui,"Segoe UI",Arial,sans-serif;padding:24px 16px 50px}
+h1{text-align:center;font-size:22px;margin:0 0 6px}.sub{text-align:center;color:var(--muted);margin:0 0 24px;font-size:14px}
+.wrap{display:flex;gap:28px;justify-content:center;flex-wrap:wrap;align-items:flex-start}
+.label{text-align:center;font-weight:700;margin-bottom:10px;color:var(--goldb)}
+.mail{width:440px;max-width:100%;background:#fff;color:#222;border-radius:8px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.5);font-size:14px}
+.mh{background:#f1f1f1;padding:10px 14px;font-size:12px;color:#555;line-height:1.7;border-bottom:1px solid #ddd}
+.mb{padding:18px}
+.mb h2{margin:0 0 8px;font-size:18px;color:#7a4f4a}
+.box{background:#faf5f2;border:1px solid #ecdcd6;border-radius:6px;padding:10px 12px;line-height:1.8;margin:10px 0 14px}
+.how{background:#fff8e6;border:1px solid #f0dca8;border-radius:6px;padding:10px 12px;line-height:1.7;margin-bottom:14px}
+.pg{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.pg div{text-align:center}.pg .im{aspect-ratio:3/4;border-radius:4px;position:relative}
+.pg .im:after{content:"© דינה שוורץ";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.45);font-size:10px;transform:rotate(-25deg)}
+.pg b{display:block;font-size:20px;margin-top:2px}
+.part{text-align:center;color:#888;font-size:12px;margin-top:14px}
+.set{width:400px;max-width:100%;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;font-size:14px}
+.set h3{margin:0 0 6px;font-size:15px}
+textarea{width:100%;background:var(--input);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px;font-size:16px;font-family:inherit;direction:ltr;text-align:right}
+.res{margin-top:10px;background:var(--input);border-radius:8px;padding:10px;font-size:13px;line-height:1.7}
+.ok{color:var(--green)}.bad{color:var(--red)}
+.btn{width:100%;margin-top:10px;background:linear-gradient(135deg,var(--goldb),var(--gold));color:#20120f;border:none;border-radius:8px;padding:11px;font-weight:700;font-size:15px;cursor:pointer}
+.btn2{width:100%;background:transparent;color:var(--text);border:1px solid var(--gold);border-radius:8px;padding:10px;font-size:14px;cursor:pointer;margin-bottom:6px}
+.hint{color:var(--faint);font-size:12px;margin-top:8px;line-height:1.6}
+hr{border:none;border-top:1px solid var(--border);margin:16px 0}
+.a{background:linear-gradient(135deg,#6b4f4a,#c9a48f)}.b{background:linear-gradient(135deg,#3d5566,#9fb6c2)}.c{background:linear-gradient(135deg,#5b6b4a,#c2c99f)}.d{background:linear-gradient(135deg,#66503d,#d1b48c)}
+</style></head><body>
+<h1>📧 בחירת תמונות במייל - תצוגה מקדימה</h1>
+<p class="sub">ימין: המייל שהלקוחה מקבלת (התמונות בתוך המייל, בלי קישורים) · שמאל: מה שאת עושה</p>
+<div class="wrap">
+ <div><div class="label">📬 אצל הלקוחה - בתיבת המייל</div><div class="mail">
+  <div class="mh">מאת: דינה שוורץ - צילום<br>נושא: <b>התמונות שלך מהצילום 📸 (חלק 1 מתוך 2)</b></div>
+  <div class="mb">
+   <h2>שלום משפחת כהן,</h2>
+   <div>התמונות מהצילום מוכנות לבחירה! 🌸</div>
+   <div class="box">✔ כלולות בחבילה: <b>20 תמונות</b><br>➕ כל תמונה נוספת: <b>40 ₪</b><br>📅 נשמח לתשובה עד: <b>כ"ה בתשרי</b></div>
+   <div class="how"><b>איך בוחרים?</b><br>פשוט <b>משיבים למייל הזה</b> עם המספרים של התמונות שאהבת.<br>לדוגמה: <b dir="ltr">3, 7, 12-15</b></div>
+   <div class="pg" id="pg"></div>
+   <div class="part">חלק 1 מתוך 2 · תמונות 1-12 · החלק השני נשלח במייל נפרד</div>
+  </div>
+ </div></div>
+ <div><div class="label">⚙️ אצלך, בדף הגלריה</div><div class="set">
+  <button class="btn2">📧 שליחת התמונות במייל ללקוחה</button>
+  <button class="btn2" style="border-color:var(--border)">✉️ מייל ניסיון אליי (לבדוק שהסינון מעביר)</button>
+  <hr>
+  <h3>⌨️ הלקוחה ענתה? הקלידי את המספרים</h3>
+  <textarea id="in" rows="2">3, 7, 12-15, 40</textarea>
+  <div class="res" id="res"></div>
+  <button class="btn" id="save">שמירה כבחירה של הלקוחה</button>
+  <div class="hint">אחרי השמירה זה כאילו היא בחרה בעצמה: המחיר מחושב, ו"מה הלאה" מתקדם.</div>
+ </div></div>
+</div>
+<script>
+const N=24,ks=['a','b','c','d'];const pg=document.getElementById('pg');
+for(let i=1;i<=12;i++)pg.innerHTML+=`<div><div class="im ${ks[i%4]}"></div><b>${i}</b></div>`;
+function parse(s){const ok=new Set(),bad=[];s.split(/[,\s،]+/).filter(Boolean).forEach(p=>{const m=p.match(/^(\d+)-(\d+)$/);if(m){for(let i=+m[1];i<=+m[2];i++)(i>=1&&i<=N?ok.add(i):bad.push(i))}else if(/^\d+$/.test(p)){(+p>=1&&+p<=N)?ok.add(+p):bad.push(p)}else bad.push(p)});return{ok:[...ok].sort((a,b)=>a-b),bad}}
+function r(){const {ok,bad}=parse(document.getElementById('in').value);const extra=Math.max(0,ok.length-20);
+document.getElementById('res').innerHTML=`<div class="ok">✓ נבחרו ${ok.length}: ${ok.join(', ')||'-'}</div>`+(bad.length?`<div class="bad">✗ לא קיימות בגלריה (יש ${N}): ${bad.join(', ')}</div>`:'')+`<div>תשלום נוסף: ${extra*40} ₪</div>`}
+document.getElementById('in').oninput=r;document.getElementById('save').onclick=()=>alert('בתצוגה המקדימה זה לא נשמר - רק הדגמה ✓');r();
+</script></body></html>
