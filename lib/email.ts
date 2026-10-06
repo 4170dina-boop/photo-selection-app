@@ -1,6 +1,7 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { toHebrewDateString } from '@/lib/hebrewDate';
 import { formatShootDateLabel, formatShootTime } from '@/lib/shoots';
+import { googleMapsUrl, wazeUrl } from '@/lib/navLinks';
 import { DEFAULT_CLIENT_GENDER, gt, type Gender } from '@/lib/gender';
 
 // שליחת מייל דרך Resend (REST API ישיר, בלי SDK נוסף). אם RESEND_API_KEY לא
@@ -508,6 +509,14 @@ function shootDateText(shootDate: string): string {
   return `${formatShootDateLabel(shootDate)} · ${toHebrewDateString(new Date(`${shootDate}T12:00:00Z`))}`;
 }
 
+// קישורי ניווט קטנים (Waze / Google Maps) מתחת למיקום הצילום.
+function navLinksHtml(location: string): string {
+  if (!location.trim()) return '';
+  const link = (href: string, label: string) =>
+    `<a href="${escapeHtml(href)}" style="color: #a5706a; text-decoration: underline;">${label}</a>`;
+  return `<div style="margin: 4px 0 0; font-size: 12px;">${link(wazeUrl(location), '🧭 Waze')} · ${link(googleMapsUrl(location), '🗺️ Google Maps')}</div>`;
+}
+
 // כרטיס פרטי הצילום - באותו סגנון "קופון" כמו accessCodeBadge.
 function shootDetailsCard(params: { shootDate: string; startTime: string; location: string }): string {
   return `
@@ -515,6 +524,7 @@ function shootDetailsCard(params: { shootDate: string; startTime: string; locati
       <div style="margin: 2px 0;">📅 <b>${escapeHtml(shootDateText(params.shootDate))}</b></div>
       <div style="margin: 2px 0;">🕐 בשעה <b dir="ltr">${escapeHtml(formatShootTime(params.startTime))}</b></div>
       <div style="margin: 2px 0;">📍 ${escapeHtml(params.location)}</div>
+      ${navLinksHtml(params.location)}
     </div>
   `;
 }
@@ -592,6 +602,7 @@ export async function sendShootsDailySummaryEmail(params: ShootsDailySummaryPara
           <td style="padding: 8px 10px; border-bottom: 1px solid #eee6d8; text-align: right;">
             <b>${escapeHtml(s.clientName)}</b><br />
             <span style="font-size: 13px; color: #6b6156;">📍 ${escapeHtml(s.location)}</span>
+            ${navLinksHtml(s.location)}
             ${s.notes ? `<br /><span style="font-size: 12px; color: #9a8f7d;">${escapeHtml(s.notes)}</span>` : ''}
           </td>
         </tr>

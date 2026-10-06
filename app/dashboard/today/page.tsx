@@ -15,6 +15,7 @@ import {
   lastClientActivityAt,
   TODAY_SECTION_ORDER,
   wazeUrl,
+  googleMapsUrl,
   type TodayGalleryRow,
   type TodayItem,
   type TodaySection,
@@ -532,6 +533,11 @@ export default function TodayPage() {
                   {s.location.trim() && (
                     <a href={wazeUrl(s.location)} target="_blank" rel="noopener noreferrer" style={linkButton}>
                       ניווט ב-Waze
+                    </a>
+                  )}
+                  {s.location.trim() && (
+                    <a href={googleMapsUrl(s.location)} target="_blank" rel="noopener noreferrer" style={linkButton}>
+                      Google Maps
                     </a>
                   )}
                   <Link href="/dashboard/calendar" style={linkButton}>

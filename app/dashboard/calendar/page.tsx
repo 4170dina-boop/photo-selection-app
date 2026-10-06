@@ -13,6 +13,7 @@ import {
   compareShoots,
 } from '@/lib/shoots';
 import EmailInput from '@/components/EmailInput';
+import { googleMapsUrl, wazeUrl } from '@/lib/navLinks';
 
 // יומן צילומים - תצוגת חודש + רשימת הצילומים הקרובים, ויצירה/עריכה/מחיקה של
 // צילום. הנתונים מ-app/api/shoots (session הצלמת + RLS). התזכורות ללקוחה
@@ -586,6 +587,13 @@ export default function CalendarPage() {
                 <span style={{ fontSize: 13, color: theme.textMuted }}>
                   {formatShootDateLabel(shoot.shoot_date)} · <span dir="ltr">{formatShootTime(shoot.start_time)}</span> · 📍 {shoot.location}
                 </span>
+                {shoot.location.trim() && (
+                  // stopPropagation - הכרטיס כולו פותח עריכה בלחיצה
+                  <span style={{ fontSize: 12, display: 'flex', gap: '0.75rem' }} onClick={(e) => e.stopPropagation()}>
+                    <a href={wazeUrl(shoot.location)} target="_blank" rel="noopener noreferrer" style={{ color: theme.gold }}>🧭 Waze</a>
+                    <a href={googleMapsUrl(shoot.location)} target="_blank" rel="noopener noreferrer" style={{ color: theme.gold }}>🗺️ Google Maps</a>
+                  </span>
+                )}
                 <span style={{ fontSize: 12, color: theme.textFaint, display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
                   {shoot.confirmation_sent_at && <span>✓ אישור נשלח</span>}
                   {shoot.reminder_sent_at && <span>✓ תזכורת נשלחה</span>}

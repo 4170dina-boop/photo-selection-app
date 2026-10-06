@@ -251,6 +251,4 @@ export function sortShoots<T extends TodayShootLike>(shoots: T[]): T[] {
   );
 }
 
-export function wazeUrl(location: string): string {
-  return `https://waze.com/ul?q=${encodeURIComponent(location.trim())}&navigate=yes`;
-}
+export { wazeUrl, googleMapsUrl } from './navLinks';
