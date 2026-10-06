@@ -21,8 +21,6 @@ export const welcome = {
   },
   'welcome.start': { f: 'בואי נתחיל ✨', m: 'בוא נתחיל ✨', n: 'בוא/י נתחיל ✨' },
 
-  'hdr.maybe': 'אולי ({n})',
-  'hdr.selected': 'נבחר ({n})',
   'hdr.connectedAs': { f: 'מחוברת בתור {name}', m: 'מחובר בתור {name}' },
   'hdr.family': ' (משפחה)',
   'hdr.compare': '⇄ השוואה',
@@ -30,8 +28,6 @@ export const welcome = {
   'hdr.swipe': '⚡ בחירה מהירה',
   'hdr.exitSwipe': { f: '✕ צאי מבחירה מהירה', m: '✕ צא מבחירה מהירה', n: '✕ צא/י מבחירה מהירה' },
   'hdr.selectedInPackage': 'נבחרו במסגרת החבילה',
-  'hdr.ownerMaybe': '{n} תמונות "אולי"',
-  'hdr.guestSummary': 'הבחירות שלך (קלט בלבד): {selected} נבחרו, {maybe} אולי',
   'hdr.viewed': 'עברת על {seen} מתוך {total} תמונות',
   'hdr.viewedAria': 'תמונות שעברת עליהן',
 

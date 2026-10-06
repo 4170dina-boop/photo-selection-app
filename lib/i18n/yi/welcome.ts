@@ -18,8 +18,6 @@ export const welcome: Section<typeof he> = {
   'welcome.guestNote': '👀 אייערע אויסוואלן דא זענען נאר פארשלאגן - נאר {owner} קען ענדיגן די אויסוואל',
   'welcome.start': 'לאמיר אנהייבן ✨',
 
-  'hdr.maybe': 'אפשר ({n})',
-  'hdr.selected': 'אויסגעקליבן ({n})',
   'hdr.connectedAs': 'אריין אלס {name}',
   'hdr.family': ' (משפחה)',
   'hdr.compare': '⇄ פארגלייכן',
@@ -27,8 +25,6 @@ export const welcome: Section<typeof he> = {
   'hdr.swipe': '⚡ שנעלע אויסוואל',
   'hdr.exitSwipe': '✕ ארויס פון שנעלע אויסוואל',
   'hdr.selectedInPackage': 'אויסגעקליבן אינעם פעקעדזש',
-  'hdr.ownerMaybe': '{n} "אפשר" בילדער',
-  'hdr.guestSummary': 'אייערע אויסוואלן (נאר פארשלאגן): {selected} אויסגעקליבן, {maybe} אפשר',
   'hdr.viewed': 'איר האט דורכגעקוקט {seen} פון {total} בילדער',
   'hdr.viewedAria': 'בילדער וואס איר האט דורכגעקוקט',
 

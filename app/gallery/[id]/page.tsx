@@ -682,6 +682,35 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     };
   }, []);
 
+  // הכותרת הדביקה בנייד מתכווצת עוד יותר בגלילה למטה ונפתחת חזרה בגלילה
+  // למעלה (ה-CSS עצמו רק במסכים צרים - ראו .gh בכותרת). סף קטן כדי שרעידות
+  // גלילה לא יגרמו להבהוב, ו-rAF כדי לא לרנדר בכל אירוע scroll.
+  const [headerCompact, setHeaderCompact] = useState(false);
+  useEffect(() => {
+    let lastY = window.scrollY;
+    let frame = 0;
+    function onScroll() {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const y = window.scrollY;
+        const delta = y - lastY;
+        if (y < 48) {
+          setHeaderCompact(false);
+          lastY = y;
+        } else if (Math.abs(delta) > 8) {
+          setHeaderCompact(delta > 0);
+          lastY = y;
+        }
+      });
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
+
   const [authorized, setAuthorized] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [codeInput, setCodeInput] = useState('');
@@ -2296,99 +2325,105 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   return (
     <div dir={dir} lang={lang} style={{ background: theme.bg, minHeight: '100vh', color: theme.text, fontFamily: theme.fontSans }}>
-      <div
-        style={{
-          position: 'sticky', top: 0, zIndex: 50, backdropFilter: 'blur(12px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '1rem 1.5rem', borderBottom: `1px solid ${theme.border}`, flexWrap: 'wrap', gap: '1rem',
-          background: 'rgba(15,22,38,0.92)',
-        }}
-      >
-        <div style={{ display: 'flex', gap: '0.75rem 1rem', alignItems: 'center', fontSize: 14, flexWrap: 'wrap' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: theme.green, display: 'inline-block' }} />
-            {tr('hdr.maybe', { n: maybeCount })}
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: accent, display: 'inline-block' }} />
-            {tr('hdr.selected', { n: mySelectedCount })}
-          </span>
+      {/* עיצוב משותף לכותרת הדביקה (שורה דקה אחת בנייד, מתכווצת בגלילה למטה) -
+          כ-CSS ולא inline כי צריך media queries ומצב מכווץ */}
+      <style>{`
+        .gh {
+          position: sticky; top: 0; z-index: 50; backdrop-filter: blur(12px);
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 1rem 1.5rem; border-bottom: 1px solid ${theme.border}; flex-wrap: wrap; gap: 1rem;
+          background: rgba(15,22,38,0.92); transition: padding 0.2s ease;
+        }
+        .gh-start { display: flex; gap: 0.75rem 1rem; align-items: center; font-size: 14px; flex-wrap: wrap; min-width: 0; }
+        .gh-end { display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; }
+        .gh-btn { padding: 0.35rem 0.75rem !important; font-size: 12px !important; white-space: nowrap; }
+        .gh-ring {
+          width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+          font-size: 12px; font-weight: bold; transition: width 0.2s ease, height 0.2s ease;
+        }
+        .gh-ring-inner {
+          width: 34px; height: 34px; border-radius: 50%; background: ${theme.bg};
+          display: flex; align-items: center; justify-content: center; transition: width 0.2s ease, height 0.2s ease;
+        }
+        .gh-narrow { display: none; }
+        @media (max-width: 640px) {
+          .gh { flex-wrap: nowrap; padding: 0.45rem 0.75rem; gap: 0.5rem; }
+          .gh-start { flex-wrap: nowrap; gap: 0.4rem; }
+          .gh-who, .gh-wide { display: none; }
+          .gh-count-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+          .gh-narrow { display: inline; }
+          .gh-btn { min-height: 40px; min-width: 40px; padding: 0.3rem 0.6rem !important; font-size: 13px !important; }
+          .gh[data-compact="true"] { padding: 0.2rem 0.75rem; }
+          .gh[data-compact="true"] .gh-btn { min-height: 34px; min-width: 34px; padding: 0.15rem 0.5rem !important; }
+          .gh[data-compact="true"] .gh-ring { width: 30px; height: 30px; font-size: 9px; }
+          .gh[data-compact="true"] .gh-ring-inner { width: 23px; height: 23px; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .gh, .gh-ring, .gh-ring-inner { transition: none; }
+        }
+      `}</style>
+      <header className="gh" data-compact={headerCompact ? 'true' : 'false'}>
+        <div className="gh-start">
           {myParticipant && (
-            <span style={{ color: theme.textFaint, fontSize: 12 }}>
+            <span className="gh-who" style={{ color: theme.textFaint, fontSize: 12 }}>
               {tr('hdr.connectedAs', { name: myParticipant.displayName })}{isOwner ? '' : tr('hdr.family')}
             </span>
           )}
           <button
+            className="gh-btn"
             onClick={() => {
               setCompareMode((prev) => !prev);
               setCompareIds([]);
             }}
+            aria-label={compareMode ? tr('hdr.exitCompare') : tr('hdr.compare')}
             style={{
-              ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12,
+              ...outlineButtonStyle,
               borderColor: compareMode ? accent : theme.border, color: compareMode ? accent : theme.textMuted,
             }}
           >
-            {compareMode ? tr('hdr.exitCompare') : tr('hdr.compare')}
+            <span className="gh-wide">{compareMode ? tr('hdr.exitCompare') : tr('hdr.compare')}</span>
+            <span className="gh-narrow" aria-hidden="true">{compareMode ? '✕' : '⇄'}</span>
           </button>
           {!readOnly && (
           <button
+            className="gh-btn"
             onClick={() => (swipeMode ? exitSwipeMode() : startSwipeMode(1))}
             disabled={isLocked || photos.length === 0}
+            aria-label={swipeMode ? tr('hdr.exitSwipe') : tr('hdr.swipe')}
             style={{
-              ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12,
+              ...outlineButtonStyle,
               borderColor: swipeMode ? accent : theme.border, color: swipeMode ? accent : theme.textMuted,
               opacity: isLocked || photos.length === 0 ? 0.5 : 1,
             }}
           >
-            {swipeMode ? tr('hdr.exitSwipe') : tr('hdr.swipe')}
+            <span className="gh-wide">{swipeMode ? tr('hdr.exitSwipe') : tr('hdr.swipe')}</span>
+            <span className="gh-narrow" aria-hidden="true">⚡</span>
           </button>
           )}
+          <LanguagePicker lang={lang} onChange={changeLang} accent={accent} />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-          <LanguagePicker lang={lang} onChange={changeLang} accent={accent} />
-          <div style={{ textAlign: 'start' }}>
-            <div>
-              {tr('hdr.selectedInPackage')}{' '}
-              <bdi dir="ltr">
-                <b style={{ color: accent, fontFamily: theme.fontSerif }}>{ownerSelectedCount}</b> / {packageInfo?.included ?? 0}
-              </bdi>
-            </div>
-            <div style={{ fontSize: 12, color: theme.textFaint }}>
-              {isOwner ? tr('hdr.ownerMaybe', { n: maybeCount }) : tr('hdr.guestSummary', { selected: mySelectedCount, maybe: maybeCount })}
-            </div>
-            {/* כמה תמונות כבר נפתחו במסך מלא (מקומי, למכשיר הזה) */}
-            {!isLocked && viewProgress.seen > 0 && (
-              <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 3 }}>
-                <span>
-                  {rich('hdr.viewed', { seen: <bdi dir="ltr">{viewProgress.seen}</bdi>, total: <bdi dir="ltr">{viewProgress.total}</bdi> })}
-                </span>
-                <div
-                  role="progressbar"
-                  aria-label={tr('hdr.viewedAria')}
-                  aria-valuemin={0}
-                  aria-valuemax={viewProgress.total}
-                  aria-valuenow={viewProgress.seen}
-                  style={{ height: 3, borderRadius: 2, background: theme.panelInput, marginTop: 3, overflow: 'hidden' }}
-                >
-                  <div style={{ width: `${viewProgress.pct}%`, height: '100%', background: accentSolid }} />
-                </div>
-              </div>
-            )}
+        {/* מונה אחד בלבד: "X/Y בחבילה" + טבעת אחוזים. הספירות "נבחר/אולי" של
+            הצופה/ה עצמו/ה מופיעות בשורת הסינון, וההתקדמות בצפייה - מתחתיה */}
+        <div className="gh-end">
+          <div style={{ textAlign: 'start', fontSize: 14, whiteSpace: 'nowrap' }}>
+            <span className="gh-count-label">{tr('hdr.selectedInPackage')}{' '}</span>
+            <bdi dir="ltr">
+              <b style={{ color: accent, fontFamily: theme.fontSerif }}>{ownerSelectedCount}</b> / {packageInfo?.included ?? 0}
+            </bdi>
           </div>
           <div
+            className="gh-ring"
+            aria-hidden="true"
             style={{
-              width: 44, height: 44, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 12, fontWeight: 'bold', color: accent, fontFamily: theme.fontSerif,
+              color: accent, fontFamily: theme.fontSerif,
               background: `conic-gradient(${accentSolid} ${progressPct}%, ${theme.panelInput} ${progressPct}%)`,
             }}
           >
-            <div style={{ width: 34, height: 34, borderRadius: '50%', background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {progressPct}%
-            </div>
+            <div className="gh-ring-inner">{progressPct}%</div>
           </div>
         </div>
-      </div>
+      </header>
 
       {(isOffline || pendingCount > 0) && (
         <div role="status" aria-live="polite" style={{ padding: '0.5rem 1.5rem', background: theme.warningBg, color: theme.warningText, fontSize: 13, textAlign: 'center' }}>
@@ -2504,7 +2539,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap',
           }}
         >
-          <span>{rich('resume.text', { n: <bdi dir="ltr">{resumeOffer.index + 1}</bdi> })}</span>
+          <span>
+            {rich('resume.text', { n: <bdi dir="ltr">{resumeOffer.index + 1}</bdi> })}
+            {/* ההתקדמות בצפייה עברה מהכותרת לכאן (ולשורה העדינה מעל הגריד) */}
+            {viewProgress.seen > 0 && (
+              <span style={{ display: 'block', fontSize: 12, color: theme.textFaint }}>
+                {rich('hdr.viewed', { seen: <bdi dir="ltr">{viewProgress.seen}</bdi>, total: <bdi dir="ltr">{viewProgress.total}</bdi> })}
+              </span>
+            )}
+          </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <button type="button" onClick={resumeFromOffer} style={{ ...primaryButtonStyle, padding: '0.4rem 1.1rem', minHeight: 44 }}>
               {tr('resume.continue')}
@@ -3465,6 +3508,26 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </button>
         ))}
       </div>
+
+      {/* כמה תמונות כבר נפתחו במסך מלא (מקומי, למכשיר הזה) - שורה עדינה
+          מתחת לסינון, במקום מונה נוסף בכותרת */}
+      {!isLocked && viewProgress.seen > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', padding: '0 1.5rem 0.6rem', fontSize: 11, color: theme.textFaint }}>
+          <span>
+            {rich('hdr.viewed', { seen: <bdi dir="ltr">{viewProgress.seen}</bdi>, total: <bdi dir="ltr">{viewProgress.total}</bdi> })}
+          </span>
+          <div
+            role="progressbar"
+            aria-label={tr('hdr.viewedAria')}
+            aria-valuemin={0}
+            aria-valuemax={viewProgress.total}
+            aria-valuenow={viewProgress.seen}
+            style={{ width: 60, height: 3, borderRadius: 2, background: theme.panelInput, overflow: 'hidden' }}
+          >
+            <div style={{ width: `${viewProgress.pct}%`, height: '100%', background: accentSolid }} />
+          </div>
+        </div>
+      )}
 
       <GalleryNavBar
         chapters={chapters}

@@ -18,8 +18,6 @@ export const welcome: Section<typeof he> = {
   'welcome.guestNote': '👀 Tus elecciones aquí son sugerencias para comentar; solo {owner} puede enviar la selección final',
   'welcome.start': '¡Empecemos! ✨',
 
-  'hdr.maybe': 'Quizás ({n})',
-  'hdr.selected': 'Elegidas ({n})',
   'hdr.connectedAs': { f: 'Conectada como {name}', m: 'Conectado como {name}', n: 'Sesión de {name}' },
   'hdr.family': ' (familia)',
   'hdr.compare': '⇄ Comparar',
@@ -27,8 +25,6 @@ export const welcome: Section<typeof he> = {
   'hdr.swipe': '⚡ Elección rápida',
   'hdr.exitSwipe': '✕ Salir de elección rápida',
   'hdr.selectedInPackage': 'Elegidas del paquete',
-  'hdr.ownerMaybe': '{n} fotos en "quizás"',
-  'hdr.guestSummary': 'Tus elecciones (solo sugerencias): {selected} elegidas, {maybe} quizás',
   'hdr.viewed': 'Has visto {seen} de {total} fotos',
   'hdr.viewedAria': 'Fotos que ya viste',
 
