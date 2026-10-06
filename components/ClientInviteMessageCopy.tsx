@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { theme, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
+import type { Lang } from '@/lib/i18n/types';
 import { buildGalleryUrl, buildInviteMessageHtml, buildInviteMessageText } from '@/lib/clientInviteMessage';
 import type { Gender } from '@/lib/gender';
 
@@ -22,6 +23,8 @@ interface ClientInviteMessageCopyProps {
   clientName?: string | null;
   // לשון הפנייה בהודעה ("מה תבחרי" / "מה תבחר") - ברירת מחדל נקבה
   clientGender?: Gender;
+  // שפת הגלריה (galleries.language) - ההודעה נבנית בשפה הזו, ברירת מחדל עברית
+  language?: Lang;
   expiresAt?: string | null;
   // שניהם undefined = הקומפוננטה טוענת בעצמה מ-/api/photographer
   businessName?: string;
@@ -37,6 +40,7 @@ export default function ClientInviteMessageCopy({
   accessCode,
   clientName,
   clientGender,
+  language,
   expiresAt,
   businessName,
   logoUrl,
@@ -90,6 +94,7 @@ export default function ClientInviteMessageCopy({
     const params = {
       clientName,
       clientGender,
+      language,
       galleryUrl: buildGalleryUrl(process.env.NEXT_PUBLIC_SITE_URL || window.location.origin, galleryId),
       accessCode,
       expiresAt,

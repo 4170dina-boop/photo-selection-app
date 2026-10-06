@@ -9,6 +9,8 @@ import { israelEndOfDayIso } from '@/lib/israelTime';
 import EmailInput from '@/components/EmailInput';
 import ClientInviteMessageCopy from '@/components/ClientInviteMessageCopy';
 import ClientGenderField from '@/components/ClientGenderField';
+import GalleryLanguageField from '@/components/GalleryLanguageField';
+import { normalizeLang, type Lang } from '@/lib/i18n/types';
 import type { Gender } from '@/lib/gender';
 
 interface CreatedGallery {
@@ -44,6 +46,8 @@ function NewGalleryForm() {
   const [additionalEmails, setAdditionalEmails] = useState<string[]>([]);
   // לשון פנייה ללקוח/ה בגלריה ובמיילים (galleries.client_gender) - ברירת מחדל נקבה
   const [clientGender, setClientGender] = useState<Gender>('f');
+  // שפת הגלריה והמיילים ללקוח/ה (galleries.language) - ברירת מחדל עברית
+  const [language, setLanguage] = useState<Lang>('he');
 
   // ממלאים את השדות מברירות המחדל שהצלמת הגדירה בהגדרות (app/dashboard/settings/page.tsx),
   // כדי שלא תצטרך להקליד את אותם מספרים בכל גלריה - עדיין אפשר לשנות פה לפני היצירה.
@@ -107,6 +111,7 @@ function NewGalleryForm() {
           expiresAt: expiresAt ? israelEndOfDayIso(expiresAt) : null,
           additionalInviteEmails: additionalEmails.map((email) => email.trim()).filter((email) => email.length > 0),
           clientGender,
+          language,
         }),
       });
 
@@ -160,6 +165,7 @@ function NewGalleryForm() {
             accessCode={created.accessCode}
             clientName={clientName}
             clientGender={clientGender}
+            language={language}
             expiresAt={expiresAt || null}
             prominent
           />
@@ -223,6 +229,8 @@ function NewGalleryForm() {
         </label>
 
         <ClientGenderField value={clientGender} onChange={setClientGender} />
+
+        <GalleryLanguageField value={language} onChange={setLanguage} />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {additionalEmails.map((email, i) => (
