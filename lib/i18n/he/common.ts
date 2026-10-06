@@ -3,7 +3,6 @@
 import type { Message } from '../types';
 
 export const common = {
-  'common.loading': 'טוען...',
   'common.loadingGallery': 'טוען גלריה...',
   'common.back': 'חזרה',
   'common.cancel': 'ביטול',

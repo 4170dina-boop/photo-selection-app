@@ -3,7 +3,6 @@ import type { Section } from '../types';
 import type { common as he } from '../he/common';
 
 export const common: Section<typeof he> = {
-  'common.loading': 'Chargement...',
   'common.loadingGallery': 'Chargement de votre galerie...',
   'common.back': 'Retour',
   'common.cancel': 'Annuler',

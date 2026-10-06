@@ -15,6 +15,7 @@ import type { Chapter } from '@/lib/chapters';
 import LanguagePicker from '@/components/LanguagePicker';
 import GalleryMoreMenu, { type MoreMenuItem } from '@/components/GalleryMoreMenu';
 import { useNotify, NotifyHost } from '@/components/useNotify';
+import GallerySkeleton from '@/components/GallerySkeleton';
 import {
   type Lang,
   type MessageKey,
@@ -1143,6 +1144,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     return p;
   }
 
+  // כניסה הדרגתית של תמונת גריד (.gimg) - ישירות על האלמנט, בלי state לכל תמונה.
+  // גם בכשל: שלא תישאר שקופה (הרקע/הרענון מטפלים בהמשך).
+  function markImageLoaded(e: React.SyntheticEvent<HTMLImageElement>) {
+    e.currentTarget.dataset.loaded = 'true';
+  }
+
   // תמונה שנכשלה בטעינה (כנראה חתימה שפגה) - רענון אחד לכל תמונה, לא לולאה.
   function handleImageError(photoId: string) {
     if (imgErrorRetriedRef.current.has(photoId)) return;
@@ -1369,12 +1376,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     <NotifyHost notifier={notifier} bottom="calc(1rem + env(safe-area-inset-bottom))" closeLabel={tr('common.closeNotice')} accent={theme.gold} dir={dir} />
   );
 
+  // שלד גריד במקום טקסט "טוען..." - גם בבדיקת הגישה הראשונית (שהיא עצמה
+  // טעינת הגלריה, ראו loadGallery) וגם בטעינה חוזרת אחרי קוד/זיהוי
   if (checkingAuth) {
-    return (
-      <div style={{ minHeight: '100vh', background: theme.bg, color: theme.text, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <p style={{ color: theme.textMuted }}>{tr('common.loading')}</p>
-      </div>
-    );
+    return <GallerySkeleton label={tr('common.loadingGallery')} dir={dir} lang={lang} />;
   }
 
   if (!authorized) {
@@ -2226,11 +2231,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   }
 
   if (loading) {
-    return (
-      <div style={{ minHeight: '100vh', background: theme.bg, color: theme.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <p>{tr('common.loadingGallery')}</p>
-      </div>
-    );
+    return <GallerySkeleton label={tr('common.loadingGallery')} dir={dir} lang={lang} />;
   }
 
   // "נבחרו X/Y" ופס ההתקדמות תמיד לפי ה-ownerSelectedCount (הרשמי) - לא לפי
@@ -2430,8 +2431,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           .gh[data-compact="true"] .gh-ring { width: 30px; height: 30px; font-size: 9px; }
           .gh[data-compact="true"] .gh-ring-inner { width: 23px; height: 23px; }
         }
+        /* תמונות הגריד נכנסות בהדרגה כשהן נטענות (data-loaded מ-onLoad/onError) */
+        .gimg { opacity: 0; transition: opacity 0.35s ease; }
+        .gimg[data-loaded="true"] { opacity: 1; }
         @media (prefers-reduced-motion: reduce) {
-          .gh, .gh-ring, .gh-ring-inner { transition: none; }
+          .gh, .gh-ring, .gh-ring-inner, .gimg { transition: none; }
         }
       `}</style>
       <header className="gh" data-compact={headerCompact ? 'true' : 'false'}>
@@ -2733,7 +2737,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     alt={photo.filename}
                     loading="lazy"
                     decoding="async"
-                    onError={() => handleImageError(`delivered:${photo.id}`)}
+                    className="gimg"
+                    onLoad={markImageLoaded}
+                    onError={(e) => {
+                      markImageLoaded(e);
+                      handleImageError(`delivered:${photo.id}`);
+                    }}
                     style={{ width: '100%', height: 130, objectFit: 'cover', display: 'block' }}
                   />
                 ) : (
@@ -3787,7 +3796,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     draggable={false}
                     loading="lazy"
                     decoding="async"
-                    onError={() => handleImageError(photo.id)}
+                    className="gimg"
+                    onLoad={markImageLoaded}
+                    onError={(e) => {
+                      markImageLoaded(e);
+                      handleImageError(photo.id);
+                    }}
                     style={{
                       // aspectRatio 'auto 4 / 3': שומר מקום (ורקע) עד שהתמונה נטענת ואז
                       // עובר ליחס האמיתי שלה - בלי זה אריחים שלא נטענו בגובה 0, כך שגם

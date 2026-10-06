@@ -4,7 +4,6 @@ import type { Section } from '../types';
 import type { common as he } from '../he/common';
 
 export const common: Section<typeof he> = {
-  'common.loading': 'לאדנט...',
   'common.loadingGallery': 'די גאלעריע לאדנט...',
   'common.back': 'צוריק',
   'common.cancel': 'אפזאגן',
