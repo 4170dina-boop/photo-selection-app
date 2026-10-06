@@ -152,6 +152,18 @@ describe('שגיאות שרת', () => {
   });
 });
 
+describe('הודעת ההזמנה בשפת הגלריה', () => {
+  it('אנגלית: טקסט ו-dir=ltr; ברירת מחדל עברית ללא שינוי', async () => {
+    const { buildInviteMessageText, buildInviteMessageHtml } = await import('../clientInviteMessage');
+    const base = { clientName: 'Dana', galleryUrl: 'https://x/gallery/1', accessCode: 'AB12', expiresAt: '2026-10-12' };
+    expect(buildInviteMessageText({ ...base, language: 'en' })).toContain('Hi Dana! 📸');
+    expect(buildInviteMessageText({ ...base, language: 'en' })).toContain('open for choosing until October 12, 2026');
+    expect(buildInviteMessageHtml({ ...base, language: 'en' })).toContain('dir="ltr"');
+    expect(buildInviteMessageHtml({ ...base, language: 'yi' })).toContain('dir="rtl"');
+    expect(buildInviteMessageText(base)).toContain('היי Dana! 📸');
+  });
+});
+
 describe('galleries.language (עמודה חסרה)', () => {
   function fakeSupabase(result: { data?: unknown; error?: unknown }) {
     const chain: any = {
