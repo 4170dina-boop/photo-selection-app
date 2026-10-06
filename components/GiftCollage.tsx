@@ -2,8 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { theme, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
-import { formatIsraelDate } from '@/lib/israelTime';
-import { hebrewDateInIsrael } from '@/lib/galleryClient';
+import { formatDateWithHebrew, langDir, t, type Lang } from '@/lib/i18n';
 import {
   COLLAGE_WIDTH,
   COLLAGE_HEIGHT,
@@ -120,7 +119,7 @@ function fitFont(ctx: CanvasRenderingContext2D, text: string, weight: number, si
 function drawCollage(
   canvas: HTMLCanvasElement,
   images: Decoded[],
-  opts: { accent: string; photographerName: string | null; logo: Decoded | null; serif: string; sans: string; date: Date },
+  opts: { accent: string; photographerName: string | null; logo: Decoded | null; serif: string; sans: string; date: Date; lang: Lang },
 ) {
   canvas.width = COLLAGE_WIDTH;
   canvas.height = COLLAGE_HEIGHT;
@@ -143,7 +142,7 @@ function drawCollage(
   ctx.stroke();
   ctx.restore();
 
-  ctx.direction = 'rtl';
+  ctx.direction = langDir(opts.lang);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
 
@@ -204,14 +203,14 @@ function drawCollage(
     ctx.restore();
   });
 
-  // שורת תחתית: "הבחירה שלי ✨" + תאריך לועזי ועברי
+  // שורת תחתית: "הבחירה שלי ✨" + תאריך (לועזי ועברי בעברית/יידיש)
   const area = collagePhotoArea();
   const footerTop = area.y + area.h;
   ctx.fillStyle = opts.accent;
   ctx.font = `500 48px ${opts.serif}`;
-  ctx.fillText('הבחירה שלי ✨', cx, footerTop + 70);
+  ctx.fillText(t(opts.lang, 'col.canvasTitle'), cx, footerTop + 70);
   ctx.fillStyle = theme.textMuted;
-  const dateLine = `${formatIsraelDate(opts.date)} · ${hebrewDateInIsrael(opts.date)}`;
+  const dateLine = formatDateWithHebrew(opts.lang, opts.date);
   fitFont(ctx, dateLine, 400, 26, opts.sans, W - COLLAGE_PADDING * 2);
   ctx.fillText(dateLine, cx, footerTop + 112);
 }
@@ -238,8 +237,11 @@ export default function GiftCollage(props: {
   fileLabel?: string | null;
   // מרענן את ה-URLs החתומים (תוקף שעה) - ניסיון חוזר אחד לתמונות שנכשלו
   refreshPhotos?: () => Promise<CollagePhoto[] | null>;
+  // שפת התצוגה וכיתוב הקולאז' (lib/i18n) - חסר = עברית
+  lang?: Lang;
 }) {
   const { photos, statuses, photographerName, photographerLogo, accent } = props;
+  const lang: Lang = props.lang ?? 'he';
 
   const picks = useMemo(() => {
     const selected = photos.filter((p) => !p.isGift && statuses[p.id] === 'selected').map((p) => p.id);
@@ -255,8 +257,8 @@ export default function GiftCollage(props: {
   photosRef.current = photos;
   const refreshRef = useRef(props.refreshPhotos);
   refreshRef.current = props.refreshPhotos;
-  const brandRef = useRef({ accent, photographerName, photographerLogo });
-  brandRef.current = { accent, photographerName, photographerLogo };
+  const brandRef = useRef({ accent, photographerName, photographerLogo, lang });
+  brandRef.current = { accent, photographerName, photographerLogo, lang };
 
   const [status, setStatus] = useState<Status>('rendering');
   const [blob, setBlob] = useState<Blob | null>(null);
@@ -334,7 +336,7 @@ export default function GiftCollage(props: {
       const sans = cssFontFamily('--font-sans', 'sans-serif');
       try {
         await Promise.all([
-          document.fonts?.load(`500 48px ${serif}`, 'הבחירה שלי'),
+          document.fonts?.load(`500 48px ${serif}`, t(brand.lang, 'col.canvasTitle')),
           document.fonts?.load(`400 26px ${sans}`, 'תשפ״ז 2026'),
         ]);
       } catch {
@@ -352,6 +354,7 @@ export default function GiftCollage(props: {
           serif,
           sans,
           date: new Date(),
+          lang: brand.lang,
         });
         out = await canvasToJpeg(canvas);
       } catch {
@@ -380,7 +383,8 @@ export default function GiftCollage(props: {
     };
     // picksKey מייצג את picks במלואו
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [picksKey, enoughCandidates]);
+    // lang - הכיתוב על הקולאז' מתחלף עם השפה
+  }, [picksKey, enoughCandidates, lang]);
 
   useEffect(() => {
     if (!blob) {
@@ -392,7 +396,7 @@ export default function GiftCollage(props: {
     return () => URL.revokeObjectURL(url);
   }, [blob]);
 
-  const fileName = collageFileName(props.fileLabel);
+  const fileName = collageFileName(props.fileLabel, t(lang, 'col.fileName'));
 
   useEffect(() => {
     if (!blob) return;
@@ -425,11 +429,11 @@ export default function GiftCollage(props: {
     setShareError('');
     try {
       const file = new File([blob], fileName, { type: 'image/jpeg' });
-      await navigator.share({ files: [file], title: 'הבחירה שלי ✨' });
+      await navigator.share({ files: [file], title: t(lang, 'col.canvasTitle') });
     } catch (err) {
       // ביטול של הלקוחה (AbortError) הוא לא שגיאה
       if ((err as Error)?.name === 'AbortError') return;
-      setShareError('השמירה לא הצליחה - אפשר להוריד בכפתור ההורדה');
+      setShareError(t(lang, 'col.shareFailed'));
     }
   }
 
@@ -447,16 +451,16 @@ export default function GiftCollage(props: {
         }
       `}</style>
       <p style={{ fontSize: 16, fontFamily: theme.fontSerif, color: theme.text, marginBottom: '0.25rem' }}>
-        🎁 קולאז&apos; מתנה מהבחירה שלך
+        {t(lang, 'col.title')}
       </p>
       <p style={{ color: theme.textFaint, fontSize: 12, marginBottom: '0.9rem' }}>
-        סידרנו לך כמה מהתמונות שבחרת - למזכרת
+        {t(lang, 'col.sub')}
       </p>
 
       {status === 'rendering' && (
         <div
           role="status"
-          aria-label="מכינה את הקולאז'..."
+          aria-label={t(lang, 'col.rendering')}
           className="gift-collage-skeleton"
           style={{
             width: 'min(280px, 100%)', aspectRatio: `${COLLAGE_WIDTH} / ${COLLAGE_HEIGHT}`, margin: '0 auto',
@@ -464,13 +468,13 @@ export default function GiftCollage(props: {
             display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 13,
           }}
         >
-          מכינה את הקולאז&apos;...
+          {t(lang, 'col.rendering')}
         </div>
       )}
 
       {status === 'unavailable' && (
         <p role="status" style={{ color: theme.textFaint, fontSize: 13 }}>
-          לא הצלחנו להכין את הקולאז&apos; כרגע - אפשר לנסות שוב מאוחר יותר.
+          {t(lang, 'col.unavailable')}
         </p>
       )}
 
@@ -479,7 +483,7 @@ export default function GiftCollage(props: {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={previewUrl}
-            alt="קולאז' מהתמונות שבחרת"
+            alt={t(lang, 'col.alt')}
             className="gift-collage-img"
             style={{
               display: 'block', width: 'min(280px, 100%)', height: 'auto', margin: '0 auto', borderRadius: 12,
@@ -488,11 +492,11 @@ export default function GiftCollage(props: {
           />
           <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center', flexWrap: 'wrap', marginTop: '1rem' }}>
             <button onClick={handleDownload} style={{ ...goldButtonStyle, ...props.buttonStyle, minHeight: 44 }}>
-              ⬇️ הורדת הקולאז&apos; למזכרת
+              {t(lang, 'col.download')}
             </button>
             {canShareFiles && (
               <button onClick={handleShare} style={{ ...outlineButtonStyle, minHeight: 44, borderColor: `${accent}88`, color: theme.text }}>
-                📱 שמירה לטלפון
+                {t(lang, 'col.share')}
               </button>
             )}
           </div>
