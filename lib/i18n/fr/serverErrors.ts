@@ -43,4 +43,7 @@ export const serverErrors: Section<typeof he> = {
   'srv.extAlreadyDone': 'La sélection est déjà terminée : pas besoin de délai',
   'srv.extUnavailable': 'Les demandes de délai ne sont pas encore disponibles pour cette galerie',
   'srv.extSendFailed': 'Impossible d’envoyer la demande, veuillez réessayer',
+  'srv.loadFailed': 'Impossible de charger la galerie, veuillez réessayer',
+  'srv.aiOwnerOnly': 'La sélection par IA est réservée à la cliente principale : vous pouvez continuer à marquer les photos comme d’habitude',
+  'srv.aiGalleryLimit': 'La sélection par IA a déjà été utilisée 3 fois aujourd’hui dans cette galerie : réessayez demain',
 };

@@ -18,6 +18,7 @@ export const finish = {
   'fm.included': 'כלולות בחבילה',
   'fm.extra': 'תמונות נוספות',
   'fm.gifts': '🎁 תמונות מתנה (כלולות, בלי תוספת)',
+  'fm.agreedTotal': 'סה״כ לתשלום',
   'fm.remaining': 'נשארו לך עוד {n} תמונות בלי תוספת',
   'fm.undecided': {
     one: '🤔 תמונת "אולי" אחת שלא הוכרעה',

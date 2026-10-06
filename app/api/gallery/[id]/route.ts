@@ -12,6 +12,8 @@ import { fetchChapters, fetchPhotoNavFields } from '@/lib/chapterQueries';
 import { orderForTimeline } from '@/lib/chapters';
 import { burstIdByPhoto, groupBursts } from '@/lib/bursts';
 import { fetchGalleryLanguage } from '@/lib/i18n/galleryLanguage';
+import { fetchAllPages } from '@/lib/fetchAllPages';
+import { clientPackagePricing } from '@/lib/clientPricing';
 
 // service_role - נשאר בצד שרת בלבד. כל הגישה של הלקוחה לנתוני הגלריה
 // עוברת דרך ה-API הזה (ולא דרך anon key ישירות מהדפדפן), כי אין policy
@@ -127,19 +129,47 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     });
   }
 
-  const [{ data: photosData }, { data: selectionsData }, { data: packageData }, { data: participantsData }] = await Promise.all([
-    // סדר קבוע (סדר ההעלאה) - המספר הרץ שהלקוחה רואה על כל כרטיס ("תמונה N")
-    // הוא המיקום ברשימה הזו, אז הוא חייב להיות יציב בין טעינות.
-    supabaseAdmin
-      .from('photos')
-      .select('id, file_path, thumbnail_path, original_filename')
-      .eq('gallery_id', galleryId)
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true }),
-    supabaseAdmin.from('selections').select('photo_id, participant_id, note, status, photographer_reply').eq('gallery_id', galleryId),
-    supabaseAdmin.from('packages').select('included_photos, extra_photo_price, base_price').eq('gallery_id', galleryId).single(),
-    supabaseAdmin.from('gallery_participants').select('id, display_name, is_owner').eq('gallery_id', galleryId),
-  ]);
+  // photos/selections עם pagination (lib/fetchAllPages.ts): PostgREST מחזיר
+  // לכל היותר 1000 שורות לשאילתה - בגלריה גדולה (או משפחה שסימנה הרבה)
+  // תמונות/סימונים היו נחתכים בשקט, וגם ownerSelectedCount (חיוב!) היה שגוי.
+  // שגיאה כאן = 500 ולא "גלריה ריקה" - אחרת הלקוחה הייתה רואה את הבחירה שלה
+  // כאילו נמחקה.
+  let photosData: { id: string; file_path: string; thumbnail_path: string | null; original_filename: string }[];
+  let selectionsData: { photo_id: string; participant_id: string; note: string | null; status: string; photographer_reply: string | null }[];
+  let packageData: { included_photos: number; extra_photo_price: number; base_price: number } | null;
+  let participantsData: { id: string; display_name: string; is_owner: boolean }[] | null;
+  try {
+    const [photosRows, selectionRows, { data: pkg }, { data: participantRows }] = await Promise.all([
+      // סדר קבוע (סדר ההעלאה) - המספר הרץ שהלקוחה רואה על כל כרטיס ("תמונה N")
+      // הוא המיקום ברשימה הזו, אז הוא חייב להיות יציב בין טעינות.
+      fetchAllPages<any>((from, to) =>
+        supabaseAdmin
+          .from('photos')
+          .select('id, file_path, thumbnail_path, original_filename')
+          .eq('gallery_id', galleryId)
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to)
+      ),
+      fetchAllPages<any>((from, to) =>
+        supabaseAdmin
+          .from('selections')
+          .select('photo_id, participant_id, note, status, photographer_reply')
+          .eq('gallery_id', galleryId)
+          .order('id', { ascending: true })
+          .range(from, to)
+      ),
+      supabaseAdmin.from('packages').select('included_photos, extra_photo_price, base_price').eq('gallery_id', galleryId).single(),
+      supabaseAdmin.from('gallery_participants').select('id, display_name, is_owner').eq('gallery_id', galleryId),
+    ]);
+    photosData = photosRows;
+    selectionsData = selectionRows;
+    packageData = pkg;
+    participantsData = participantRows;
+  } catch (err) {
+    console.error('[gallery] טעינת תמונות/סימונים נכשלה:', err);
+    return NextResponse.json({ error: 'טעינת הגלריה נכשלה, נסו שוב' }, { status: 500 });
+  }
 
   // שאילתה נפרדת ו-best-effort ל-sharpness_score, בכוונה לא בתוך ה-select
   // הראשי של photos למעלה: אם העמודה עוד לא קיימת (המיגרציה ב-supabase/schema.sql
@@ -258,6 +288,20 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     allMarks[s.photo_id].push({ participantId: s.participant_id, displayName: participant.displayName, status: s.status });
   });
 
+  // amount_due_override בשאילתה נפרדת ו-best-effort (כמו sharpness_score
+  // למעלה) - עמודה חסרה (מיגרציה שלא רצה) = אין סכום ידני, בלי להפיל את הטעינה.
+  let amountDueOverride: number | string | null = null;
+  try {
+    const { data: overrideRow, error: overrideError } = await supabaseAdmin
+      .from('galleries')
+      .select('amount_due_override')
+      .eq('id', galleryId)
+      .maybeSingle();
+    if (!overrideError) amountDueOverride = (overrideRow as any)?.amount_due_override ?? null;
+  } catch {
+    // בכוונה שקט - ראו הערה למעלה
+  }
+
   // הספירה ה"רשמית" (לחיוב, לפס ההתקדמות) היא רק של הבעלים - קלט של בני
   // משפחה אחרים הוא לדיון בלבד, לא נספר. ראו lib/session.ts ו-README.
   // תמונות מתנה לא נספרות למכסה/לחיוב (lib/gifts.ts).
@@ -287,9 +331,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     allMarks,
     ownerSelectedCount,
     giftCount: giftById.size,
-    package: packageData
-      ? { included: packageData.included_photos, extraPrice: packageData.extra_photo_price, basePrice: packageData.base_price }
-      : null,
+    // סכום ידני של הצלמת (galleries.amount_due_override) גובר על החישוב
+    // "N × מחיר" - ראו lib/clientPricing.ts. הסכום עצמו רק לבעלים.
+    package: clientPackagePricing(packageData, amountDueOverride, !!myParticipant?.isOwner),
     brandColor: brandColor && brandColor !== '#000000' ? brandColor : null,
     customTheme,
     photographerName,

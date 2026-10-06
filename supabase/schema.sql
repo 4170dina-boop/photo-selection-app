@@ -147,6 +147,10 @@ create table galleries (
   -- שפת הגלריה והמיילים ללקוח/ה (lib/i18n): he/en/yi/es/fr, ברירת מחדל עברית.
   -- הלקוח/ה עדיין יכול/ה להחליף שפה בבורר שבגלריה (נשמר רק בדפדפן).
   language text default 'he' not null check (language in ('he', 'en', 'yi', 'es', 'fr')),
+  -- מכסה יומית לגלריה ל"עזרי לי לבחור" (reserve_gallery_ai_picks_quota למטה),
+  -- בנוסף למכסה של הצלמת (photographers.ai_picks_count/date).
+  ai_picks_count int default 0 not null,
+  ai_picks_date date,
   created_at timestamptz default now()
 );
 
@@ -1264,6 +1268,198 @@ revoke execute on function register_failed_owner_claim(uuid) from public, anon, 
 grant execute on function register_failed_owner_claim(uuid) to service_role;
 -- ===== סוף הרשאות הרצה =====
 
+-- ===== השוואה + רישום ניסיון אטומיים, ומכסת AI לגלריה =====
+-- קוד גישה: השוואה + רישום הניסיון באותה טרנזקציה (app/api/verify-access).
+-- קודם ההשוואה הייתה ב-JS מול מצב שנקרא לפני נעילת השורה - בקשות מקבילות
+-- עברו כולן את בדיקת הנעילה, והניחוש הנכון ביניהן הצליח גם אחרי שהשאר כבר
+-- נעלו. כאן: FOR UPDATE על שורת הלקוחה -> בדיקת נעילה -> השוואה -> איפוס או
+-- רישום כשל (אותה לוגיקה כמו register_failed_access_attempt / lib/accessLockout.ts).
+-- p_code מגיע כבר מנורמל (trim + אותיות גדולות, normalizeAccessCodeForCompare
+-- ב-lib/session.ts); הקוד השמור מנורמל כאן באותו אופן.
+-- locked_out = הלקוחה כבר הייתה נעולה לפני הניסיון הזה (ה-route מחזיר 429).
+-- security invoker: רץ בהרשאות הקורא (service_role בלבד, ראו grant למטה).
+create or replace function try_access_code(p_client_id uuid, p_code text)
+returns table (ok boolean, locked_out boolean)
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  stored_code text;
+  current_attempts int;
+  current_locked_until timestamptz;
+  new_attempts int;
+begin
+  select c.access_code, c.failed_access_attempts, c.locked_until
+  into stored_code, current_attempts, current_locked_until
+  from clients c
+  where c.id = p_client_id
+  for update;
+
+  if not found then
+    return query select false, false;
+    return;
+  end if;
+
+  if current_locked_until is not null and current_locked_until > now() then
+    return query select false, true;
+    return;
+  end if;
+
+  if stored_code is not null and coalesce(p_code, '') <> ''
+     and upper(btrim(stored_code, E' \t\r\n')) = p_code then
+    if coalesce(current_attempts, 0) <> 0 or current_locked_until is not null then
+      update clients set failed_access_attempts = 0, locked_until = null where id = p_client_id;
+    end if;
+    return query select true, false;
+    return;
+  end if;
+
+  -- נעילה קודמת שכבר הסתיימה: מתחילים לספור מחדש
+  if current_locked_until is not null and current_locked_until <= now() then
+    current_attempts := 0;
+  end if;
+  new_attempts := coalesce(current_attempts, 0) + 1;
+
+  update clients
+  set failed_access_attempts = new_attempts,
+      locked_until = case when new_attempts >= 5 -- MAX_ATTEMPTS, lib/accessLockout.ts
+                          then now() + interval '15 minutes' -- LOCKOUT_MINUTES
+                          else null end
+  where id = p_client_id;
+
+  return query select false, false;
+end;
+$$;
+
+-- "זאת אני": השוואת המייל + רישום הניסיון באותה טרנזקציה
+-- (app/api/gallery/[id]/identify). אותו עיקרון כמו try_access_code למעלה, על
+-- המונה הנפרד owner_claim_*. p_email מגיע מנורמל (trim + אותיות קטנות,
+-- normalizeEmailForCompare ב-lib/galleryAccess.ts). p_max_attempts = הסף
+-- הגלובלי (OWNER_CLAIM_GLOBAL_MAX_ATTEMPTS ב-lib/ownerClaimSession.ts) - גבוה
+-- מהסף לדפדפן, כדי שאורח/ת שטועה לא ינעל את הבעלים במכשיר אחר.
+-- result: ok / locked / mismatch / no_registered_email / not_found.
+create or replace function try_owner_claim(p_client_id uuid, p_email text, p_max_attempts int)
+returns table (result text)
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  stored_email text;
+  current_attempts int;
+  current_locked_until timestamptz;
+  new_attempts int;
+begin
+  select c.email, c.owner_claim_failed_attempts, c.owner_claim_locked_until
+  into stored_email, current_attempts, current_locked_until
+  from clients c
+  where c.id = p_client_id
+  for update;
+
+  if not found then
+    return query select 'not_found'::text;
+    return;
+  end if;
+
+  if current_locked_until is not null and current_locked_until > now() then
+    return query select 'locked'::text;
+    return;
+  end if;
+
+  if coalesce(lower(btrim(stored_email, E' \t\r\n')), '') = '' then
+    return query select 'no_registered_email'::text;
+    return;
+  end if;
+
+  if coalesce(p_email, '') <> '' and lower(btrim(stored_email, E' \t\r\n')) = p_email then
+    if coalesce(current_attempts, 0) <> 0 or current_locked_until is not null then
+      update clients set owner_claim_failed_attempts = 0, owner_claim_locked_until = null where id = p_client_id;
+    end if;
+    return query select 'ok'::text;
+    return;
+  end if;
+
+  if current_locked_until is not null and current_locked_until <= now() then
+    current_attempts := 0;
+  end if;
+  new_attempts := coalesce(current_attempts, 0) + 1;
+
+  update clients
+  set owner_claim_failed_attempts = new_attempts,
+      owner_claim_locked_until = case when new_attempts >= greatest(coalesce(p_max_attempts, 5), 1)
+                                      then now() + interval '15 minutes' -- LOCKOUT_MINUTES
+                                      else null end
+  where id = p_client_id;
+
+  return query select 'mismatch'::text;
+end;
+$$;
+
+-- מכסה יומית לכל גלריה ל"עזרי לי לבחור" (app/api/gallery/[id]/ai-picks),
+-- בנוסף למכסה של הצלמת (reserve_ai_picks_quota) - אותו דפוס בדיוק, על
+-- galleries.ai_picks_count/ai_picks_date.
+create or replace function reserve_gallery_ai_picks_quota(p_gallery_id uuid, p_daily_limit int)
+returns boolean
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  current_count int;
+  current_date_val date;
+  today date := current_date;
+begin
+  select g.ai_picks_count, g.ai_picks_date
+  into current_count, current_date_val
+  from galleries g
+  where g.id = p_gallery_id
+  for update;
+
+  if not found then
+    return false;
+  end if;
+
+  if current_date_val is distinct from today then
+    current_count := 0;
+  end if;
+
+  if coalesce(current_count, 0) >= p_daily_limit then
+    return false;
+  end if;
+
+  update galleries
+  set ai_picks_count = coalesce(current_count, 0) + 1,
+      ai_picks_date = today
+  where id = p_gallery_id;
+
+  return true;
+end;
+$$;
+
+create or replace function release_gallery_ai_picks_quota(p_gallery_id uuid)
+returns void
+language sql
+security invoker
+set search_path = public
+as $$
+  update galleries
+  set ai_picks_count = ai_picks_count - 1
+  where id = p_gallery_id
+    and ai_picks_date = current_date
+    and ai_picks_count > 0;
+$$;
+
+revoke execute on function try_access_code(uuid, text) from public, anon, authenticated;
+revoke execute on function try_owner_claim(uuid, text, int) from public, anon, authenticated;
+revoke execute on function reserve_gallery_ai_picks_quota(uuid, int) from public, anon, authenticated;
+revoke execute on function release_gallery_ai_picks_quota(uuid) from public, anon, authenticated;
+grant execute on function try_access_code(uuid, text) to service_role;
+grant execute on function try_owner_claim(uuid, text, int) to service_role;
+grant execute on function reserve_gallery_ai_picks_quota(uuid, int) to service_role;
+grant execute on function release_gallery_ai_picks_quota(uuid) to service_role;
+-- ===== סוף השוואה אטומית ומכסת AI לגלריה =====
+
 -- אם כבר הרצת גרסה קודמת של הסכמה בלי שלוש הפונקציות האטומיות למעלה
 -- (register_failed_access_attempt / reserve_theme_gen_quota / reserve_ai_picks_quota) -
 -- שסוגרות מרוצי בדיקה-ואז-כתיבה (TOCTOU) בין בקשות מקבילות על אותה שורת
@@ -2198,3 +2394,201 @@ create policy "photographers read own logo" on storage.objects
 -- alter table galleries add constraint galleries_language_check check (language in ('he', 'en', 'yi', 'es', 'fr'));
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: שפת הגלריה =====
+
+-- ===== מיגרציה: השוואה + רישום ניסיון אטומיים (קוד גישה / "זאת אני") ומכסת AI יומית לגלריה =====
+-- להריץ פעם אחת על פרויקט קיים (הכל idempotent). עד שמריצים - הקוד לא נשבר:
+-- verify-access ו-identify נופלים לנתיב הישן (השוואה ב-JS + register_failed_*),
+-- ו"עזרי לי לבחור" נאכף רק במכסה היומית של הצלמת (בלי מכסה לגלריה).
+-- alter table galleries add column if not exists ai_picks_count int default 0 not null;
+-- alter table galleries add column if not exists ai_picks_date date;
+-- -- קוד גישה: השוואה + רישום הניסיון באותה טרנזקציה (app/api/verify-access).
+-- -- קודם ההשוואה הייתה ב-JS מול מצב שנקרא לפני נעילת השורה - בקשות מקבילות
+-- -- עברו כולן את בדיקת הנעילה, והניחוש הנכון ביניהן הצליח גם אחרי שהשאר כבר
+-- -- נעלו. כאן: FOR UPDATE על שורת הלקוחה -> בדיקת נעילה -> השוואה -> איפוס או
+-- -- רישום כשל (אותה לוגיקה כמו register_failed_access_attempt / lib/accessLockout.ts).
+-- -- p_code מגיע כבר מנורמל (trim + אותיות גדולות, normalizeAccessCodeForCompare
+-- -- ב-lib/session.ts); הקוד השמור מנורמל כאן באותו אופן.
+-- -- locked_out = הלקוחה כבר הייתה נעולה לפני הניסיון הזה (ה-route מחזיר 429).
+-- -- security invoker: רץ בהרשאות הקורא (service_role בלבד, ראו grant למטה).
+-- create or replace function try_access_code(p_client_id uuid, p_code text)
+-- returns table (ok boolean, locked_out boolean)
+-- language plpgsql
+-- security invoker
+-- set search_path = public
+-- as $$
+-- declare
+--   stored_code text;
+--   current_attempts int;
+--   current_locked_until timestamptz;
+--   new_attempts int;
+-- begin
+--   select c.access_code, c.failed_access_attempts, c.locked_until
+--   into stored_code, current_attempts, current_locked_until
+--   from clients c
+--   where c.id = p_client_id
+--   for update;
+--
+--   if not found then
+--     return query select false, false;
+--     return;
+--   end if;
+--
+--   if current_locked_until is not null and current_locked_until > now() then
+--     return query select false, true;
+--     return;
+--   end if;
+--
+--   if stored_code is not null and coalesce(p_code, '') <> ''
+--      and upper(btrim(stored_code, E' \t\r\n')) = p_code then
+--     if coalesce(current_attempts, 0) <> 0 or current_locked_until is not null then
+--       update clients set failed_access_attempts = 0, locked_until = null where id = p_client_id;
+--     end if;
+--     return query select true, false;
+--     return;
+--   end if;
+--
+--   -- נעילה קודמת שכבר הסתיימה: מתחילים לספור מחדש
+--   if current_locked_until is not null and current_locked_until <= now() then
+--     current_attempts := 0;
+--   end if;
+--   new_attempts := coalesce(current_attempts, 0) + 1;
+--
+--   update clients
+--   set failed_access_attempts = new_attempts,
+--       locked_until = case when new_attempts >= 5 -- MAX_ATTEMPTS, lib/accessLockout.ts
+--                           then now() + interval '15 minutes' -- LOCKOUT_MINUTES
+--                           else null end
+--   where id = p_client_id;
+--
+--   return query select false, false;
+-- end;
+-- $$;
+--
+-- -- "זאת אני": השוואת המייל + רישום הניסיון באותה טרנזקציה
+-- -- (app/api/gallery/[id]/identify). אותו עיקרון כמו try_access_code למעלה, על
+-- -- המונה הנפרד owner_claim_*. p_email מגיע מנורמל (trim + אותיות קטנות,
+-- -- normalizeEmailForCompare ב-lib/galleryAccess.ts). p_max_attempts = הסף
+-- -- הגלובלי (OWNER_CLAIM_GLOBAL_MAX_ATTEMPTS ב-lib/ownerClaimSession.ts) - גבוה
+-- -- מהסף לדפדפן, כדי שאורח/ת שטועה לא ינעל את הבעלים במכשיר אחר.
+-- -- result: ok / locked / mismatch / no_registered_email / not_found.
+-- create or replace function try_owner_claim(p_client_id uuid, p_email text, p_max_attempts int)
+-- returns table (result text)
+-- language plpgsql
+-- security invoker
+-- set search_path = public
+-- as $$
+-- declare
+--   stored_email text;
+--   current_attempts int;
+--   current_locked_until timestamptz;
+--   new_attempts int;
+-- begin
+--   select c.email, c.owner_claim_failed_attempts, c.owner_claim_locked_until
+--   into stored_email, current_attempts, current_locked_until
+--   from clients c
+--   where c.id = p_client_id
+--   for update;
+--
+--   if not found then
+--     return query select 'not_found'::text;
+--     return;
+--   end if;
+--
+--   if current_locked_until is not null and current_locked_until > now() then
+--     return query select 'locked'::text;
+--     return;
+--   end if;
+--
+--   if coalesce(lower(btrim(stored_email, E' \t\r\n')), '') = '' then
+--     return query select 'no_registered_email'::text;
+--     return;
+--   end if;
+--
+--   if coalesce(p_email, '') <> '' and lower(btrim(stored_email, E' \t\r\n')) = p_email then
+--     if coalesce(current_attempts, 0) <> 0 or current_locked_until is not null then
+--       update clients set owner_claim_failed_attempts = 0, owner_claim_locked_until = null where id = p_client_id;
+--     end if;
+--     return query select 'ok'::text;
+--     return;
+--   end if;
+--
+--   if current_locked_until is not null and current_locked_until <= now() then
+--     current_attempts := 0;
+--   end if;
+--   new_attempts := coalesce(current_attempts, 0) + 1;
+--
+--   update clients
+--   set owner_claim_failed_attempts = new_attempts,
+--       owner_claim_locked_until = case when new_attempts >= greatest(coalesce(p_max_attempts, 5), 1)
+--                                       then now() + interval '15 minutes' -- LOCKOUT_MINUTES
+--                                       else null end
+--   where id = p_client_id;
+--
+--   return query select 'mismatch'::text;
+-- end;
+-- $$;
+--
+-- -- מכסה יומית לכל גלריה ל"עזרי לי לבחור" (app/api/gallery/[id]/ai-picks),
+-- -- בנוסף למכסה של הצלמת (reserve_ai_picks_quota) - אותו דפוס בדיוק, על
+-- -- galleries.ai_picks_count/ai_picks_date.
+-- create or replace function reserve_gallery_ai_picks_quota(p_gallery_id uuid, p_daily_limit int)
+-- returns boolean
+-- language plpgsql
+-- security invoker
+-- set search_path = public
+-- as $$
+-- declare
+--   current_count int;
+--   current_date_val date;
+--   today date := current_date;
+-- begin
+--   select g.ai_picks_count, g.ai_picks_date
+--   into current_count, current_date_val
+--   from galleries g
+--   where g.id = p_gallery_id
+--   for update;
+--
+--   if not found then
+--     return false;
+--   end if;
+--
+--   if current_date_val is distinct from today then
+--     current_count := 0;
+--   end if;
+--
+--   if coalesce(current_count, 0) >= p_daily_limit then
+--     return false;
+--   end if;
+--
+--   update galleries
+--   set ai_picks_count = coalesce(current_count, 0) + 1,
+--       ai_picks_date = today
+--   where id = p_gallery_id;
+--
+--   return true;
+-- end;
+-- $$;
+--
+-- create or replace function release_gallery_ai_picks_quota(p_gallery_id uuid)
+-- returns void
+-- language sql
+-- security invoker
+-- set search_path = public
+-- as $$
+--   update galleries
+--   set ai_picks_count = ai_picks_count - 1
+--   where id = p_gallery_id
+--     and ai_picks_date = current_date
+--     and ai_picks_count > 0;
+-- $$;
+--
+-- revoke execute on function try_access_code(uuid, text) from public, anon, authenticated;
+-- revoke execute on function try_owner_claim(uuid, text, int) from public, anon, authenticated;
+-- revoke execute on function reserve_gallery_ai_picks_quota(uuid, int) from public, anon, authenticated;
+-- revoke execute on function release_gallery_ai_picks_quota(uuid) from public, anon, authenticated;
+-- grant execute on function try_access_code(uuid, text) to service_role;
+-- grant execute on function try_owner_claim(uuid, text, int) to service_role;
+-- grant execute on function reserve_gallery_ai_picks_quota(uuid, int) to service_role;
+-- grant execute on function release_gallery_ai_picks_quota(uuid) to service_role;
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: השוואה אטומית ומכסת AI לגלריה =====

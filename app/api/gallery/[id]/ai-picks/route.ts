@@ -6,6 +6,8 @@ import { checkGalleryWritable } from '@/lib/galleryAccess';
 import { downloadToBuffer } from '@/lib/r2';
 import { hasWatermarkedThumbnail } from '@/lib/uploadPolicy';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { fetchAllPages } from '@/lib/fetchAllPages';
+import { isMissingFunctionError } from '@/lib/rpcErrors';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -18,6 +20,13 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 // קריאת AI יקרה משמעותית מ"עיצוב הגלריה" (הרבה תמונות, לא רק טקסט קצר) -
 // תקרה יומית נמוכה יותר, ראו supabase/schema.sql.
 const DAILY_LIMIT = 5;
+// תקרה יומית נוספת לכל גלריה (reserve_gallery_ai_picks_quota, supabase/schema.sql) -
+// כדי שגלריה אחת לא תשרוף את כל המכסה של הצלמת (ואת שאר הלקוחות שלה) ביום אחד.
+// המספר מופיע גם בטקסט GALLERY_LIMIT_ERROR (טקסט קבוע - lib/i18n/serverErrors.ts
+// ממפה לפיו לתרגום), אז משנים את שניהם יחד.
+const GALLERY_DAILY_LIMIT = 3;
+const GALLERY_LIMIT_ERROR = 'הבחירה בעזרת AI כבר הופעלה 3 פעמים היום בגלריה הזו - אפשר לנסות שוב מחר';
+const OWNER_ONLY_ERROR = 'הבחירה בעזרת AI זמינה רק ללקוחה הראשית - אפשר להמשיך לסמן תמונות כרגיל';
 // מגבילים כמה תמונות מנתחים בכל הרצה - גם כדי לא לחרוג מזמן הריצה של
 // הפונקציה בענן, וגם כי עלות/זמן גדלים ליניארית עם כמות התמונות. בגלריה
 // גדולה יותר, דוגמים באופן אחיד על פני כל הגלריה (לא רק ה-N הראשונות),
@@ -67,9 +76,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'שירות ה-AI לא מוגדר עדיין' }, { status: 503 });
   }
 
-  const { data: gallery } = await supabaseAdmin.from('galleries').select('photographer_id').eq('id', galleryId).single();
+  const { data: gallery } = await supabaseAdmin
+    .from('galleries')
+    .select('photographer_id, owner_participant_id')
+    .eq('id', galleryId)
+    .single();
   if (!gallery) {
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
+  }
+
+  // רק הבעלים - כל קריאה עולה כסף לצלמת (Anthropic), וכל מי שמחזיק בקוד
+  // הגישה המשותף יכול להצטרף כאורח/ת ולהפעיל את זה שוב ושוב. בממשק הכפתור
+  // מוסתר לאורחים (app/gallery/[id]/page.tsx).
+  if (session.participantId !== gallery.owner_participant_id) {
+    return NextResponse.json({ error: OWNER_ONLY_ERROR }, { status: 403 });
   }
 
   const { data: photographer } = await supabaseAdmin
@@ -82,8 +102,24 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   // רק תמונות שהלקוחה בפועל רואה (עם thumbnail מעובד) - ראו app/api/gallery/[id]/route.ts.
-  const { data: allPhotos } = await supabaseAdmin.from('photos').select('id, file_path, thumbnail_path').eq('gallery_id', galleryId);
-  const photos = (allPhotos ?? []).filter(hasWatermarkedThumbnail);
+  // עם pagination (lib/fetchAllPages.ts) - בגלריה של יותר מ-1000 תמונות הדגימה
+  // הייתה מגיעה רק מה-1000 הראשונות.
+  let allPhotos: { id: string; file_path: string; thumbnail_path: string | null }[];
+  try {
+    allPhotos = await fetchAllPages<any>((from, to) =>
+      supabaseAdmin
+        .from('photos')
+        .select('id, file_path, thumbnail_path')
+        .eq('gallery_id', galleryId)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
+  } catch (err) {
+    console.error('[ai-picks] טעינת התמונות נכשלה:', err);
+    return NextResponse.json({ error: 'הניתוח לא הצליח כרגע - ההרצה לא נספרה, נסי שוב בעוד כמה דקות' }, { status: 502 });
+  }
+  const photos = allPhotos.filter(hasWatermarkedThumbnail);
   if (photos.length === 0) {
     return NextResponse.json({ error: 'אין עדיין תמונות בגלריה' }, { status: 400 });
   }
@@ -115,16 +151,46 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // usedToday. נתפסת רק אחרי הבדיקות הזולות למעלה ("אין תמונות"/"הכל מסומן"),
   // כדי שבקשה שממילא לא תקרא ל-AI לא תשרוף הרצה. אם אף קריאת AI לא הצליחה -
   // ההרצה מוחזרת (release_ai_picks_quota למטה).
+  //
+  // קודם המכסה של הגלריה (GALLERY_DAILY_LIMIT), ואז של הצלמת. אם הפונקציה של
+  // הגלריה עוד לא קיימת (מיגרציה שלא רצה) - ממשיכים רק עם המכסה של הצלמת.
+  const { data: galleryQuotaReserved, error: galleryQuotaError } = await supabaseAdmin.rpc('reserve_gallery_ai_picks_quota', {
+    p_gallery_id: galleryId,
+    p_daily_limit: GALLERY_DAILY_LIMIT,
+  });
+  let galleryQuotaHeld = false;
+  if (galleryQuotaError) {
+    if (!isMissingFunctionError(galleryQuotaError)) {
+      console.error('[ai-picks] reserve_gallery_ai_picks_quota נכשל:', galleryQuotaError);
+      return NextResponse.json({ error: 'שגיאה בבדיקת המכסה היומית, נסו שוב' }, { status: 500 });
+    }
+    console.warn('[ai-picks] reserve_gallery_ai_picks_quota חסרה - רק המכסה של הצלמת נאכפת עד שהמיגרציה תרוץ');
+  } else if (!galleryQuotaReserved) {
+    return NextResponse.json({ error: GALLERY_LIMIT_ERROR }, { status: 429 });
+  } else {
+    galleryQuotaHeld = true;
+  }
+
+  // החזרת המכסה של הגלריה (best-effort) - כשהמכסה של הצלמת לא נתפסה, או
+  // כשאף קריאת AI לא הצליחה.
+  const releaseGalleryQuota = async () => {
+    if (!galleryQuotaHeld) return;
+    const { error } = await supabaseAdmin.rpc('release_gallery_ai_picks_quota', { p_gallery_id: galleryId });
+    if (error) console.error('[ai-picks] החזרת המכסה של הגלריה נכשלה:', error);
+  };
+
   const { data: quotaReserved, error: quotaError } = await supabaseAdmin.rpc('reserve_ai_picks_quota', {
     p_photographer_id: photographer.id,
     p_daily_limit: DAILY_LIMIT,
   });
 
   if (quotaError) {
+    await releaseGalleryQuota();
     return NextResponse.json({ error: 'שגיאה בבדיקת המכסה היומית, נסו שוב' }, { status: 500 });
   }
 
   if (!quotaReserved) {
+    await releaseGalleryQuota();
     return NextResponse.json({ error: `הגעתם למגבלה היומית (${DAILY_LIMIT} הרצות) - נסו שוב מחר` }, { status: 429 });
   }
 
@@ -208,6 +274,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       p_photographer_id: photographer.id,
     });
     if (releaseError) console.error('[ai-picks] החזרת המכסה נכשלה:', releaseError);
+    await releaseGalleryQuota();
     return NextResponse.json({ error: 'הניתוח לא הצליח כרגע - ההרצה לא נספרה, נסי שוב בעוד כמה דקות' }, { status: 502 });
   }
 

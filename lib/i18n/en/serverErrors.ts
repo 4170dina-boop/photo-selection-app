@@ -44,4 +44,7 @@ export const serverErrors: Section<typeof he> = {
   'srv.extAlreadyDone': 'The selection is already finished - no extension needed',
   'srv.extUnavailable': "Extension requests aren't available for this gallery yet",
   'srv.extSendFailed': "Couldn't send the request - please try again",
+  'srv.loadFailed': "Couldn't load the gallery - please try again",
+  'srv.aiOwnerOnly': 'AI-assisted picking is available only to the main client - you can keep marking photos as usual',
+  'srv.aiGalleryLimit': 'AI-assisted picking was already used 3 times today in this gallery - please try again tomorrow',
 };

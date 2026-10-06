@@ -18,6 +18,7 @@ export const finish: Section<typeof he> = {
   'fm.included': 'Incluidas en el paquete',
   'fm.extra': 'Fotos extra',
   'fm.gifts': '🎁 Fotos de regalo (incluidas, sin coste)',
+  'fm.agreedTotal': 'Total a pagar',
   'fm.remaining': 'Aún te quedan {n} fotos sin coste extra',
   'fm.undecided': {
     one: '🤔 1 foto en "quizás" sin decidir',

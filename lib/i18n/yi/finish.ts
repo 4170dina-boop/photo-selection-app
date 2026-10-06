@@ -18,6 +18,7 @@ export const finish: Section<typeof he> = {
   'fm.included': 'אריינגערעכנט אינעם פעקעדזש',
   'fm.extra': 'עקסטערע בילדער',
   'fm.gifts': '🎁 מתנה-בילדער (אריינגערעכנט, אן צוגאב)',
+  'fm.agreedTotal': 'סך הכל צו באצאָלן',
   'fm.remaining': 'עס בלייבן אייך נאך {n} בילדער אן צוגאב',
   'fm.undecided': {
     one: '🤔 איין "אפשר" בילד וואס איז נאך נישט באשלאסן',

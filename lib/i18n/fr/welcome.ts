@@ -48,5 +48,6 @@ export const welcome: Section<typeof he> = {
   'info.extraPrice': '✨ Chaque photo supplémentaire : {price}',
   'info.estimate': 'Total estimé : {total}',
   'info.estimateBreakdown': ' ({base} forfait + {extra} suppléments)',
+  'info.agreedTotal': 'Total à payer : {total}',
   'info.until': 'Vous pouvez choisir jusqu’au {date}',
 };
