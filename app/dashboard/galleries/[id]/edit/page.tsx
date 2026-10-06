@@ -19,6 +19,7 @@ import { normalizeLang, type Lang } from '@/lib/i18n/types';
 import { normalizeGender, type Gender } from '@/lib/gender';
 import ExtensionRequestsPanel from '@/components/ExtensionRequestsPanel';
 import { MANUAL_EMAIL_COOLDOWN_SECONDS, formatCooldownLeft } from '@/lib/manualEmailCooldown';
+import { FREE_DELIVERED_PHOTO_LIMIT } from '@/lib/deliveredPhotoLimit';
 
 // סוגי המיילים הידניים בדף הזה - לכל אחד מגבלת קצב נפרדת בשרת (429)
 type ManualEmailKind = 'invite' | 'reminder' | 'review' | 'delivery';
@@ -45,6 +46,9 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [basePrice, setBasePrice] = useState('');
   const [extraPhotoPrice, setExtraPhotoPrice] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
+  // expires_at המלא כפי שנטען מהשרת - נשלח ב-PATCH (expectedExpiresAt) כדי
+  // שטאב ישן לא ידרוס הארכה שאושרה בינתיים (השרת מחזיר 409)
+  const [loadedExpiresAt, setLoadedExpiresAt] = useState<string | null>(null);
   const [photographerNotes, setPhotographerNotes] = useState('');
   const [reminderDays, setReminderDays] = useState('');
   // כתובות מייל נוספות (למשל בני משפחה) שמקבלות את אותו מייל הזמנה/תזכורת -
@@ -156,8 +160,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   // בלי דחיסה ובלי /process (סימן מים/thumbnail) - זה הקובץ הערוך הסופי בעצמו,
   // לא preview ללקוחה שעדיין בוחרת, אז מעלים כמו שהוא. concurrency פשוט
   // (Promise.all, בלי worker-pool כמו UploadProvider) - כמות קבצים כאן קטנה
-  // בהרבה מהעלאת גלריה שלמה, ואין מגבלת 25 תמונות (enforce_photo_limit רץ
-  // רק על טבלת photos, לא על delivered_photos).
+  // בהרבה מהעלאת גלריה שלמה. בחשבון חינמי יש מגבלה נפרדת לתמונות סופיות
+  // (lib/deliveredPhotoLimit.ts + enforce_delivered_photo_limit ב-DB).
   //
   // כמו ב-UploadProvider.tsx: route ייעודי חותם URL להעלאה (R2 אין לו RLS),
   // ואז ה-insert ל-delivered_photos נשאר כאן עם ה-session client - route
@@ -175,7 +179,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     // delivered_photos), אז רק מודיעים במפורש; הקובץ היתום נמחק עם הגלריה
     // (מחיקה לפי prefix ב-app/api/galleries/[id]/route.ts).
     const results = await Promise.all(
-      files.map(async (file): Promise<'ok' | 'failed' | 'unsaved'> => {
+      files.map(async (file): Promise<'ok' | 'failed' | 'unsaved' | 'limit'> => {
         try {
           const presignRes = await fetch(`/api/galleries/${galleryId}/final-photos/presign-upload`, {
             method: 'POST',
@@ -183,7 +187,10 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
             // סוג וגודל נחתמים לתוך ה-URL (ראו lib/r2.ts) - השרת דוחה סוג לא נתמך או קובץ מעל 50MB
             body: JSON.stringify({ contentType: file.type, size: file.size }),
           });
-          if (!presignRes.ok) return 'failed';
+          if (!presignRes.ok) {
+            const err = await presignRes.json().catch(() => ({}));
+            return String(err?.error ?? '').includes('LIMIT_DELIVERED_PHOTOS') ? 'limit' : 'failed';
+          }
           const { path, uploadUrl, contentType } = await presignRes.json();
 
           const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': contentType } });
@@ -192,6 +199,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           const { error: dbError } = await supabase
             .from('delivered_photos')
             .insert({ gallery_id: galleryId, file_path: path, original_filename: file.name });
+          if (dbError?.message?.includes('LIMIT_DELIVERED_PHOTOS')) return 'limit';
           return dbError ? 'unsaved' : 'ok';
         } catch {
           return 'failed';
@@ -200,7 +208,9 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     );
 
     setUploadingFinal(false);
-    if (results.includes('unsaved')) {
+    if (results.includes('limit')) {
+      setFinalError(`חשבון חינמי מוגבל ל-${FREE_DELIVERED_PHOTO_LIMIT} תמונות סופיות בגלריה - חלק מהתמונות לא נשמרו`);
+    } else if (results.includes('unsaved')) {
       setFinalError('חלק מהתמונות הועלו אבל לא נשמרו בגלריה (הלקוחה לא תראה אותן) - העלי אותן שוב');
     } else if (results.includes('failed')) {
       setFinalError('חלק מהתמונות לא הועלו בהצלחה - נסי שוב (נתמכים JPEG, PNG, WebP, AVIF, TIFF עד 50MB)');
@@ -263,6 +273,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setBasePrice(String(data.packages?.base_price ?? 0));
     setExtraPhotoPrice(String(data.packages?.extra_photo_price ?? 0));
     setExpiresAt(data.expires_at ? data.expires_at.slice(0, 10) : '');
+    setLoadedExpiresAt(data.expires_at ?? null);
     setPhotographerNotes(data.photographer_notes ?? '');
     setReminderDays(data.reminder_days != null ? String(data.reminder_days) : '');
     setAdditionalEmails(data.additional_invite_emails ?? []);
@@ -293,6 +304,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           basePrice: Number(basePrice),
           extraPhotoPrice: Number(extraPhotoPrice),
           expiresAt: expiresAt ? israelEndOfDayIso(expiresAt) : null,
+          expectedExpiresAt: loadedExpiresAt,
           photographerNotes,
           reminderDays: reminderDays ? Number(reminderDays) : null,
           additionalInviteEmails: additionalEmails.map((email) => email.trim()).filter((email) => email.length > 0),
@@ -559,6 +571,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         onApproved={(newExpiresAt, newStatus) => {
           // בלי loadGallery (שמציג "טוען..." ומאפס את הטופס) - רק התוקף והסטטוס
           setExpiresAt(newExpiresAt.slice(0, 10));
+          // ההארכה אושרה מהטאב הזה - זה התוקף העדכני שהשמירה הבאה צריכה להשוות אליו
+          setLoadedExpiresAt(newExpiresAt);
           if (newStatus) setStatus(newStatus);
         }}
       />

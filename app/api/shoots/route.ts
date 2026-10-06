@@ -4,6 +4,8 @@ import { createClient } from '@/lib/supabase/server';
 import { sendShootConfirmationEmail, isValidEmail } from '@/lib/email';
 import { validateShootFields, isValidDateString, SHOOT_SELECT } from '@/lib/shoots';
 import { israelDateString } from '@/lib/israelTime';
+import { reserveManualEmailSend, releaseManualEmailReservations } from '@/lib/manualEmailLog';
+import { SHOOT_CONFIRMATION_COOLDOWN_SECONDS, SHOOT_CONFIRMATION_DAILY_CAP } from '@/lib/manualEmailCooldown';
 
 // יומן צילומים (טבלת shoots) - רשימה ויצירה. רץ עם session הצלמת (לא service
 // key), בדיוק כמו app/api/galleries/route.ts, כך שה-RLS על shoots/clients/galleries
@@ -175,8 +177,26 @@ export async function POST(req: NextRequest) {
 
   // אישור ללקוחה - ברירת מחדל מופעל, best-effort כמו מייל ההזמנה לגלריה:
   // כישלון שליחה לא מבטל את יצירת הצילום, רק מוחזר emailSent=false לתצוגה.
+  //
+  // מגבלת קצב לכל הצלמת (SHOOT_CONFIRMATION_DAILY_CAP ב-lib/manualEmailCooldown.ts):
+  // בלי זה יצירת צילומים בלולאה הייתה דרך לשלוח מיילים ללא הגבלה לכל כתובת.
+  // חסימה לא מבטלת את הצילום - רק מדלגת על המייל ומחזירה emailCooldown, כמו
+  // בעדכון צילום (app/api/shoots/[id]/route.ts).
   let emailSent = false;
+  let emailCooldown: { message: string; retryAfterSeconds: number } | undefined;
+  let reservationIds: string[] = [];
   if (body.sendConfirmation !== false) {
+    const reservation = await reserveManualEmailSend(supabase, photographer.id, { shootId: shoot.id }, 'shoot_confirmation', {
+      scope: 'photographer',
+      cooldownSeconds: SHOOT_CONFIRMATION_COOLDOWN_SECONDS,
+      dailyCap: SHOOT_CONFIRMATION_DAILY_CAP,
+    });
+    if (!reservation.decision.allowed) {
+      emailCooldown = { message: reservation.decision.message, retryAfterSeconds: reservation.decision.retryAfterSeconds };
+    }
+    reservationIds = reservation.reservationIds;
+  }
+  if (body.sendConfirmation !== false && !emailCooldown) {
     const result = await sendShootConfirmationEmail({
       to: client.email,
       clientName: client.full_name,
@@ -189,8 +209,10 @@ export async function POST(req: NextRequest) {
     emailSent = result.sent;
     if (emailSent) {
       await supabase.from('shoots').update({ confirmation_sent_at: new Date().toISOString() }).eq('id', shoot.id);
+    } else {
+      await releaseManualEmailReservations(reservationIds);
     }
   }
 
-  return NextResponse.json({ shootId: shoot.id, emailSent });
+  return NextResponse.json({ shootId: shoot.id, emailSent, ...(emailCooldown ? { emailCooldown } : {}) });
 }

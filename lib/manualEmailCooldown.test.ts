@@ -4,6 +4,9 @@ import {
   formatCooldownLeft,
   MANUAL_EMAIL_COOLDOWN_SECONDS,
   MANUAL_EMAIL_DAILY_CAP,
+  SHOOT_CONFIRMATION_COOLDOWN_SECONDS,
+  SHOOT_CONFIRMATION_DAILY_CAP,
+  priorSendTimes,
 } from './manualEmailCooldown';
 
 const now = new Date('2026-10-05T12:00:00.000Z');
@@ -118,5 +121,70 @@ describe('formatCooldownLeft', () => {
     expect(formatCooldownLeft(61)).toBe('2 דק׳');
     expect(formatCooldownLeft(3600)).toBe('1 שע׳');
     expect(formatCooldownLeft(4 * 3600 - 5)).toBe('4 שע׳');
+  });
+});
+
+describe('checkManualEmailCooldown with several recipients (requested)', () => {
+  const hoursAgo = (n: number) => Array.from({ length: n }, (_, i) => ago((i + 2) * HOUR));
+
+  it('allows when the whole batch fits in the daily cap', () => {
+    expect(checkManualEmailCooldown(hoursAgo(7), now, 60, 10, 3)).toEqual({ allowed: true });
+  });
+
+  it('blocks when the batch would exceed the cap and reports when enough frees up', () => {
+    const result = checkManualEmailCooldown(hoursAgo(8), now, 60, 10, 3);
+    expect(result.allowed).toBe(false);
+    if (result.allowed) return;
+    expect(result.reason).toBe('daily_cap');
+    // צריך שתתפנה שליחה אחת (8 + 3 - 10) - הוותיקה ביותר (לפני 9 שעות) יוצאת מהחלון בעוד 15 שעות
+    expect(result.retryAfterSeconds).toBe(15 * 3600);
+    expect(result.message).toContain('3 הנמענים');
+  });
+
+  it('clamps a batch larger than the cap so it is not blocked forever', () => {
+    expect(checkManualEmailCooldown([], now, 60, 10, 25)).toEqual({ allowed: true });
+  });
+
+  it('default requested=1 keeps the old behaviour', () => {
+    expect(checkManualEmailCooldown(hoursAgo(9), now).allowed).toBe(true);
+    expect(checkManualEmailCooldown(hoursAgo(10), now).allowed).toBe(false);
+  });
+
+  it('shoot confirmations: no cooldown, per-photographer cap of 30', () => {
+    expect(SHOOT_CONFIRMATION_COOLDOWN_SECONDS).toBe(0);
+    expect(SHOOT_CONFIRMATION_DAILY_CAP).toBe(30);
+    expect(
+      checkManualEmailCooldown([ago(1 * SEC)], now, SHOOT_CONFIRMATION_COOLDOWN_SECONDS, SHOOT_CONFIRMATION_DAILY_CAP)
+    ).toEqual({ allowed: true });
+  });
+});
+
+describe('priorSendTimes', () => {
+  it('counts only other rows reserved no later than our own', () => {
+    const rows = [
+      { id: 'old', sent_at: '2026-10-05T11:00:00.000Z' },
+      { id: 'mine1', sent_at: '2026-10-05T11:59:00.000Z' },
+      { id: 'mine2', sent_at: '2026-10-05T11:59:00.000Z' },
+      { id: 'later', sent_at: '2026-10-05T11:59:30.000Z' },
+    ];
+    expect(priorSendTimes(rows, ['mine1', 'mine2'])).toEqual(['2026-10-05T11:00:00.000Z']);
+  });
+
+  it('treats an exact tie as prior (both parallel requests back off rather than both sending)', () => {
+    const rows = [
+      { id: 'a', sent_at: '2026-10-05T11:59:00.000Z' },
+      { id: 'b', sent_at: '2026-10-05T11:59:00.000Z' },
+    ];
+    expect(priorSendTimes(rows, ['a'])).toEqual(['2026-10-05T11:59:00.000Z']);
+    expect(priorSendTimes(rows, ['b'])).toEqual(['2026-10-05T11:59:00.000Z']);
+  });
+
+  it('the second of two parallel clicks sees the first reservation and hits the cooldown', () => {
+    const rows = [
+      { id: 'first', sent_at: ago(2 * SEC) },
+      { id: 'second', sent_at: ago(1 * SEC) },
+    ];
+    expect(checkManualEmailCooldown(priorSendTimes(rows, ['first']), now)).toEqual({ allowed: true });
+    expect(checkManualEmailCooldown(priorSendTimes(rows, ['second']), now).allowed).toBe(false);
   });
 });

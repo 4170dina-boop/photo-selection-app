@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sendShootConfirmationEmail } from '@/lib/email';
-import { getManualEmailCooldown, recordManualEmailSend } from '@/lib/manualEmailLog';
+import { reserveManualEmailSend, releaseManualEmailReservations } from '@/lib/manualEmailLog';
 import { validateShootFields, formatShootTime } from '@/lib/shoots';
 
 // עריכה/מחיקה של צילום קיים - אותו דפוס כמו app/api/galleries/[id]/route.ts:
@@ -113,13 +113,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // ומחזירות emailCooldown עם ההודעה. fallback לפני המיגרציה: confirmation_sent_at.
   let emailSent = false;
   let emailCooldown: { message: string; retryAfterSeconds: number } | undefined;
+  let reservationIds: string[] = [];
   if (body.sendUpdate) {
-    const cooldown = await getManualEmailCooldown(supabase, { shootId: shoot.id }, 'shoot_update', [
-      (shoot as any).confirmation_sent_at,
-    ]);
-    if (!cooldown.allowed) {
-      emailCooldown = { message: cooldown.message, retryAfterSeconds: cooldown.retryAfterSeconds };
+    const reservation = await reserveManualEmailSend(supabase, photographer.id, { shootId: shoot.id }, 'shoot_update', {
+      fallbackSentAts: [(shoot as any).confirmation_sent_at],
+    });
+    if (!reservation.decision.allowed) {
+      emailCooldown = { message: reservation.decision.message, retryAfterSeconds: reservation.decision.retryAfterSeconds };
     }
+    reservationIds = reservation.reservationIds;
   }
   if (body.sendUpdate && !emailCooldown) {
     const result = await sendShootConfirmationEmail({
@@ -134,7 +136,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     emailSent = result.sent;
     if (emailSent) {
       await supabase.from('shoots').update({ confirmation_sent_at: new Date().toISOString() }).eq('id', shoot.id);
-      await recordManualEmailSend(supabase, photographer.id, { shootId: shoot.id }, 'shoot_update');
+    } else {
+      await releaseManualEmailReservations(reservationIds);
     }
   }
 

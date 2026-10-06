@@ -394,25 +394,33 @@ alter table app_settings enable row level security;
 -- יומן מיילים ידניים (לחיצת כפתור של הצלמת: הזמנה מחדש, תזכורת, "התמונות
 -- מוכנות", בקשת ביקורת, עדכון צילום) - בסיס למגבלת הקצב בשרת
 -- (lib/manualEmailCooldown.ts, lib/manualEmailLog.ts): 60 שניות בין שליחות
--- מאותו סוג לאותה גלריה/צילום, ועד 10 ב-24 שעות. שורה נרשמת רק אחרי שליחה
--- מוצלחת. מיילים אוטומטיים (cron) לא נרשמים כאן.
+-- מאותו סוג לאותה גלריה/צילום, ועד 10 ב-24 שעות (ואישור צילום חדש: עד 30
+-- ב-24 שעות לכל הצלמת). השורה נרשמת כ"שריון" לפני השליחה (ראו
+-- reserve_manual_email_send למטה) ונמחקת (service_role) אם השליחה נכשלה.
+-- מיילים אוטומטיים (cron) לא נרשמים כאן.
 create table manual_email_sends (
   id uuid primary key default uuid_generate_v4(),
   photographer_id uuid references photographers(id) on delete cascade not null,
   gallery_id uuid references galleries(id) on delete cascade,
   shoot_id uuid references shoots(id) on delete cascade,
-  email_type text not null check (email_type in ('invite', 'reminder', 'delivery', 'review', 'shoot_update')),
+  email_type text not null check (email_type in ('invite', 'reminder', 'delivery', 'review', 'shoot_update', 'shoot_confirmation')),
   sent_at timestamptz default now() not null,
   check (gallery_id is not null or shoot_id is not null)
 );
 create index idx_manual_email_sends_gallery on manual_email_sends(gallery_id, email_type, sent_at) where gallery_id is not null;
 create index idx_manual_email_sends_shoot on manual_email_sends(shoot_id, email_type, sent_at) where shoot_id is not null;
 create index idx_manual_email_sends_photographer on manual_email_sends(photographer_id);
+-- מכסת אישורי צילום לכל הצלמת (scope 'photographer' ב-reserve_manual_email_send)
+create index idx_manual_email_sends_photographer_type on manual_email_sends(photographer_id, email_type, sent_at);
 alter table manual_email_sends enable row level security;
+-- select + insert בלבד (לא for all): עם update/delete צלמת יכלה למחוק/להזיז
+-- את השורות שלה דרך ה-REST ו"לאפס" את מגבלת הקצב. מחיקת שריון של שליחה
+-- שנכשלה נעשית בשרת עם service_role (lib/manualEmailLog.ts).
+create policy "photographers select own manual email sends" on manual_email_sends
+  for select using (photographer_id in (select id from photographers where auth_user_id = auth.uid()));
 -- with check מוודא שהגלריה/הצילום שייכים לאותה צלמת (FK לא עובר דרך RLS)
-create policy "photographers manage own manual email sends" on manual_email_sends
-  for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
-  with check (
+create policy "photographers insert own manual email sends" on manual_email_sends
+  for insert with check (
     photographer_id in (select id from photographers where auth_user_id = auth.uid())
     and (gallery_id is null or gallery_id in (
       select id from galleries where photographer_id in (
@@ -425,6 +433,57 @@ create policy "photographers manage own manual email sends" on manual_email_send
       )
     ))
   );
+
+-- שריון אטומי של שליחה ידנית (lib/manualEmailLog.ts): נועל לפי הצלמת
+-- (pg_advisory_xact_lock, עד סוף הטרנזקציה), מכניס p_count שורות עם
+-- clock_timestamp() (אחרי הנעילה - כך שהסדר בזמן תואם את סדר הנעילה), ומחזיר
+-- את כל שורות החלון (24 שעות) עם סימון אילו שלנו. בקשה מקבילה ממתינה לנעילה
+-- ורואה את השריון שכבר נשמר - בלי זה שתי לחיצות מקבילות עברו שתיהן את הבדיקה.
+-- ההחלטה (60 שניות / מכסה) נשארת ב-TS (checkManualEmailCooldown). security
+-- invoker: ה-insert וה-select עוברים את ה-RLS הרגיל של הצלמת.
+create or replace function public.reserve_manual_email_send(
+  p_photographer_id uuid,
+  p_gallery_id uuid,
+  p_shoot_id uuid,
+  p_email_type text,
+  p_count int,
+  p_scope text
+)
+returns table (r_id uuid, r_sent_at timestamptz, r_own boolean) as $$
+declare
+  v_now timestamptz;
+  v_ids uuid[];
+begin
+  if p_count is null or p_count < 1 or p_count > 50 then
+    raise exception 'INVALID_COUNT: p_count must be between 1 and 50';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext('manual_email_sends:' || p_photographer_id::text));
+  v_now := clock_timestamp();
+
+  with ins as (
+    insert into manual_email_sends (photographer_id, gallery_id, shoot_id, email_type, sent_at)
+    select p_photographer_id, p_gallery_id, p_shoot_id, p_email_type, v_now
+    from generate_series(1, p_count)
+    returning manual_email_sends.id
+  )
+  select array_agg(ins.id) into v_ids from ins;
+
+  return query
+    select m.id, m.sent_at, m.id = any(v_ids)
+    from manual_email_sends m
+    where m.email_type = p_email_type
+      and m.sent_at > v_now - interval '24 hours'
+      and case
+            when p_scope = 'photographer' then m.photographer_id = p_photographer_id
+            when p_gallery_id is not null then m.gallery_id = p_gallery_id
+            else m.shoot_id = p_shoot_id
+          end;
+end;
+$$ language plpgsql security invoker set search_path = public;
+
+revoke execute on function public.reserve_manual_email_send(uuid, uuid, uuid, text, int, text) from public, anon;
+grant execute on function public.reserve_manual_email_send(uuid, uuid, uuid, text, int, text) to authenticated, service_role;
 
 -- בקשות הארכה של תקופת הבחירה מצד הלקוחה (הבעלים בלבד) - כפתור "לבקש
 -- הארכה" בבאנר הספירה לאחור בגלריה. מגבלות (נאכפות בשרת, lib/extensionRequests.ts):
@@ -443,6 +502,8 @@ create table gallery_extension_requests (
   decided_at timestamptz
 );
 create index idx_gallery_extension_requests_gallery on gallery_extension_requests(gallery_id);
+-- FK ל-gallery_participants (on delete set null) - בלי אינדקס כל מחיקת משתתף סורקת את הטבלה
+create index idx_gallery_extension_requests_participant on gallery_extension_requests(participant_id);
 create unique index gallery_extension_requests_one_pending on gallery_extension_requests(gallery_id) where status = 'pending';
 alter table gallery_extension_requests enable row level security;
 create policy "photographers select own extension requests" on gallery_extension_requests
@@ -462,6 +523,12 @@ create policy "photographers update own extension requests" on gallery_extension
       select id from photographers where auth_user_id = auth.uid()
     )
   ));
+-- ה-policy מאפשר לצלמת update על בקשות של הגלריות שלה, אבל בלי הגבלת עמודות
+-- היא יכלה לשנות גם requested_days / gallery_id / participant_id / created_at
+-- (למשל להעביר בקשה לגלריה אחרת שלה, או לעקוף את מגבלת 7 הימים). ה-route
+-- (app/api/galleries/[id]/extension-requests/[requestId]) מעדכן רק status ו-decided_at.
+revoke update on gallery_extension_requests from anon, authenticated;
+grant update (status, decided_at) on gallery_extension_requests to authenticated;
 
 -- אינדקסים בסיסיים לביצועים
 create index idx_clients_photographer on clients(photographer_id);
@@ -477,6 +544,7 @@ create index idx_gallery_participants_gallery on gallery_participants(gallery_id
 create index if not exists idx_selections_photo on selections(photo_id);
 create index if not exists idx_selections_participant on selections(participant_id);
 create index if not exists idx_galleries_client on galleries(client_id);
+create index if not exists idx_galleries_owner_participant on galleries(owner_participant_id);
 create index if not exists idx_sync_jobs_gallery on sync_jobs(gallery_id);
 
 -- Row Level Security: כל צלם רואה רק את הנתונים שלו
@@ -524,6 +592,14 @@ returns boolean as $$
     where id = p_participant_id and gallery_id = p_gallery_id
   );
 $$ language sql stable security definer set search_path = public;
+
+-- security definer - לא פתוחה לכולם: בשימוש רק ב-policy של galleries למטה,
+-- שמוערכת עם התפקיד של הקורא (authenticated - הצלמת). anon לא ניגש ל-galleries
+-- דרך RLS בכלל (הלקוחה עוברת דרך app/api/gallery/* עם service_role), אז אין
+-- לו צורך בה - ובלי ה-revoke כל אחד יכול היה לבדוק דרך /rpc אם participant
+-- מסוים שייך לגלריה מסוימת.
+revoke execute on function public.participant_belongs_to_gallery(uuid, uuid) from public, anon;
+grant execute on function public.participant_belongs_to_gallery(uuid, uuid) to authenticated, service_role;
 
 create policy "photographers see own galleries" on galleries
   for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
@@ -926,6 +1002,116 @@ $$ language plpgsql;
 create trigger trg_enforce_photo_limit
 before insert or update on photos
 for each row execute function enforce_photo_limit();
+
+-- מגבלת חשבון חינמי גם לתמונות הסופיות (delivered_photos) - אותו דפוס בדיוק
+-- כמו enforce_photo_limit למעלה (insert, או update שמעביר תמונה לגלריה אחרת;
+-- מנעול advisory לפי הגלריה נגד הכנסות מקבילות). 30 = 25 תמונות המקור
+-- המותרות + מרווח של 5 לגרסאות נוספות - ראו FREE_DELIVERED_PHOTO_LIMIT ב-
+-- lib/deliveredPhotoLimit.ts (אם המספר משתנה - לעדכן גם שם). בלי זה צלמת
+-- בחשבון חינמי יכלה להשתמש ב"תמונות סופיות" כאחסון ללא הגבלה.
+create or replace function enforce_delivered_photo_limit()
+returns trigger as $$
+declare
+  delivered_count int;
+  unlimited boolean;
+  should_check boolean;
+begin
+  if tg_op = 'INSERT' then
+    should_check := true;
+  else
+    should_check := new.gallery_id is distinct from old.gallery_id;
+  end if;
+
+  if not should_check then
+    return new;
+  end if;
+
+  select p.is_unlimited into unlimited
+  from galleries g join photographers p on p.id = g.photographer_id
+  where g.id = new.gallery_id;
+
+  if unlimited then
+    return new;
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext('delivered_photos:' || new.gallery_id::text));
+
+  select count(*) into delivered_count
+  from delivered_photos
+  where gallery_id = new.gallery_id;
+
+  if delivered_count >= 30 then
+    raise exception 'LIMIT_DELIVERED_PHOTOS: חשבון חינמי מוגבל ל-30 תמונות סופיות בגלריה';
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_enforce_delivered_photo_limit on delivered_photos;
+create trigger trg_enforce_delivered_photo_limit
+before insert or update on delivered_photos
+for each row execute function enforce_delivered_photo_limit();
+
+-- ===== הגנה על עמודות פנימיות של galleries =====
+-- ה-policy "photographers see own galleries" (for all) מאפשר לצלמת לעדכן כל
+-- עמודה בגלריה שלה דרך ה-REST, כולל עמודות שרק השרת אמור לכתוב: מונה
+-- הצפיות (view_count/last_viewed_at - increment_gallery_view_count), פעילות
+-- הלקוחה (last_activity_at - trg_selections_activity / finish), ניקוי המקור
+-- (originals_cleaned_up_at - cron; איפוס שלו היה מאפשר "לפתוח מחדש" גלריה
+-- שהמקור שלה כבר נמחק), וחותמות ה-idempotency של המיילים האוטומטיים
+-- (last_reminder_sent_at, originals_deletion_warning_sent_at, quota_notified_at).
+-- אותו דפוס כמו protect_is_unlimited: כל מי שאינו service_role מקבל את
+-- הערכים הישנים בחזרה (בלי שגיאה - שאר העדכון עובר). חיבור ישיר ל-DB (SQL
+-- editor, בלי JWT) עובר כרגיל, כמו ב-guard_gallery_status_transitions.
+--
+-- חריג מתועד: איפוס ל-null של last_reminder_sent_at ו-
+-- originals_deletion_warning_sent_at מותר גם ל-session הצלמת - זו פעולה
+-- לגיטימית שלה (הארכת תוקף ב-PATCH app/api/galleries/[id] ובאישור בקשת
+-- הארכה, ביטול/סימון מסירה ב-toggle-delivered), והאיפוס רק מאפשר למייל
+-- האוטומטי לצאת שוב פעם אחת. הגדרה לערך לא-null נחסמת. כל שאר הכתיבות
+-- לעמודות האלה באפליקציה כבר נעשות עם service_role (cron/tick, send-reminder,
+-- app/api/gallery/[id]/*).
+create or replace function protect_internal_gallery_columns()
+returns trigger as $$
+begin
+  if current_setting('role', true) = 'service_role'
+     or coalesce(auth.role(), '') not in ('authenticated', 'anon') then
+    return new;
+  end if;
+
+  if tg_op = 'INSERT' then
+    new.last_activity_at := null;
+    new.last_reminder_sent_at := null;
+    new.originals_cleaned_up_at := null;
+    new.originals_deletion_warning_sent_at := null;
+    new.view_count := 0;
+    new.last_viewed_at := null;
+    new.quota_notified_at := null;
+    return new;
+  end if;
+
+  new.last_activity_at := old.last_activity_at;
+  new.originals_cleaned_up_at := old.originals_cleaned_up_at;
+  new.view_count := old.view_count;
+  new.last_viewed_at := old.last_viewed_at;
+  new.quota_notified_at := old.quota_notified_at;
+  if new.last_reminder_sent_at is not null then
+    new.last_reminder_sent_at := old.last_reminder_sent_at;
+  end if;
+  if new.originals_deletion_warning_sent_at is not null then
+    new.originals_deletion_warning_sent_at := old.originals_deletion_warning_sent_at;
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_protect_internal_gallery_columns on galleries;
+create trigger trg_protect_internal_gallery_columns
+before insert or update on galleries
+for each row execute function protect_internal_gallery_columns();
+-- ===== סוף הגנה על עמודות פנימיות של galleries =====
 
 -- מונע מצלמת לסמן את עצמה כ"ללא הגבלה" - ה-RLS "photographers see own row"
 -- (for all, עם with check שבודק רק auth_user_id) מאפשר לה לעדכן את השורה שלה
@@ -1508,9 +1694,14 @@ create policy "photographers delete own gallery files" on storage.objects
 -- app/dashboard/settings/page.tsx ו-app/gallery/[id]/page.tsx). בכוונה ציבורי,
 -- בניגוד ל-gallery-photos - לוגו הוא נכס מיתוג, לא תוכן פרטי של לקוחה, ואין
 -- טעם לייצר signed URL מחדש בכל טעינה בשביל תמונה קטנה וקבועה.
-insert into storage.buckets (id, name, public)
-values ('photographer-logos', 'photographer-logos', true)
-on conflict (id) do update set public = true;
+-- עד 2MB ו-PNG/JPEG/WebP בלבד (כמו הבדיקה בדפדפן) - נאכף ע"י Storage עצמו,
+-- כי ההעלאה נעשית ישירות מהדפדפן ואפשר לעקוף את הבדיקה בצד הלקוח.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('photographer-logos', 'photographer-logos', true, 2097152, array['image/png', 'image/jpeg', 'image/webp'])
+on conflict (id) do update set
+  public = true,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
 -- נתיב קבוע {photographerId}/logo (בלי סיומת - content-type נקבע מה-upload
 -- עצמו, לא מהנתיב) עם upsert בצד הקליינט: כל העלאה חדשה דורסת את הקודמת,
@@ -2198,3 +2389,230 @@ create policy "photographers read own logo" on storage.objects
 -- alter table galleries add constraint galleries_language_check check (language in ('he', 'en', 'yi', 'es', 'fr'));
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: שפת הגלריה =====
+
+-- ===== מיגרציה: הקשחת מגבלות קצב, עמודות פנימיות ומגבלות חשבון חינמי =====
+-- להריץ פעם אחת על פרויקט קיים (הכל idempotent). עד שמריצים - הקוד לא נשבר:
+-- שריון השליחה הידנית נופל ל-insert+select רגילים (בלי RPC), אישור צילום חדש
+-- לא נרשם (אין 'shoot_confirmation' ב-check), ואין אכיפת DB למגבלת התמונות
+-- הסופיות (רק הבדיקה ב-presign-upload). כולל:
+--  * manual_email_sends: select + insert בלבד (במקום for all), 'shoot_confirmation',
+--    RPC אטומי reserve_manual_email_send
+--  * enforce_delivered_photo_limit (30 תמונות סופיות בחשבון חינמי)
+--  * protect_internal_gallery_columns (עמודות שרק השרת כותב)
+--  * gallery_extension_requests: update רק על status/decided_at; אינדקס participant_id
+--  * participant_belongs_to_gallery: בלי execute ל-public/anon
+--  * אינדקס galleries(owner_participant_id)
+--  * bucket הלוגו: עד 2MB, PNG/JPEG/WebP בלבד
+-- alter table manual_email_sends drop constraint if exists manual_email_sends_email_type_check;
+-- alter table manual_email_sends add constraint manual_email_sends_email_type_check
+--   check (email_type in ('invite', 'reminder', 'delivery', 'review', 'shoot_update', 'shoot_confirmation'));
+-- create index if not exists idx_manual_email_sends_photographer_type on manual_email_sends(photographer_id, email_type, sent_at);
+-- drop policy if exists "photographers manage own manual email sends" on manual_email_sends;
+-- drop policy if exists "photographers select own manual email sends" on manual_email_sends;
+-- drop policy if exists "photographers insert own manual email sends" on manual_email_sends;
+-- -- select + insert בלבד (לא for all): עם update/delete צלמת יכלה למחוק/להזיז
+-- -- את השורות שלה דרך ה-REST ו"לאפס" את מגבלת הקצב. מחיקת שריון של שליחה
+-- -- שנכשלה נעשית בשרת עם service_role (lib/manualEmailLog.ts).
+-- create policy "photographers select own manual email sends" on manual_email_sends
+--   for select using (photographer_id in (select id from photographers where auth_user_id = auth.uid()));
+-- -- with check מוודא שהגלריה/הצילום שייכים לאותה צלמת (FK לא עובר דרך RLS)
+-- create policy "photographers insert own manual email sends" on manual_email_sends
+--   for insert with check (
+--     photographer_id in (select id from photographers where auth_user_id = auth.uid())
+--     and (gallery_id is null or gallery_id in (
+--       select id from galleries where photographer_id in (
+--         select id from photographers where auth_user_id = auth.uid()
+--       )
+--     ))
+--     and (shoot_id is null or shoot_id in (
+--       select id from shoots where photographer_id in (
+--         select id from photographers where auth_user_id = auth.uid()
+--       )
+--     ))
+--   );
+--
+-- -- שריון אטומי של שליחה ידנית (lib/manualEmailLog.ts): נועל לפי הצלמת
+-- -- (pg_advisory_xact_lock, עד סוף הטרנזקציה), מכניס p_count שורות עם
+-- -- clock_timestamp() (אחרי הנעילה - כך שהסדר בזמן תואם את סדר הנעילה), ומחזיר
+-- -- את כל שורות החלון (24 שעות) עם סימון אילו שלנו. בקשה מקבילה ממתינה לנעילה
+-- -- ורואה את השריון שכבר נשמר - בלי זה שתי לחיצות מקבילות עברו שתיהן את הבדיקה.
+-- -- ההחלטה (60 שניות / מכסה) נשארת ב-TS (checkManualEmailCooldown). security
+-- -- invoker: ה-insert וה-select עוברים את ה-RLS הרגיל של הצלמת.
+-- create or replace function public.reserve_manual_email_send(
+--   p_photographer_id uuid,
+--   p_gallery_id uuid,
+--   p_shoot_id uuid,
+--   p_email_type text,
+--   p_count int,
+--   p_scope text
+-- )
+-- returns table (r_id uuid, r_sent_at timestamptz, r_own boolean) as $$
+-- declare
+--   v_now timestamptz;
+--   v_ids uuid[];
+-- begin
+--   if p_count is null or p_count < 1 or p_count > 50 then
+--     raise exception 'INVALID_COUNT: p_count must be between 1 and 50';
+--   end if;
+--
+--   perform pg_advisory_xact_lock(hashtext('manual_email_sends:' || p_photographer_id::text));
+--   v_now := clock_timestamp();
+--
+--   with ins as (
+--     insert into manual_email_sends (photographer_id, gallery_id, shoot_id, email_type, sent_at)
+--     select p_photographer_id, p_gallery_id, p_shoot_id, p_email_type, v_now
+--     from generate_series(1, p_count)
+--     returning manual_email_sends.id
+--   )
+--   select array_agg(ins.id) into v_ids from ins;
+--
+--   return query
+--     select m.id, m.sent_at, m.id = any(v_ids)
+--     from manual_email_sends m
+--     where m.email_type = p_email_type
+--       and m.sent_at > v_now - interval '24 hours'
+--       and case
+--             when p_scope = 'photographer' then m.photographer_id = p_photographer_id
+--             when p_gallery_id is not null then m.gallery_id = p_gallery_id
+--             else m.shoot_id = p_shoot_id
+--           end;
+-- end;
+-- $$ language plpgsql security invoker set search_path = public;
+--
+-- revoke execute on function public.reserve_manual_email_send(uuid, uuid, uuid, text, int, text) from public, anon;
+-- grant execute on function public.reserve_manual_email_send(uuid, uuid, uuid, text, int, text) to authenticated, service_role;
+--
+-- -- מגבלת חשבון חינמי גם לתמונות הסופיות (delivered_photos) - אותו דפוס בדיוק
+-- -- כמו enforce_photo_limit למעלה (insert, או update שמעביר תמונה לגלריה אחרת;
+-- -- מנעול advisory לפי הגלריה נגד הכנסות מקבילות). 30 = 25 תמונות המקור
+-- -- המותרות + מרווח של 5 לגרסאות נוספות - ראו FREE_DELIVERED_PHOTO_LIMIT ב-
+-- -- lib/deliveredPhotoLimit.ts (אם המספר משתנה - לעדכן גם שם). בלי זה צלמת
+-- -- בחשבון חינמי יכלה להשתמש ב"תמונות סופיות" כאחסון ללא הגבלה.
+-- create or replace function enforce_delivered_photo_limit()
+-- returns trigger as $$
+-- declare
+--   delivered_count int;
+--   unlimited boolean;
+--   should_check boolean;
+-- begin
+--   if tg_op = 'INSERT' then
+--     should_check := true;
+--   else
+--     should_check := new.gallery_id is distinct from old.gallery_id;
+--   end if;
+--
+--   if not should_check then
+--     return new;
+--   end if;
+--
+--   select p.is_unlimited into unlimited
+--   from galleries g join photographers p on p.id = g.photographer_id
+--   where g.id = new.gallery_id;
+--
+--   if unlimited then
+--     return new;
+--   end if;
+--
+--   perform pg_advisory_xact_lock(hashtext('delivered_photos:' || new.gallery_id::text));
+--
+--   select count(*) into delivered_count
+--   from delivered_photos
+--   where gallery_id = new.gallery_id;
+--
+--   if delivered_count >= 30 then
+--     raise exception 'LIMIT_DELIVERED_PHOTOS: חשבון חינמי מוגבל ל-30 תמונות סופיות בגלריה';
+--   end if;
+--
+--   return new;
+-- end;
+-- $$ language plpgsql;
+--
+-- drop trigger if exists trg_enforce_delivered_photo_limit on delivered_photos;
+-- create trigger trg_enforce_delivered_photo_limit
+-- before insert or update on delivered_photos
+-- for each row execute function enforce_delivered_photo_limit();
+--
+-- -- ===== הגנה על עמודות פנימיות של galleries =====
+-- -- ה-policy "photographers see own galleries" (for all) מאפשר לצלמת לעדכן כל
+-- -- עמודה בגלריה שלה דרך ה-REST, כולל עמודות שרק השרת אמור לכתוב: מונה
+-- -- הצפיות (view_count/last_viewed_at - increment_gallery_view_count), פעילות
+-- -- הלקוחה (last_activity_at - trg_selections_activity / finish), ניקוי המקור
+-- -- (originals_cleaned_up_at - cron; איפוס שלו היה מאפשר "לפתוח מחדש" גלריה
+-- -- שהמקור שלה כבר נמחק), וחותמות ה-idempotency של המיילים האוטומטיים
+-- -- (last_reminder_sent_at, originals_deletion_warning_sent_at, quota_notified_at).
+-- -- אותו דפוס כמו protect_is_unlimited: כל מי שאינו service_role מקבל את
+-- -- הערכים הישנים בחזרה (בלי שגיאה - שאר העדכון עובר). חיבור ישיר ל-DB (SQL
+-- -- editor, בלי JWT) עובר כרגיל, כמו ב-guard_gallery_status_transitions.
+-- --
+-- -- חריג מתועד: איפוס ל-null של last_reminder_sent_at ו-
+-- -- originals_deletion_warning_sent_at מותר גם ל-session הצלמת - זו פעולה
+-- -- לגיטימית שלה (הארכת תוקף ב-PATCH app/api/galleries/[id] ובאישור בקשת
+-- -- הארכה, ביטול/סימון מסירה ב-toggle-delivered), והאיפוס רק מאפשר למייל
+-- -- האוטומטי לצאת שוב פעם אחת. הגדרה לערך לא-null נחסמת. כל שאר הכתיבות
+-- -- לעמודות האלה באפליקציה כבר נעשות עם service_role (cron/tick, send-reminder,
+-- -- app/api/gallery/[id]/*).
+-- create or replace function protect_internal_gallery_columns()
+-- returns trigger as $$
+-- begin
+--   if current_setting('role', true) = 'service_role'
+--      or coalesce(auth.role(), '') not in ('authenticated', 'anon') then
+--     return new;
+--   end if;
+--
+--   if tg_op = 'INSERT' then
+--     new.last_activity_at := null;
+--     new.last_reminder_sent_at := null;
+--     new.originals_cleaned_up_at := null;
+--     new.originals_deletion_warning_sent_at := null;
+--     new.view_count := 0;
+--     new.last_viewed_at := null;
+--     new.quota_notified_at := null;
+--     return new;
+--   end if;
+--
+--   new.last_activity_at := old.last_activity_at;
+--   new.originals_cleaned_up_at := old.originals_cleaned_up_at;
+--   new.view_count := old.view_count;
+--   new.last_viewed_at := old.last_viewed_at;
+--   new.quota_notified_at := old.quota_notified_at;
+--   if new.last_reminder_sent_at is not null then
+--     new.last_reminder_sent_at := old.last_reminder_sent_at;
+--   end if;
+--   if new.originals_deletion_warning_sent_at is not null then
+--     new.originals_deletion_warning_sent_at := old.originals_deletion_warning_sent_at;
+--   end if;
+--
+--   return new;
+-- end;
+-- $$ language plpgsql;
+--
+-- drop trigger if exists trg_protect_internal_gallery_columns on galleries;
+-- create trigger trg_protect_internal_gallery_columns
+-- before insert or update on galleries
+-- for each row execute function protect_internal_gallery_columns();
+-- -- ===== סוף הגנה על עמודות פנימיות של galleries =====
+--
+-- -- ה-policy מאפשר לצלמת update על בקשות של הגלריות שלה, אבל בלי הגבלת עמודות
+-- -- היא יכלה לשנות גם requested_days / gallery_id / participant_id / created_at
+-- -- (למשל להעביר בקשה לגלריה אחרת שלה, או לעקוף את מגבלת 7 הימים). ה-route
+-- -- (app/api/galleries/[id]/extension-requests/[requestId]) מעדכן רק status ו-decided_at.
+-- revoke update on gallery_extension_requests from anon, authenticated;
+-- grant update (status, decided_at) on gallery_extension_requests to authenticated;
+-- create index if not exists idx_gallery_extension_requests_participant on gallery_extension_requests(participant_id);
+-- create index if not exists idx_galleries_owner_participant on galleries(owner_participant_id);
+--
+-- -- security definer - לא פתוחה לכולם: בשימוש רק ב-policy של galleries למטה,
+-- -- שמוערכת עם התפקיד של הקורא (authenticated - הצלמת). anon לא ניגש ל-galleries
+-- -- דרך RLS בכלל (הלקוחה עוברת דרך app/api/gallery/* עם service_role), אז אין
+-- -- לו צורך בה - ובלי ה-revoke כל אחד יכול היה לבדוק דרך /rpc אם participant
+-- -- מסוים שייך לגלריה מסוימת.
+-- revoke execute on function public.participant_belongs_to_gallery(uuid, uuid) from public, anon;
+-- grant execute on function public.participant_belongs_to_gallery(uuid, uuid) to authenticated, service_role;
+--
+-- update storage.buckets
+-- set file_size_limit = 2097152,
+--     allowed_mime_types = array['image/png', 'image/jpeg', 'image/webp']
+-- where id = 'photographer-logos';
+--
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: הקשחת מגבלות קצב, עמודות פנימיות ומגבלות חשבון חינמי =====

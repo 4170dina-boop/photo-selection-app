@@ -57,6 +57,10 @@ export async function POST(req: NextRequest) {
   if (!clientName?.trim() || !clientEmail?.trim() || body.includedPhotos == null) {
     return NextResponse.json({ error: 'חסרים פרטים (שם לקוחה, אימייל ומספר תמונות בחבילה)' }, { status: 400 });
   }
+  // אותה בדיקה כמו בכתובות הנוספות - בלעדיה כתובת שבורה נשמרת ומייל ההזמנה פשוט נכשל
+  if (!isValidEmail(clientEmail.trim())) {
+    return NextResponse.json({ error: 'כתובת המייל של הלקוחה לא תקינה' }, { status: 400 });
+  }
 
   // כל המספרים/התאריך נבדקים כאן, לפני הכתיבה הראשונה - ראו lib/galleryValidation.ts
   const numbers = parseGalleryNumbers(body);

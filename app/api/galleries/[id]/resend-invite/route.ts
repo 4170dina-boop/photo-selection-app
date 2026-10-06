@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sendGalleryInviteEmail } from '@/lib/email';
-import { getManualEmailCooldown, recordManualEmailSend, cooldownResponse } from '@/lib/manualEmailLog';
+import { reserveManualEmailSend, releaseManualEmailReservations, cooldownResponse } from '@/lib/manualEmailLog';
 import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 
 // שולחת שוב את מייל ההזמנה (קישור + קוד גישה) ללקוחה הקיימת של הגלריה - שימושי
@@ -43,17 +43,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'חסרים פרטי לקוחה' }, { status: 500 });
   }
 
-  // מגבלת קצב לשליחה ידנית (lib/manualEmailCooldown.ts) - לפני השליחה בפועל
-  const cooldown = await getManualEmailCooldown(supabase, { galleryId: gallery.id }, 'invite');
-  if (!cooldown.allowed) return cooldownResponse(cooldown);
-
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
-
   // הלקוחה הראשית ואז הכתובות הנוספות (additional_invite_emails), בדיוק כמו
   // ביצירה (app/api/galleries/route.ts). ברצף ולא במקביל - כדי לא לחרוג
   // ממגבלת הקצב של Resend - ועם תוצאה לכל נמען, כדי שהצלמת תדע למי לא הגיע.
   const additionalInviteEmails: string[] = (gallery as any).additional_invite_emails ?? [];
   const recipients = [client.email as string, ...additionalInviteEmails];
+
+  // מגבלת קצב לשליחה ידנית (lib/manualEmailCooldown.ts) - לפני השליחה בפועל.
+  // שורה לכל נמען (count), כך שהמכסה היומית סופרת מיילים שיצאו ולא לחיצות.
+  const reservation = await reserveManualEmailSend(supabase, photographer.id, { galleryId: gallery.id }, 'invite', {
+    count: recipients.length,
+  });
+  if (!reservation.decision.allowed) return cooldownResponse(reservation.decision);
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
   const results: { to: string; sent: boolean; error?: string }[] = [];
 
   for (const to of recipients) {
@@ -71,9 +74,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const emailSent = results[0]?.sent ?? false;
-  if (results.some((r) => r.sent)) {
-    await recordManualEmailSend(supabase, photographer.id, { galleryId: gallery.id }, 'invite');
-  }
+  // משחררות את השריון של נמענים שהשליחה אליהם נכשלה (נשארות שורות רק למה שיצא)
+  const failedCount = results.filter((r) => !r.sent).length;
+  await releaseManualEmailReservations(reservation.reservationIds.slice(0, failedCount));
   const failedAdditional = results.slice(1).filter((r) => !r.sent).map((r) => r.to);
 
   return NextResponse.json({ emailSent, results, failedAdditional });
