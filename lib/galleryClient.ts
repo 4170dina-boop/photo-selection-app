@@ -268,3 +268,21 @@ export function neighborPrefetchUrls(
   }
   return urls;
 }
+
+// ---- מספר עמודות בגריד בנייד (▦) ----
+
+// העדפה למכשיר (localStorage, לא לכל גלריה): 2/3/4 עמודות במסך צר. במסך רחב
+// הגריד נשאר אוטומטי.
+export type GridCols = 2 | 3 | 4;
+export const DEFAULT_GRID_COLS: GridCols = 2;
+export const GRID_COLS_KEY = 'gallery_grid_cols';
+
+export function parseGridCols(raw: string | null | undefined): GridCols {
+  const n = Number(raw);
+  return n === 2 || n === 3 || n === 4 ? n : DEFAULT_GRID_COLS;
+}
+
+// 2 -> 3 -> 4 -> 2
+export function nextGridCols(current: GridCols): GridCols {
+  return current === 4 ? 2 : ((current + 1) as GridCols);
+}

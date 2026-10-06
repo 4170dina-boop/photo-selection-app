@@ -9,6 +9,7 @@ export const grid = {
   'f.only': 'רק {name} ({n})',
   'f.onlyMe': 'רק אני ({n})',
   'grid.empty': 'אין תמונות להצגה בסינון הזה.',
+  'grid.colsAria': 'מספר עמודות בגריד: {n} (לחיצה מחליפה)',
 
   // "סימן/ה" - השם יכול להיות של גבר או של אישה
   'toast.othersItem': {

@@ -51,6 +51,11 @@ import {
   shouldAutoAdvance,
   enlargedShortcutStatus,
   neighborPrefetchUrls,
+  type GridCols,
+  DEFAULT_GRID_COLS,
+  GRID_COLS_KEY,
+  parseGridCols,
+  nextGridCols,
 } from '@/lib/galleryClient';
 import { extractAccessCode } from '@/lib/accessCodePaste';
 import {
@@ -736,6 +741,22 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       if (frame) cancelAnimationFrame(frame);
     };
   }, []);
+
+  // מספר עמודות בגריד בנייד (▦) - העדפת תצוגה למכשיר הזה בלבד, אחסון חסום
+  // פשוט נשאר עם ברירת המחדל (2)
+  const [mobileCols, setMobileCols] = useState<GridCols>(DEFAULT_GRID_COLS);
+  useEffect(() => {
+    try {
+      setMobileCols(parseGridCols(localStorage.getItem(GRID_COLS_KEY)));
+    } catch {}
+  }, []);
+  function cycleMobileCols() {
+    const next = nextGridCols(mobileCols);
+    setMobileCols(next);
+    try {
+      localStorage.setItem(GRID_COLS_KEY, String(next));
+    } catch {}
+  }
 
   const [authorized, setAuthorized] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -2431,6 +2452,23 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           .gh[data-compact="true"] .gh-ring { width: 30px; height: 30px; font-size: 9px; }
           .gh[data-compact="true"] .gh-ring-inner { width: 23px; height: 23px; }
         }
+        /* גבהים לפי 100dvh (הגובה הנראה בפועל בנייד, בלי סרגל הכתובת) עם נפילה
+           ל-vh בדפדפנים ישנים */
+        .enl-img { max-height: calc(100vh - 13rem); max-height: calc(100dvh - 13rem); }
+        .vh-45 { max-height: 45vh; max-height: 45dvh; }
+        .vh-75 { max-height: 75vh; max-height: 75dvh; }
+        .vh-80 { max-height: 80vh; max-height: 80dvh; }
+        .vh-90 { max-height: 90vh; max-height: 90dvh; }
+        /* גריד: אוטומטי במסך רחב; בנייד 2/3/4 עמודות לפי בחירה (▦, נשמר במכשיר) */
+        .ggrid { display: grid; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(140px, 45vw), 1fr)); gap: 1rem; }
+        .gcols-row { display: none; }
+        @media (max-width: 640px) {
+          .ggrid { grid-template-columns: repeat(var(--gcols, 2), minmax(0, 1fr)); gap: 0.6rem; }
+          .ggrid[data-cols="3"] { gap: 0.4rem; }
+          .ggrid[data-cols="4"] { gap: 0.3rem; }
+          .ggrid[data-cols="3"] .gc-extra, .ggrid[data-cols="4"] .gc-extra { display: none; }
+          .gcols-row { display: flex; }
+        }
         /* תמונות הגריד נכנסות בהדרגה כשהן נטענות (data-loaded מ-onLoad/onError) */
         .gimg { opacity: 0; transition: opacity 0.35s ease; }
         .gimg[data-loaded="true"] { opacity: 1; }
@@ -2846,8 +2884,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   decoding="async"
                   onError={() => handleImageError(photo.id)}
                   onContextMenu={(e) => e.preventDefault()}
+                  className={compareIds.length > 2 ? 'vh-45' : 'vh-80'}
                   style={{
-                    maxHeight: compareIds.length > 2 ? '45vh' : '80vh', maxWidth: '100%', objectFit: 'contain', borderRadius: 6,
+                    maxWidth: '100%', objectFit: 'contain', borderRadius: 6,
                     WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
                   }}
                 />
@@ -3140,9 +3179,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               }}
               onContextMenu={(e) => e.preventDefault()}
               title={tr('en.zoomTitle')}
+              className="enl-img"
               style={{
-                // מקום לפס הבחירה הקבוע למטה, כדי שהכפתורים לא יכסו את התמונה
-                maxHeight: 'calc(100vh - 13rem)', maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
+                // מקום לפס הבחירה הקבוע למטה (max-height ב-.enl-img, לפי 100dvh), כדי
+                // שהכפתורים לא יכסו את התמונה
+                maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
                 transform: `scale(${zoomScale})`, transition: zoomScale === 1 ? 'transform 0.15s ease-out' : 'none',
                 cursor: zoomScale > 1 ? 'zoom-out' : 'zoom-in',
                 WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
@@ -3361,8 +3402,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 onError={() => handleImageError(photo.id)}
                 onClick={(e) => e.stopPropagation()}
                 onContextMenu={(e) => e.preventDefault()}
+                className="vh-75"
                 style={{
-                  maxHeight: '75vh', maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
+                  maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
                   WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
                 }}
               />
@@ -3580,12 +3622,24 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </p>
       )}
 
+      {/* ▦ מספר עמודות בנייד (2/3/4) - מוצג רק במסך צר (.gcols-row) */}
+      <div className="gcols-row" style={{ justifyContent: 'flex-end', padding: '0 1rem 0.5rem' }}>
+        <button
+          type="button"
+          onClick={cycleMobileCols}
+          aria-label={tr('grid.colsAria', { n: mobileCols })}
+          title={tr('grid.colsAria', { n: mobileCols })}
+          style={{ ...outlineButtonStyle, minHeight: 40, minWidth: 44, padding: '0.25rem 0.7rem', fontSize: 13 }}
+        >
+          <span aria-hidden="true">▦ <bdi dir="ltr">{mobileCols}</bdi></span>
+        </button>
+      </div>
+
       <div
+        className="ggrid"
+        data-cols={mobileCols}
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(min(140px, 45vw), 1fr))',
-          alignItems: 'start',
-          gap: '1rem',
+          ['--gcols' as string]: mobileCols,
           // מקום לפס התחתון הקבוע, כדי שלא יכסה את השורה האחרונה
           padding: showBottomBar ? '0 1.5rem calc(4.5rem + env(safe-area-inset-bottom))' : '0 1.5rem 1.5rem',
         }}
@@ -3685,6 +3739,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   ממרכז התמונה (פנים), קטן ושקוף-למחצה */}
               {photo.possiblyBlurry && (
                 <div
+                  className="gc-extra"
                   role="img"
                   aria-label={tr('card.blurAria')}
                   title={tr('card.blurTitle')}
@@ -3736,6 +3791,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
               {isGift && (
                 <div
+                  className="gc-extra"
                   style={{
                     // zIndex 0 - מעל התמונה, מתחת לשאר התגים/כפתורים (zIndex 1)
                     position: 'absolute', bottom: 0, insetInline: 0, zIndex: 0, pointerEvents: 'none',
@@ -3929,9 +3985,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               aria-labelledby="finish-dialog-title"
               onClick={(e) => e.stopPropagation()}
               onKeyDown={handleFinishModalKeyDown}
+              className="vh-90"
               style={{
                 background: theme.panel, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 14,
-                padding: '1.25rem 1.25rem 1rem', width: '100%', maxWidth: 380, maxHeight: '90vh', overflowY: 'auto',
+                padding: '1.25rem 1.25rem 1rem', width: '100%', maxWidth: 380, overflowY: 'auto',
               }}
             >
               <p id="finish-dialog-title" style={{ fontFamily: theme.fontSerif, fontSize: 20, margin: '0 0 0.75rem', textAlign: 'center' }}>

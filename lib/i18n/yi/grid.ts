@@ -10,6 +10,7 @@ export const grid: Section<typeof he> = {
   'f.only': 'נאר {name} ({n})',
   'f.onlyMe': 'נאר איך ({n})',
   'grid.empty': 'קיין בילדער פאסן נישט צו דעם פילטער.',
+  'grid.colsAria': 'צאל קאלאנעס: {n} (דריקט צו טוישן)',
 
   'toast.othersItem': {
     one: '{name} האט אנגעצייכנט א נייע בילד',

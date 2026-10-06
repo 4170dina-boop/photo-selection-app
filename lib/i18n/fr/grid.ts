@@ -10,6 +10,7 @@ export const grid: Section<typeof he> = {
   'f.only': 'Seulement {name} ({n})',
   'f.onlyMe': 'Seulement moi ({n})',
   'grid.empty': 'Aucune photo pour ce filtre.',
+  'grid.colsAria': 'Colonnes de la grille : {n} (touchez pour changer)',
 
   'toast.othersItem': {
     one: '{name} a marqué une nouvelle photo',
