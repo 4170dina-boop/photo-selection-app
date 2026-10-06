@@ -11,6 +11,7 @@ import { canDeliverFinals } from '@/lib/galleryLifecycle';
 import { createClient } from '@/lib/supabase/client';
 import MagicButton from '@/components/MagicButton';
 import LightroomNamesCopy from '@/components/LightroomNamesCopy';
+import DeliveryMatchPanel from '@/components/DeliveryMatchPanel';
 import GalleryPaymentsSection from '@/components/GalleryPaymentsSection';
 import EmailInput from '@/components/EmailInput';
 import ClientInviteMessageCopy from '@/components/ClientInviteMessageCopy';
@@ -949,6 +950,21 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
               {deliveryMessageCopied ? 'הועתק!' : '✎ העתקת הודעה מוכנה לשליחה'}
             </button>
           </div>
+        )}
+
+        {/* התאמת הסופיות לבחירה + "מסירה ללקוחה ✓" - components/DeliveryMatchPanel.tsx */}
+        {!loadingDelivered && (
+          <DeliveryMatchPanel
+            galleryId={galleryId}
+            finalFilenames={deliveredPhotos.map((p) => p.filename)}
+            deliveredAt={deliveredAt}
+            cooldownLeft={cooldownLeft('delivery')}
+            onDelivered={setDeliveredAt}
+            onNotificationResult={({ emailSent, retryAfterSeconds }) => {
+              if (emailSent) startCooldown('delivery', MANUAL_EMAIL_COOLDOWN_SECONDS);
+              else if (retryAfterSeconds) startCooldown('delivery', retryAfterSeconds);
+            }}
+          />
         )}
 
         {notifyMessage && (
