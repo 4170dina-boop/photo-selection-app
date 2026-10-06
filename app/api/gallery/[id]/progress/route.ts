@@ -60,7 +60,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   // תשלום על התוספת - רק לבעלים (החשבון שלה), ורק אם הצלמת הגדירה קישורים.
   // עמודות חסרות (מיגרציה שלא רצה) = אין קישורים, בלי להפיל את הבקשה.
-  let payment: { amount: number; links: typeof EMPTY_PAYMENT_LINKS } | null = null;
+  // settled = הגלריה סומנה כשולמה (paid_at) - גם סכום שמחושב בדפדפן לא יוצג אז.
+  let payment: { amount: number; settled: boolean; links: typeof EMPTY_PAYMENT_LINKS } | null = null;
   const isOwner = !!session.participantId && session.participantId === gallery.owner_participant_id;
   if (isOwner) {
     let links = EMPTY_PAYMENT_LINKS;
@@ -93,7 +94,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         payments: paymentsData ?? [],
         paidAt: gallery.paid_at,
       });
-      payment = { amount, links };
+      payment = { amount, settled: !!gallery.paid_at, links };
     }
   }
 
