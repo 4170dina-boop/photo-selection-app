@@ -27,10 +27,36 @@ export default function AdminPage() {
   const [savingFromEmail, setSavingFromEmail] = useState(false);
   const [fromEmailMessage, setFromEmailMessage] = useState('');
 
+  // ה-user id של המנהלת - רק כשהניהול עוד לא נעול ל-ADMIN_USER_ID (ראו
+  // isAdminLockedToUserId ב-lib/adminCheck.ts), כדי להציג המלצה לנעול אותו.
+  const [unlockedAdminUserId, setUnlockedAdminUserId] = useState<string | null>(null);
+  const [copiedUserId, setCopiedUserId] = useState(false);
+
   useEffect(() => {
     loadPhotographers();
     loadSettings();
+    loadAdminLock();
   }, []);
+
+  async function loadAdminLock() {
+    const res = await fetch('/api/admin/me').catch(() => null);
+    if (!res?.ok) return;
+    const data = await res.json().catch(() => null);
+    if (data?.isAdmin && !data.lockedToUserId && typeof data.userId === 'string') {
+      setUnlockedAdminUserId(data.userId);
+    }
+  }
+
+  async function copyUserId() {
+    if (!unlockedAdminUserId) return;
+    try {
+      await navigator.clipboard.writeText(unlockedAdminUserId);
+      setCopiedUserId(true);
+      setTimeout(() => setCopiedUserId(false), 2000);
+    } catch {
+      // אין הרשאת לוח - ה-id מוצג ממילא וניתן לסמן ולהעתיק ידנית
+    }
+  }
 
   async function loadSettings() {
     const res = await fetch('/api/admin/settings');
@@ -116,6 +142,31 @@ export default function AdminPage() {
         הגלריה-הפעילה-האחת ומגבלת 25 התמונות (`enforce_active_gallery_limit`/`enforce_photo_limit`
         ב-`supabase/schema.sql`).
       </p>
+
+      {unlockedAdminUserId && (
+        <div style={{ background: theme.panel, border: `1px solid ${theme.gold}`, borderRadius: 10, padding: '1rem', marginBottom: '1.5rem' }}>
+          <div style={{ fontWeight: 'bold', marginBottom: '0.35rem' }}>
+            🔒 מומלץ לנעול את הניהול לחשבון שלך: הוסיפי ב-Vercel משתנה <span dir="ltr">ADMIN_USER_ID</span> = ה-user id שלמטה
+          </div>
+          <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '0.75rem' }}>
+            כרגע כל מי שנרשמת ומתחברת עם כתובת המנהלת מקבלת גישת ניהול. אחרי ההוספה (ו-Redeploy) רק החשבון הזה יוכל לנהל.
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            <code
+              dir="ltr"
+              style={{
+                flex: '1 1 240px', padding: '0.5rem 0.75rem', borderRadius: 8, border: `1px solid ${theme.border}`,
+                background: theme.bg, color: theme.text, fontSize: 13, userSelect: 'all', wordBreak: 'break-all',
+              }}
+            >
+              {unlockedAdminUserId}
+            </code>
+            <button onClick={copyUserId} style={{ ...outlineButtonStyle, padding: '0.5rem 1.1rem', fontSize: 13 }}>
+              {copiedUserId ? 'הועתק ✓' : 'העתקה'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem' }}>

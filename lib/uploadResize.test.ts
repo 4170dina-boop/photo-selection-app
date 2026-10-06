@@ -1,5 +1,61 @@
-import { describe, expect, it } from 'vitest';
-import { isResizableType, shouldUseResized, targetDimensions, UPLOAD_MAX_EDGE } from './uploadResize';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  isResizableType,
+  MAX_WORKER_FAILURES,
+  resizeImageToJpeg,
+  shouldUseResized,
+  targetDimensions,
+  UPLOAD_MAX_EDGE,
+  workersExhausted,
+} from './uploadResize';
+
+describe('workersExhausted', () => {
+  it('keeps using workers after one or two crashes, gives up at MAX_WORKER_FAILURES', () => {
+    expect(MAX_WORKER_FAILURES).toBe(3);
+    expect(workersExhausted(0)).toBe(false);
+    expect(workersExhausted(1)).toBe(false);
+    expect(workersExhausted(2)).toBe(false);
+    expect(workersExhausted(3)).toBe(true);
+    expect(workersExhausted(4)).toBe(true);
+  });
+});
+
+describe('resizeImageToJpeg', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubBitmap(width: number, height: number) {
+    const close = vi.fn();
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width, height, close })));
+    return close;
+  }
+
+  it('returns null (upload the original untouched) when the image is already small enough', async () => {
+    const close = stubBitmap(2000, 1500);
+    const createCanvas = vi.fn();
+    const result = await resizeImageToJpeg(new Blob(['x'], { type: 'image/png' }), 3000, 0.85, createCanvas);
+    expect(result).toBeNull();
+    // בלי קנבס ובלי קידוד מחדש בכלל
+    expect(createCanvas).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalled();
+  });
+
+  it('re-encodes to JPEG at the target size when the image is larger than maxEdge', async () => {
+    stubBitmap(6000, 4000);
+    const out = new Blob(['jpeg'], { type: 'image/jpeg' });
+    const ctx = { fillRect: vi.fn(), drawImage: vi.fn(), fillStyle: '', imageSmoothingEnabled: false, imageSmoothingQuality: 'low' };
+    const createCanvas = vi.fn((w: number, h: number) => ({
+      width: w,
+      height: h,
+      getContext: () => ctx,
+      convertToBlob: vi.fn(async () => out),
+    }));
+    const result = await resizeImageToJpeg(new Blob(['x'], { type: 'image/jpeg' }), 3000, 0.85, createCanvas as never);
+    expect(result).toBe(out);
+    expect(createCanvas).toHaveBeenCalledWith(3000, 2000);
+  });
+});
 
 describe('targetDimensions', () => {
   it('scales a landscape camera photo so the long edge is maxEdge', () => {

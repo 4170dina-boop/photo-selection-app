@@ -109,6 +109,28 @@ export function isFreshPhotoKey(galleryId: string, key: unknown): key is string 
   return new RegExp(`^${UUID_RE}\\.${EXT_RE}$`).test(key.slice(galleryId.length + 1));
 }
 
+// רישום חוזר של key שכבר רשום (app/api/galleries/[id]/photos/route.ts): אם
+// התשובה של הרישום הקודם הלכה לאיבוד (רשת נפלה אחרי שהשרת כבר הכניס את השורה),
+// "נסי שוב" בדפדפן שולח שוב את אותו path - מחזירים את התמונה הקיימת במקום
+// שגיאה, כדי שהדפדפן יסמן אותה "הועלה" בלי ליצור כפילות. רק אם זו אותה
+// גלריה - שורה בגלריה אחרת (לא אמור לקרות, ה-key מכיל את ה-galleryId) נדחית.
+// null = עוד לא רשום, ממשיכים לרישום רגיל.
+export function existingRegistrationResult(
+  existing: { id: string; gallery_id: string } | null | undefined,
+  galleryId: string
+): { id: string } | { error: string; status: number } | null {
+  if (!existing) return null;
+  if (existing.gallery_id === galleryId) return { id: existing.id };
+  return { error: 'התמונה כבר רשומה', status: 409 };
+}
+
+// הפריטים שבהם ה-PUT ל-R2 כבר הצליח (uploadedPath) אבל הרישום לא אושר - בניסיון
+// חוזר שולחים רק את הרישום עם אותו path, בלי presign/PUT חדשים (אחרת נוצר
+// קובץ שני ושורה שנייה לאותה תמונה).
+export function canRetryRegisterOnly(item: { status: string; uploadedPath?: string | null }): boolean {
+  return (item.status === 'pending' || item.status === 'error') && !!item.uploadedPath;
+}
+
 // כמה תמונות עוד אפשר להוסיף לגלריה. null = ללא הגבלה (is_unlimited).
 export function remainingPhotoQuota(currentCount: number, isUnlimited: boolean): number | null {
   if (isUnlimited) return null;

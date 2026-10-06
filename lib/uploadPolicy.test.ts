@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canRetryRegisterOnly,
+  existingRegistrationResult,
   FREE_PHOTO_LIMIT,
   MAX_UPLOAD_BYTES,
   PROCESS_RETRY_GRACE_MS,
@@ -22,6 +24,35 @@ import {
   parseUploadBatch,
   quotaGrantCount,
 } from './uploadPolicy';
+
+describe('existingRegistrationResult', () => {
+  it('returns null when the key is not registered yet', () => {
+    expect(existingRegistrationResult(null, 'g1')).toBeNull();
+    expect(existingRegistrationResult(undefined, 'g1')).toBeNull();
+  });
+
+  it('is idempotent for a key already registered in the same gallery (lost response retry)', () => {
+    expect(existingRegistrationResult({ id: 'p1', gallery_id: 'g1' }, 'g1')).toEqual({ id: 'p1' });
+  });
+
+  it('rejects a key registered in another gallery', () => {
+    expect(existingRegistrationResult({ id: 'p1', gallery_id: 'g2' }, 'g1')).toEqual({ error: 'התמונה כבר רשומה', status: 409 });
+  });
+});
+
+describe('canRetryRegisterOnly', () => {
+  it('retries only the register when the PUT already succeeded', () => {
+    expect(canRetryRegisterOnly({ status: 'error', uploadedPath: 'g1/a.jpg' })).toBe(true);
+    expect(canRetryRegisterOnly({ status: 'pending', uploadedPath: 'g1/a.jpg' })).toBe(true);
+  });
+
+  it('does a full upload when nothing reached storage, or the item is not retryable', () => {
+    expect(canRetryRegisterOnly({ status: 'error' })).toBe(false);
+    expect(canRetryRegisterOnly({ status: 'error', uploadedPath: '' })).toBe(false);
+    expect(canRetryRegisterOnly({ status: 'done', uploadedPath: 'g1/a.jpg' })).toBe(false);
+    expect(canRetryRegisterOnly({ status: 'uploading', uploadedPath: 'g1/a.jpg' })).toBe(false);
+  });
+});
 
 describe('parseUploadBatch', () => {
   it('accepts a batch of files', () => {

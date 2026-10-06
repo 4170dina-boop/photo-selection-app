@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { deleteObjects, headObject } from '@/lib/r2';
-import { isFreshPhotoKey, MAX_UPLOAD_BYTES, parseUploadBatch } from '@/lib/uploadPolicy';
+import { existingRegistrationResult, isFreshPhotoKey, MAX_UPLOAD_BYTES, parseUploadBatch } from '@/lib/uploadPolicy';
 import { parseTakenAtInput } from '@/lib/exifDate';
 
 // רישום תמונה שהדפדפן כבר העלה ל-R2 (דרך ה-URL החתום מ-presign-upload).
@@ -52,17 +52,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
 
-  // אותו key פעמיים באותה בקשה - רק הראשון נרשם (בלי זה שני ה-inserts היו
-  // עוברים יחד את בדיקת "כבר רשומה").
-  const seenPaths = new Set<string>();
+  // אותו key פעמיים באותה בקשה - נרשם פעם אחת, ושני הפריטים מקבלים את אותה
+  // תוצאה (בלי זה שני ה-inserts היו עוברים יחד את בדיקת "כבר רשומה").
+  const byPath = new Map<string, Promise<RegisterResult>>();
   const results = await Promise.all(
     parsed.items.map((item) => {
       const path = item?.path;
-      if (typeof path === 'string') {
-        if (seenPaths.has(path)) return Promise.resolve<RegisterResult>({ error: 'התמונה כבר רשומה', status: 409 });
-        seenPaths.add(path);
-      }
-      return registerOne(supabase, gallery.id, item);
+      if (typeof path !== 'string') return registerOne(supabase, gallery.id, item);
+      const pending = byPath.get(path);
+      if (pending) return pending;
+      const promise = registerOne(supabase, gallery.id, item);
+      byPath.set(path, promise);
+      return promise;
     })
   );
 
@@ -92,11 +93,12 @@ async function registerOne(
     return { error: 'בקשה לא תקינה', status: 400 };
   }
 
-  // key שכבר רשום לתמונה אחרת - לא נוגעים בו (ובוודאי לא מוחקים אותו למטה).
-  const { data: existing } = await supabase.from('photos').select('id').eq('file_path', path).maybeSingle();
-  if (existing) {
-    return { error: 'התמונה כבר רשומה', status: 409 };
-  }
+  // key שכבר רשום - לא נוגעים בו (ובוודאי לא מוחקים אותו למטה). אם הוא רשום
+  // בגלריה הזו, זה ניסיון חוזר אחרי שהתשובה הקודמת אבדה - מחזירים את התמונה
+  // הקיימת (אידמפוטנטי) במקום שגיאה. ראו existingRegistrationResult.
+  const { data: existing } = await supabase.from('photos').select('id, gallery_id').eq('file_path', path).maybeSingle();
+  const existingResult = existingRegistrationResult(existing as { id: string; gallery_id: string } | null, galleryId);
+  if (existingResult) return existingResult;
 
   const head = await headObject(path).catch(() => null);
   if (!head) {
@@ -114,6 +116,13 @@ async function registerOne(
     .single();
 
   if (insertError || !photo) {
+    // unique violation על file_path (אם הורץ ה-unique index האופציונלי) - בקשה
+    // מקבילה כבר רשמה את אותו key. לא מוחקים את הקובץ שלה; מחזירים את השורה שלה.
+    if (insertError?.code === '23505') {
+      const { data: raced } = await supabase.from('photos').select('id, gallery_id').eq('file_path', path).maybeSingle();
+      const racedResult = existingRegistrationResult(raced as { id: string; gallery_id: string } | null, galleryId);
+      return racedResult ?? { error: 'התמונה כבר רשומה', status: 409 };
+    }
     await cleanup(path);
     const message = insertError?.message ?? '';
     if (message.includes('LIMIT_PHOTOS')) {

@@ -3,8 +3,23 @@ import {
   callbackErrorMessage,
   callbackParamsError,
   classifySignInError,
+  isExistingUserSignup,
   isRateLimitError,
 } from './authErrors';
+
+describe('isExistingUserSignup', () => {
+  it('detects the obfuscated user Supabase returns for an already-registered email', () => {
+    expect(isExistingUserSignup({ identities: [] }, false)).toBe(true);
+  });
+
+  it('is false for a real new signup, a session, or missing data', () => {
+    expect(isExistingUserSignup({ identities: [{ id: 'x' }] }, false)).toBe(false);
+    expect(isExistingUserSignup({ identities: [] }, true)).toBe(false);
+    expect(isExistingUserSignup({}, false)).toBe(false);
+    expect(isExistingUserSignup({ identities: null }, false)).toBe(false);
+    expect(isExistingUserSignup(null, false)).toBe(false);
+  });
+});
 
 describe('classifySignInError', () => {
   it('maps known codes', () => {

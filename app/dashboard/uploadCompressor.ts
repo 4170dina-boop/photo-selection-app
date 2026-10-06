@@ -3,7 +3,14 @@
 // workers (COMPRESS_POOL_SIZE) - כך שבזמן שתמונות אחרות עולות, הבאות בתור כבר
 // מוקטנות ברקע, בלי שעשרות פענוחים של 24MP (~100MB זיכרון כל אחד) ירוצו יחד.
 import { createSlotLimiter } from '@/lib/concurrency';
-import { isResizableType, resizeImageToJpeg, shouldUseResized, UPLOAD_JPEG_QUALITY, UPLOAD_MAX_EDGE } from '@/lib/uploadResize';
+import {
+  isResizableType,
+  resizeImageToJpeg,
+  shouldUseResized,
+  UPLOAD_JPEG_QUALITY,
+  UPLOAD_MAX_EDGE,
+  workersExhausted,
+} from '@/lib/uploadResize';
 import type { ResizeRequest, ResizeResponse } from './imageResize.worker';
 
 // 2 מספיקים: הקטנה של תמונת מצלמה לוקחת בערך חצי שנייה, כלומר ~4 תמונות
@@ -14,8 +21,10 @@ const WORKER_TIMEOUT_MS = 30_000;
 
 const runLimited = createSlotLimiter(COMPRESS_POOL_SIZE);
 const workers: (Worker | null)[] = [];
-// אחרי ש-worker אחד דיווח שאין תמיכה (או נכשל ביצירה) - לא מנסים יותר.
+// אחרי ש-worker אחד דיווח שאין תמיכה (או נכשל ביצירה), או אחרי
+// MAX_WORKER_FAILURES קריסות - לא מנסים יותר.
 let workersUnavailable = false;
+let workerFailures = 0;
 let nextRequestId = 1;
 
 function getWorker(slot: number): Worker | null {
@@ -60,9 +69,15 @@ function resizeInWorker(worker: Worker, slot: number, file: Blob): Promise<{ blo
         resolve({ blob: e.data.blob });
       }
     };
+    // קריסה של ה-worker - מחליפים רק אותו (חדש ייווצר בתמונה הבאה בסלוט הזה),
+    // והתמונה הנוכחית מוקטנת על ה-main thread. רק אחרי MAX_WORKER_FAILURES
+    // קריסות מוותרים על workers לגמרי.
     const onError = () => {
       cleanup();
-      workersUnavailable = true;
+      worker.terminate();
+      if (workers[slot] === worker) workers[slot] = null;
+      workerFailures++;
+      if (workersExhausted(workerFailures)) workersUnavailable = true;
       resolve(null);
     };
     worker.addEventListener('message', onMessage);

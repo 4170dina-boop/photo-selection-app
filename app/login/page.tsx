@@ -7,7 +7,9 @@ import { createClient } from '@/lib/supabase/client';
 import { theme, inputStyle, goldButtonStyle } from '@/lib/theme';
 import { resolveSafeNext } from '@/lib/safeNext';
 import {
+  ALREADY_REGISTERED_MESSAGE,
   callbackErrorMessage,
+  isExistingUserSignup,
   classifySignInError,
   isRateLimitError,
   RATE_LIMIT_MESSAGE,
@@ -51,12 +53,15 @@ function LoginForm() {
   // מתמלא כשההתחברות נכשלה כי המייל עוד לא אושר - מציג כפתור "שליחה חוזרת"
   const [unconfirmedEmail, setUnconfirmedEmail] = useState('');
   const [resending, setResending] = useState(false);
+  // הרשמה עם מייל שכבר רשום - מציג קישורים להתחברות/איפוס סיסמה ליד השגיאה
+  const [alreadyRegistered, setAlreadyRegistered] = useState(false);
 
   function switchMode(newMode: 'login' | 'signup') {
     setMode(newMode);
     setError('');
     setConfirmMessage('');
     setUnconfirmedEmail('');
+    setAlreadyRegistered(false);
   }
 
   async function handleResendConfirmation() {
@@ -86,6 +91,7 @@ function LoginForm() {
     setError('');
     setConfirmMessage('');
     setUnconfirmedEmail('');
+    setAlreadyRegistered(false);
     setLoading(true);
 
     const supabase = createClient();
@@ -122,7 +128,8 @@ function LoginForm() {
 
     if (signUpError) {
       if (signUpError.code === 'user_already_exists' || signUpError.message === 'User already registered') {
-        setError('כתובת המייל כבר רשומה');
+        setError(ALREADY_REGISTERED_MESSAGE);
+        setAlreadyRegistered(true);
       } else if (isRateLimitError(signUpError)) {
         setError(RATE_LIMIT_MESSAGE);
       } else {
@@ -136,6 +143,14 @@ function LoginForm() {
       // אימות מייל כבוי בפרויקט - יש session מיד
       router.push(safeNext());
       router.refresh();
+      return;
+    }
+
+    // מייל שכבר רשום - Supabase מחזיר user עם identities ריק במקום שגיאה
+    // (ראו isExistingUserSignup ב-lib/authErrors.ts)
+    if (isExistingUserSignup(data.user, false)) {
+      setError(ALREADY_REGISTERED_MESSAGE);
+      setAlreadyRegistered(true);
       return;
     }
 
@@ -222,6 +237,20 @@ function LoginForm() {
           <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.75rem 1rem', borderRadius: 8, marginTop: '1.25rem' }}>
             {error}
           </p>
+        )}
+        {alreadyRegistered && (
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '0.75rem', fontSize: 13 }}>
+            <button
+              type="button"
+              onClick={() => switchMode('login')}
+              style={{ background: 'transparent', border: 'none', color: theme.gold, cursor: 'pointer', padding: 0, fontSize: 13 }}
+            >
+              להתחברות
+            </button>
+            <Link href="/login/forgot-password" style={{ color: theme.gold }}>
+              איפוס סיסמה
+            </Link>
+          </div>
         )}
         {unconfirmedEmail && (
           <button
