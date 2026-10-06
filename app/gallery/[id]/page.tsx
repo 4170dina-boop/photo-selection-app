@@ -6,6 +6,9 @@ import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/th
 import { computePackageUsage } from '@/lib/gifts';
 import ExtensionCountdownBanner from '@/components/ExtensionCountdownBanner';
 import GiftCollage from '@/components/GiftCollage';
+import GalleryNavBar, { BurstBadge, BurstChooser } from '@/components/GalleryNavBar';
+import { applyNavFilters, burstMembers } from '@/lib/galleryNav';
+import type { Chapter } from '@/lib/chapters';
 import {
   type PendingAction,
   NOTE_MAX_LENGTH,
@@ -72,6 +75,9 @@ interface GalleryPhoto {
   // תמונת מתנה מהצלמת (lib/gifts.ts) - כלולה אוטומטית, לא נבחרת ולא נספרת במכסה
   isGift?: boolean;
   giftMessage?: string | null;
+  // פרק (gallery_chapters) ורצף תמונות דומות (lib/bursts.ts) - ראו components/GalleryNavBar.tsx
+  chapterId?: string | null;
+  burstId?: string | null;
 }
 
 interface DeliveredPhoto {
@@ -375,6 +381,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // 'all' | 'selected' | 'maybe', או סינון "בוחרים ביחד" (lib/choosingTogether.ts):
   // 'together' | 'onlyMe' | 'only:<participantId>'
   const [viewFilter, setViewFilter] = useState<string>('all');
+  // ניווט בגלריות גדולות (components/GalleryNavBar.tsx): פרק נבחר, "הסתרת הדומות",
+  // וחלון בחירה מתוך רצף תמונות דומות (burstId פתוח)
+  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [chapterFilter, setChapterFilter] = useState<string>('all');
+  const [hideSimilar, setHideSimilar] = useState(false);
+  const [burstChooserId, setBurstChooserId] = useState<string | null>(null);
   // הודעה קופצת "🔔 יוסי סימן/ה 3 תמונות חדשות" מהסקר החי של הסימונים
   const [othersToast, setOthersToast] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState(false);
@@ -956,6 +968,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     setNeedsIdentity(false);
     setPhotos(data.photos ?? []);
+    setChapters(data.chapters ?? []);
     setDeliveredPhotos(data.deliveredPhotos ?? []);
     setMyMarks(mergedMarks);
     setAllMarks(data.allMarks ?? {});
@@ -2110,12 +2123,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // בכל רינדור, כך שהמספרים מתעדכנים מיד עם כל סימון שלי ועם כל סקר חי.
   const together = computeTogetherFilters(photos.map((p) => p.id), myParticipant?.id, myStatuses, allMarks);
   const togetherIds = together.show ? photoIdsForTogetherFilter(together, viewFilter) : null;
-  const visiblePhotos =
+  const filteredPhotos =
     viewFilter === 'selected' || viewFilter === 'maybe'
       ? photos.filter((p) => myStatuses[p.id] === viewFilter)
       : togetherIds
       ? photos.filter((p) => togetherIds.includes(p.id))
       : photos;
+  const isMySelected = (id: string) => myStatuses[id] === 'selected';
+  const visiblePhotos = applyNavFilters(filteredPhotos, { chapterFilter, hideSimilar, isSelected: isMySelected });
+  const burstsById = burstMembers(photos);
   const owner = participants.find((p) => p.isOwner);
   // מספר רץ קבוע לכל תמונה (מקום ברשימה המלאה, לא ברשימה המסוננת) - מוצג
   // ללקוחה במקום שם הקובץ המקורי (IMG_1234.JPG).
@@ -3368,6 +3384,37 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         ))}
       </div>
 
+      <GalleryNavBar
+        chapters={chapters}
+        photos={photos}
+        chapterFilter={chapterFilter}
+        onChapterFilter={setChapterFilter}
+        viewedIds={viewedIds}
+        isSelected={isMySelected}
+        hasBursts={burstsById.size > 0}
+        hideSimilar={hideSimilar}
+        onHideSimilar={setHideSimilar}
+        accent={accent}
+      />
+      {burstChooserId && burstsById.has(burstChooserId) && (
+        <BurstChooser
+          photos={burstsById.get(burstChooserId)!}
+          photoNumberById={photoNumberById}
+          isSelected={isMySelected}
+          onPick={
+            !isLocked && myParticipant
+              ? (id) => {
+                  if (!isMySelected(id)) setPhotoStatus(id, 'selected');
+                  setBurstChooserId(null);
+                }
+              : null
+          }
+          onClose={() => setBurstChooserId(null)}
+          accent={accentSolid}
+          accentText={accentText}
+        />
+      )}
+
       {/* הודעה קופצת לא-חוסמת על סימונים חדשים של בני משפחה (הסקר החי) -
           אזור ה-aria-live קיים תמיד כדי שקוראי מסך יכריזו על השינוי */}
       <div
@@ -3630,6 +3677,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   <ProcessingPlaceholder />
                 )}
               </button>
+
+              {!compareMode && photo.burstId && (
+                <BurstBadge count={burstsById.get(photo.burstId)?.length ?? 0} onOpen={() => setBurstChooserId(photo.burstId ?? null)} />
+              )}
 
               {/* כפתור ההערה עבר לתצוגה המוגדלת (#14) - בכרטיס נשאר רק סימון קטן
                   ולא אינטראקטיבי שיש הערה (מוכרז בתווית הכרטיס) */}
