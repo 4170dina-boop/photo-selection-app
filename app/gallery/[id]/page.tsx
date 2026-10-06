@@ -2273,7 +2273,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   }
 
   return (
-    <div style={{ background: theme.bg, minHeight: '100vh', color: theme.text, direction: 'rtl', fontFamily: theme.fontSans }}>
+    <div dir={dir} lang={lang} style={{ background: theme.bg, minHeight: '100vh', color: theme.text, fontFamily: theme.fontSans }}>
       <div
         style={{
           position: 'sticky', top: 0, zIndex: 50, backdropFilter: 'blur(12px)',
@@ -2285,15 +2285,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         <div style={{ display: 'flex', gap: '0.75rem 1rem', alignItems: 'center', fontSize: 14, flexWrap: 'wrap' }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: theme.green, display: 'inline-block' }} />
-            אולי ({maybeCount})
+            {tr('hdr.maybe', { n: maybeCount })}
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: accent, display: 'inline-block' }} />
-            נבחר ({mySelectedCount})
+            {tr('hdr.selected', { n: mySelectedCount })}
           </span>
           {myParticipant && (
             <span style={{ color: theme.textFaint, fontSize: 12 }}>
-              {t('מחוברת', 'מחובר')} בתור {myParticipant.displayName}{isOwner ? '' : ' (משפחה)'}
+              {tr('hdr.connectedAs', { name: myParticipant.displayName })}{isOwner ? '' : tr('hdr.family')}
             </span>
           )}
           <button
@@ -2306,7 +2306,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               borderColor: compareMode ? accent : theme.border, color: compareMode ? accent : theme.textMuted,
             }}
           >
-            {compareMode ? `✕ ${t('צאי', 'צא', 'צא/י')} ממצב השוואה` : '⇄ השוואה'}
+            {compareMode ? tr('hdr.exitCompare') : tr('hdr.compare')}
           </button>
           {!readOnly && (
           <button
@@ -2318,31 +2318,32 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               opacity: isLocked || photos.length === 0 ? 0.5 : 1,
             }}
           >
-            {swipeMode ? `✕ ${t('צאי', 'צא', 'צא/י')} מבחירה מהירה` : '⚡ בחירה מהירה'}
+            {swipeMode ? tr('hdr.exitSwipe') : tr('hdr.swipe')}
           </button>
           )}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <div style={{ textAlign: 'right' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+          <LanguagePicker lang={lang} onChange={changeLang} accent={accent} />
+          <div style={{ textAlign: 'start' }}>
             <div>
-              נבחרו במסגרת החבילה{' '}
+              {tr('hdr.selectedInPackage')}{' '}
               <bdi dir="ltr">
                 <b style={{ color: accent, fontFamily: theme.fontSerif }}>{ownerSelectedCount}</b> / {packageInfo?.included ?? 0}
               </bdi>
             </div>
             <div style={{ fontSize: 12, color: theme.textFaint }}>
-              {isOwner ? `${maybeCount} תמונות "אולי"` : `הבחירות שלך (קלט בלבד): ${mySelectedCount} נבחרו, ${maybeCount} אולי`}
+              {isOwner ? tr('hdr.ownerMaybe', { n: maybeCount }) : tr('hdr.guestSummary', { selected: mySelectedCount, maybe: maybeCount })}
             </div>
             {/* כמה תמונות כבר נפתחו במסך מלא (מקומי, למכשיר הזה) */}
             {!isLocked && viewProgress.seen > 0 && (
               <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 3 }}>
                 <span>
-                  עברת על <bdi dir="ltr">{viewProgress.seen}</bdi> מתוך <bdi dir="ltr">{viewProgress.total}</bdi> תמונות
+                  {rich('hdr.viewed', { seen: <bdi dir="ltr">{viewProgress.seen}</bdi>, total: <bdi dir="ltr">{viewProgress.total}</bdi> })}
                 </span>
                 <div
                   role="progressbar"
-                  aria-label="תמונות שעברת עליהן"
+                  aria-label={tr('hdr.viewedAria')}
                   aria-valuemin={0}
                   aria-valuemax={viewProgress.total}
                   aria-valuenow={viewProgress.seen}
@@ -2369,10 +2370,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
       {(isOffline || pendingCount > 0) && (
         <div role="status" aria-live="polite" style={{ padding: '0.5rem 1.5rem', background: theme.warningBg, color: theme.warningText, fontSize: 13, textAlign: 'center' }}>
-          {isOffline && '📴 אין חיבור לאינטרנט - '}
-          {pendingCount > 0
-            ? `${pendingCount} שינויים ממתינים ויישלחו אוטומטית כשהחיבור יחזור.`
-            : 'אפשר להמשיך לדפדף ולבחור - הבחירות יישלחו כשהחיבור יחזור.'}
+          {isOffline && tr('off.noInternet')}
+          {pendingCount > 0 ? tr('off.pending', { count: pendingCount }) : tr('off.keepGoing')}
         </div>
       )}
 
@@ -2385,23 +2384,25 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       >
         {packageInfo && (
           <span>
-            החבילה כוללת <b style={{ color: theme.text }}>{packageInfo.included}</b> תמונות
-            {remaining > 0 && <> · נשארו לך עוד <b style={{ color: accent }}>{remaining}</b> במסגרת החבילה</>}
+            {rich('info.packageIncludes', { n: <b style={{ color: theme.text }}>{packageInfo.included}</b> })}
+            {remaining > 0 && rich('info.remaining', { n: <b style={{ color: accent }}>{remaining}</b> })}
           </span>
         )}
         {/* מחיר תמונה נוספת מוצג מראש, לא רק אחרי שכבר חרגו מהחבילה */}
         {packageInfo && extraLabel && <span style={{ color: theme.text }}>{extraLabel}</span>}
         {packageInfo && packageInfo.basePrice > 0 && (
           <span>
-            סה״כ משוער לחבילה: <b style={{ color: accent }}>{Math.round(totalEstimate)} ₪</b>
+            {rich('info.estimate', { total: <b style={{ color: accent }}>{money(Math.round(totalEstimate))}</b> })}
             {overIncluded > 0 && (
-              <span style={{ color: theme.textFaint }}> ({Math.round(packageInfo.basePrice)} ₪ חבילה + {Math.round(extraCost)} ₪ תוספת)</span>
+              <span style={{ color: theme.textFaint }}>
+                {tr('info.estimateBreakdown', { base: money(Math.round(packageInfo.basePrice)), extra: money(Math.round(extraCost)) })}
+              </span>
             )}
           </span>
         )}
         {expiresAt && !readOnly && (
           <span>
-            ניתן לבחור עד <b style={{ color: theme.text }}>{hebrewDateInIsrael(new Date(expiresAt))}</b>
+            {rich('info.until', { date: <b style={{ color: theme.text }}>{dateText(expiresAt)}</b> })}
           </span>
         )}
       </div>
@@ -2414,6 +2415,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         selectionOpen={!isLocked}
         accent={accent}
         gender={viewerGender}
+        lang={lang}
       />
 
       {/* מסגור חיובי/upsell ("קיבלת עוד") ולא אזהרה ("חרגת") - נשען על אותה
@@ -2426,7 +2428,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             background: `${accent}1f`, border: `1px solid ${accent}44`, color: accent, fontSize: 14,
           }}
         >
-          ✨ בחרת {ownerSelectedCount} תמונות ({packageInfo.included} כלולות + {overIncluded} נוספות) · תוספת: {Math.round(extraCost)} ₪
+          {tr('over.banner', { selected: ownerSelectedCount, included: packageInfo.included, extra: overIncluded, cost: money(Math.round(extraCost)) })}
         </div>
       )}
 
@@ -2439,9 +2441,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             color: theme.text, fontSize: 14,
           }}
         >
-          🎁 {giftPhotos.length === 1 ? 'הכנתי לך תמונת מתנה' : `הכנתי לך ${giftPhotos.length} תמונות מתנה`}
-          {' '}- {giftPhotos.length === 1 ? 'היא כבר כלולה' : 'הן כבר כלולות'} אצלך,
-          בלי לגרוע מהחבילה ובלי תוספת תשלום. אין צורך לבחור {giftPhotos.length === 1 ? 'אותה' : 'אותן'}.
+          {tr('gift.banner', { count: giftPhotos.length })}
         </div>
       )}
 
@@ -2454,11 +2454,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem',
           }}
         >
-          <span>✨ חדש: לחיצה על תמונה מגדילה אותה, ובוחרים בכפתורים למטה</span>
+          <span>{tr('hint.tap')}</span>
           <button
             type="button"
             onClick={dismissTapHint}
-            aria-label="סגירת ההודעה"
+            aria-label={tr('common.closeNotice')}
             style={{
               flexShrink: 0, width: 44, height: 44, borderRadius: '50%', border: 'none',
               background: 'transparent', color: theme.textMuted, fontSize: 16, cursor: 'pointer',
@@ -2478,15 +2478,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap',
           }}
         >
-          <span>👋 {t('ברוכה השבה', 'ברוך השב')}! להמשיך מתמונה <bdi dir="ltr">{resumeOffer.index + 1}</bdi>?</span>
+          <span>{rich('resume.text', { n: <bdi dir="ltr">{resumeOffer.index + 1}</bdi> })}</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <button type="button" onClick={resumeFromOffer} style={{ ...primaryButtonStyle, padding: '0.4rem 1.1rem', minHeight: 44 }}>
-              המשך
+              {tr('resume.continue')}
             </button>
             <button
               type="button"
               onClick={() => setResumeOffer(null)}
-              aria-label="סגירת ההודעה"
+              aria-label={tr('common.closeNotice')}
               style={{
                 width: 44, height: 44, borderRadius: '50%', border: 'none',
                 background: 'transparent', color: theme.textMuted, fontSize: 16, cursor: 'pointer',
@@ -2500,7 +2500,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
       {!isLocked && (
       <p style={{ textAlign: 'center', fontSize: 12, color: theme.textFaint, padding: '0.5rem 1.5rem 0' }}>
-        לחיצה על תמונה פותחת אותה בגדול · <span style={{ color: accent }}>♡</span> בפינה בוחר מהר
+        {rich('grid.hint', { heart: <span style={{ color: accent }}>♡</span> })}
       </p>
       )}
 
@@ -2512,7 +2512,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             background: theme.panel, border: `1px solid ${theme.border}`, color: theme.textMuted, fontSize: 14,
           }}
         >
-          תקופת הבחירה בגלריה הסתיימה{expiresAt ? ` (${hebrewDateInIsrael(new Date(expiresAt))})` : ''} - אפשר לצפות בתמונות ולהוריד את התמונות שנמסרו.
+          {expiresAt ? tr('ro.endedWithDate', { date: dateText(expiresAt) }) : tr('ro.ended')}
         </div>
       )}
 
@@ -2554,14 +2554,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             )}
           </div>
           <p style={{ fontSize: 22, fontFamily: theme.fontSerif, color: theme.text, marginBottom: '0.5rem' }}>
-            תודה רבה{myParticipant?.displayName ? `, ${myParticipant.displayName}` : ''}!
+            {tr('thanks.title', { nameSuffix: myParticipant?.displayName ? `, ${myParticipant.displayName}` : '' })}
           </p>
           <p style={{ color: theme.textMuted, fontSize: 14, lineHeight: 1.7, maxWidth: 420, margin: '0 auto' }}>
-            הבחירה שלך התקבלה{photographerName ? ` אצל ${photographerName}` : ''} ✨ אין צורך לעשות עוד כלום -
-            {' '}{photographerName ?? 'הצלמת'} כבר רואה את מה שבחרת, ותיצור איתך קשר להמשך.
+            {photographerName ? tr('thanks.bodyNamed', { photographer: photographerName }) : tr('thanks.body')}
           </p>
           <p style={{ color: theme.textFaint, fontSize: 12, marginTop: '1rem' }}>
-            ✓ אפשר עדיין לצפות בתמונות למטה, אבל לא לשנות את הבחירה.
+            {tr('thanks.viewOnly')}
           </p>
           {/* קולאז' מתנה אוטומטי (components/GiftCollage.tsx) - נשאר זמין במסך
               הזה כל עוד הגלריה פתוחה לצפייה, לא רק מיד אחרי הסיום */}
@@ -2574,6 +2573,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             buttonStyle={primaryButtonStyle}
             fileLabel={myParticipant?.displayName ?? photographerName}
             refreshPhotos={async () => (await refreshGallerySilently())?.photos ?? null}
+            lang={lang}
           />
         </div>
       )}
@@ -2590,10 +2590,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
             <div>
               <p style={{ fontSize: 18, fontFamily: theme.fontSerif, color: theme.text, marginBottom: '0.25rem' }}>
-                💛 התמונות הסופיות שלך מוכנות!
+                {tr('dl.title')}
               </p>
               <p style={{ color: theme.textMuted, fontSize: 13 }}>
-                {deliveredPhotos.length} תמונות ערוכות - אפשר לצפות ולהוריד, בודדת או הכל יחד.
+                {tr('dl.sub', { count: deliveredPhotos.length })}
               </p>
             </div>
             <button
@@ -2601,7 +2601,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               disabled={downloadingZip}
               style={{ ...primaryButtonStyle, opacity: downloadingZip ? 0.6 : 1 }}
             >
-              {downloadingZip ? t('מכינה ZIP...', 'מכין ZIP...') : '📦 הורדת הכל כ-ZIP'}
+              {downloadingZip ? tr('dl.preparingZip') : tr('dl.zipAll')}
             </button>
           </div>
 
@@ -2628,15 +2628,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 <button
                   onClick={() => handleDownloadDeliveredPhoto(photo)}
                   disabled={downloadingId === photo.id}
-                  aria-label={`הורדת ${photo.filename}`}
-                  title="הורדת התמונה"
+                  aria-label={tr('dl.downloadAria', { name: photo.filename })}
+                  title={tr('dl.downloadTitle')}
                   style={{
                     position: 'absolute', bottom: 6, left: 6, right: 6, padding: '0.4rem', borderRadius: 8, minHeight: 44,
                     background: 'rgba(0,0,0,0.65)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 12,
                     opacity: downloadingId === photo.id ? 0.6 : 1,
                   }}
                 >
-                  {downloadingId === photo.id ? t('מורידה...', 'מוריד...') : '⬇ הורדה'}
+                  {downloadingId === photo.id ? tr('dl.downloading') : tr('dl.download')}
                 </button>
               </div>
             ))}
@@ -2645,7 +2645,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       )}
 
       <p style={{ textAlign: 'center', fontSize: 13, color: theme.textFaint, padding: '0.75rem 1.5rem 0' }}>
-        🔒 התמונות כאן מוצגות עם סימן מים. את התמונות הנקיות והערוכות {t('תקבלי', 'תקבל')} בסוף 💛
+        {tr('wm.note')}
       </p>
 
       <div style={{ padding: '0 1.5rem 1rem', textAlign: 'center' }}>
@@ -2657,25 +2657,25 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           }}
           style={{ ...outlineButtonStyle, marginTop: '0.5rem' }}
         >
-          {compareMode ? `${t('צאי', 'צא', 'צא/י')} ממצב השוואה` : `⇄ השוואה בין כמה תמונות`}
+          {compareMode ? tr('act.exitCompare') : tr('act.compareMany')}
         </button>
         {compareMode && (
-          <span style={{ marginRight: '0.5rem', fontSize: 13, color: theme.textMuted }}>
-            {t('בחרי', 'בחר')} עד {MAX_COMPARE} תמונות להשוואה ({compareIds.length}/{MAX_COMPARE})
+          <span style={{ marginInlineStart: '0.5rem', fontSize: 13, color: theme.textMuted }}>
+            {tr('act.compareHint', { max: MAX_COMPARE, count: compareIds.length })}
           </span>
         )}
         {compareMode && compareIds.length >= 2 && (
           <button
             onClick={() => setCompareViewOpen(true)}
-            style={{ ...primaryButtonStyle, marginTop: '0.5rem', marginRight: '0.5rem', padding: '0.5rem 1.1rem' }}
+            style={{ ...primaryButtonStyle, marginTop: '0.5rem', marginInlineStart: '0.5rem', padding: '0.5rem 1.1rem' }}
           >
-            השוואה כעת ({compareIds.length})
+            {tr('act.compareNow', { count: compareIds.length })}
           </button>
         )}
 
         {photos.length > 0 && (
-          <button onClick={openSlideshow} style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginRight: '0.5rem' }}>
-            ▶ סקירה ברצף
+          <button onClick={openSlideshow} style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginInlineStart: '0.5rem' }}>
+            {tr('act.slideshow')}
           </button>
         )}
 
@@ -2683,9 +2683,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           <button
             onClick={clearAllSelections}
             disabled={clearingAll}
-            style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginRight: '0.5rem', color: theme.errorText, opacity: clearingAll ? 0.6 : 1 }}
+            style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginInlineStart: '0.5rem', color: theme.errorText, opacity: clearingAll ? 0.6 : 1 }}
           >
-            {clearingAll ? t('מבטלת...', 'מבטל...') : '🗑 ביטול כל הבחירה שלי'}
+            {clearingAll ? tr('act.clearing') : tr('act.clearAll')}
           </button>
         )}
 
@@ -2693,10 +2693,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           <button
             onClick={handleAiPicks}
             disabled={aiPicksRunning}
-            title="Claude מנתחת עד 60 תמונות ומסמנת 'אולי' על הטובות ביותר - נקודת פתיחה, לא בחירה סופית"
-            style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginRight: '0.5rem', borderColor: theme.gold, color: theme.gold, opacity: aiPicksRunning ? 0.6 : 1 }}
+            title={tr('act.aiTitle')}
+            style={{ ...outlineButtonStyle, marginTop: '0.5rem', marginInlineStart: '0.5rem', borderColor: theme.gold, color: theme.gold, opacity: aiPicksRunning ? 0.6 : 1 }}
           >
-            {aiPicksRunning ? 'מנתחת תמונות...' : '🪄 עזרי לי לבחור'}
+            {aiPicksRunning ? tr('act.aiRunning') : tr('act.aiHelp')}
           </button>
         )}
 
@@ -2704,7 +2704,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
         {!isLocked && !isOwner && (
           <p style={{ fontSize: 13, color: theme.textFaint, marginTop: '0.75rem' }}>
-            רק {owner?.displayName ?? tOwner('הלקוחה הראשית', 'הלקוח הראשי')} {tOwner('יכולה', 'יכול')} לסיים את הבחירה הסופית - הבחירות שלך כאן הן קלט לדיון.
+            {trOwner('act.onlyOwnerFinal', { owner: ownerLabel(owner?.displayName) })}
           </p>
         )}
       </div>
@@ -2715,7 +2715,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           tabIndex={-1}
           role="dialog"
           aria-modal="true"
-          aria-label="השוואת תמונות"
+          aria-label={tr('cmp.aria')}
           style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 50,
             display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2rem',
@@ -2729,7 +2729,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               setCompareIds([]);
               setCompareViewOpen(false);
             }}
-            title="יציאה ממצב השוואה"
+            title={tr('cmp.exit')}
             style={{
               position: 'absolute', top: 16, insetInlineEnd: 16, zIndex: 51,
               width: 40, height: 40, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
@@ -2775,7 +2775,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     }}
                     style={{ ...primaryButtonStyle, padding: '0.5rem 1.25rem' }}
                   >
-                    {t('בחרי', 'בחר')} את זו ✓
+                    {tr('cmp.pick')}
                   </button>
                 )}
               </div>
@@ -2797,7 +2797,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               tabIndex={-1}
               role="dialog"
               aria-modal="true"
-              aria-label="סיכום בחירה מהירה"
+              aria-label={tr('sw.summaryAria')}
               style={{
                 position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', zIndex: 60,
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -2806,15 +2806,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             >
               <p style={{ fontSize: 40, margin: 0 }}>🎉</p>
               <p style={{ fontSize: 22, fontFamily: theme.fontSerif, color: '#fff', margin: 0 }}>
-                {isSecondPass ? 'סיימת גם את הסבב השני!' : 'עברת על כל התמונות!'}
+                {isSecondPass ? tr('sw.doneSecond') : tr('sw.doneAll')}
               </p>
               {!isSecondPass && maybeCount > 0 && (
                 <>
                   <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: 14, maxWidth: 320, margin: 0 }}>
-                    סימנת {maybeCount} תמונות כ"אולי" - רוצה לעבור עליהן שוב ולהחליט סופית?
+                    {tr('sw.maybePrompt', { n: maybeCount })}
                   </p>
                   <button onClick={() => startSwipeMode(2)} style={{ ...primaryButtonStyle, minWidth: 240 }}>
-                    כן, סבב שני על "אולי" ({maybeCount})
+                    {tr('sw.secondPass', { n: maybeCount })}
                   </button>
                 </>
               )}
@@ -2822,7 +2822,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 onClick={exitSwipeMode}
                 style={{ ...outlineButtonStyle, minWidth: 240, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}
               >
-                {!isSecondPass && maybeCount > 0 ? 'לא תודה, סיימתי' : 'סגירה'}
+                {!isSecondPass && maybeCount > 0 ? tr('sw.noThanks') : tr('common.close')}
               </button>
             </div>
           );
@@ -2844,7 +2844,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             tabIndex={-1}
             role="dialog"
             aria-modal="true"
-            aria-label={`בחירה מהירה: תמונה ${idx + 1} מתוך ${total}`}
+            aria-label={tr('sw.aria', { i: idx + 1, total })}
             style={{
               position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.94)', zIndex: 60,
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between',
@@ -2853,7 +2853,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', maxWidth: 480 }}>
               <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13 }}>
-                {swipePass === 2 ? 'סבב שני · "אולי" · ' : 'בחירה מהירה · '}<bdi dir="ltr">{idx + 1}/{total}</bdi>
+                {swipePass === 2 ? tr('sw.labelSecond') : tr('sw.label')}<bdi dir="ltr">{idx + 1}/{total}</bdi>
               </span>
               <span
                 role="status"
@@ -2864,12 +2864,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   color: currentSwipeStatus === 'selected' ? accentText : currentSwipeStatus === 'maybe' ? theme.goldText : 'rgba(255,255,255,0.8)',
                 }}
               >
-                {currentSwipeStatus === 'selected' ? '✓ נבחרה' : currentSwipeStatus === 'maybe' ? '🤔 מסומנת כאולי' : 'לא מסומנת'}
+                {currentSwipeStatus === 'selected' ? tr('status.selected') : currentSwipeStatus === 'maybe' ? tr('status.maybeMarked') : tr('status.unmarked')}
               </span>
               <button
                 onClick={exitSwipeMode}
-                title="סגירה"
-                aria-label="סגירת בחירה מהירה"
+                title={tr('common.close')}
+                aria-label={tr('sw.closeAria')}
                 style={{
                   width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
                   background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 16, cursor: 'pointer',
@@ -2896,29 +2896,29 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 />
               ) : (
                 <div style={{ width: 'min(80vw, 420px)' }}>
-                  <ProcessingPlaceholder />
+                  <ProcessingPlaceholder lang={lang} />
                 </div>
               )}
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'center', gap: '1.5rem', paddingTop: '1rem' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <button onClick={() => handleSwipeAction('skip')} aria-label="דילוג - בלי לשנות את הסימון" style={swipeActionBtn('rgba(255,255,255,0.08)', 'rgba(255,255,255,0.3)')}>
+                <button onClick={() => handleSwipeAction('skip')} aria-label={tr('sw.skipAria')} style={swipeActionBtn('rgba(255,255,255,0.08)', 'rgba(255,255,255,0.3)')}>
                   👎
                 </button>
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>דילוג</span>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>{tr('sw.skip')}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <button onClick={() => handleSwipeAction('maybe')} aria-label={`${t('סמני', 'סמן')} כאולי`} style={swipeActionBtn(`${theme.green}33`, theme.green)}>
+                <button onClick={() => handleSwipeAction('maybe')} aria-label={tr('sw.maybeAria')} style={swipeActionBtn(`${theme.green}33`, theme.green)}>
                   🤔
                 </button>
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>אולי</span>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>{tr('sw.maybe')}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <button onClick={() => handleSwipeAction('selected')} aria-label={`${t('בחרי', 'בחר')} תמונה זו`} style={swipeActionBtn(`${accent}33`, accent)}>
+                <button onClick={() => handleSwipeAction('selected')} aria-label={tr('sw.pickAria')} style={swipeActionBtn(`${accent}33`, accent)}>
                   👍
                 </button>
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>בחרתי</span>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>{tr('sw.picked')}</span>
               </div>
             </div>
           </div>
@@ -3912,7 +3912,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           <button
             type="button"
             onClick={() => setShowExtraPriceToast(false)}
-            aria-label="סגירת ההודעה"
+            aria-label={tr('common.closeNotice')}
             style={{ width: 44, height: 44, flexShrink: 0, borderRadius: '50%', border: 'none', background: 'transparent', color: theme.textMuted, fontSize: 15, cursor: 'pointer' }}
           >
             ✕
