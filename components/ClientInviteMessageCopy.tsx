@@ -6,6 +6,8 @@ import { theme, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
 import type { Lang } from '@/lib/i18n/types';
 import { buildGalleryUrl, buildInviteMessageHtml, buildInviteMessageText } from '@/lib/clientInviteMessage';
 import type { Gender } from '@/lib/gender';
+import type { InviteWarning } from '@/lib/inviteSanity';
+import InviteSanityWarnings from './InviteSanityWarnings';
 
 // כפתור "✎ העתקת הודעה מוכנה לשליחה" - גיבוי ידני (וואטסאפ/מייל רגיל) למייל
 // ההזמנה האוטומטי. מעתיק גם טקסט רגיל וגם HTML מעוצב באותה פעולה
@@ -33,6 +35,9 @@ interface ClientInviteMessageCopyProps {
   emailFailed?: boolean;
   // כפתור זהב מלא (מסך "הגלריה נוצרה!") במקום מסגרת זהב
   prominent?: boolean;
+  // אזהרות "רכות" לפני ההעתקה (lib/inviteSanity.ts) - אם יש, הלחיצה הראשונה
+  // מציגה אותן עם "להעתיק בכל זאת"
+  warnings?: InviteWarning[];
 }
 
 export default function ClientInviteMessageCopy({
@@ -46,7 +51,9 @@ export default function ClientInviteMessageCopy({
   logoUrl,
   emailFailed,
   prominent,
+  warnings,
 }: ClientInviteMessageCopyProps) {
+  const [showWarnings, setShowWarnings] = useState(false);
   const shouldLoadBrand = businessName === undefined && logoUrl === undefined;
   const [loadedBrand, setLoadedBrand] = useState({ businessName: '', logoUrl: '' });
   const [copied, setCopied] = useState(false);
@@ -137,12 +144,27 @@ export default function ClientInviteMessageCopy({
 
       <button
         type="button"
-        onClick={handleCopy}
+        onClick={() => {
+          if (warnings && warnings.length > 0) setShowWarnings(true);
+          else handleCopy();
+        }}
         title="הודעה מוכנה עם ברכה, קישור וקוד - להדביק בוואטסאפ כטקסט, או בג'ימייל/אאוטלוק בתור מייל מעוצב"
         style={buttonStyle}
       >
         {copied ? 'הועתק!' : '✎ העתקת הודעה מוכנה לשליחה'}
       </button>
+
+      {showWarnings && warnings && warnings.length > 0 && (
+        <InviteSanityWarnings
+          warnings={warnings}
+          confirmLabel="להעתיק בכל זאת"
+          onConfirm={() => {
+            setShowWarnings(false);
+            handleCopy();
+          }}
+          onCancel={() => setShowWarnings(false)}
+        />
+      )}
 
       {fallbackText !== null && (
         <div style={{ flexBasis: '100%', width: '100%', marginTop: '0.5rem' }}>

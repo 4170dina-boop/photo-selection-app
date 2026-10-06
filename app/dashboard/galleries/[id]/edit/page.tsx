@@ -13,6 +13,8 @@ import MagicButton from '@/components/MagicButton';
 import LightroomNamesCopy from '@/components/LightroomNamesCopy';
 import DeliveryMatchPanel from '@/components/DeliveryMatchPanel';
 import StageMessagesMenu from '@/components/StageMessagesMenu';
+import InviteSanityWarnings, { useGalleryPhotoCounts } from '@/components/InviteSanityWarnings';
+import { inviteSanityWarnings } from '@/lib/inviteSanity';
 import GalleryPaymentsSection from '@/components/GalleryPaymentsSection';
 import EmailInput from '@/components/EmailInput';
 import ClientInviteMessageCopy from '@/components/ClientInviteMessageCopy';
@@ -100,6 +102,19 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   // זה רק כדי שהצלמת תראה למה הכפתור לא זמין ומתי יחזור.
   const [cooldownUntil, setCooldownUntil] = useState<Partial<Record<ManualEmailKind, number>>>({});
   const [nowMs, setNowMs] = useState(() => Date.now());
+
+  // בדיקת שפיות לפני העתקה/שליחה של ההזמנה (lib/inviteSanity.ts) - לפי
+  // הערכים שבטופס כרגע; אזהרות רכות עם "להעתיק/לשלוח בכל זאת"
+  const photoCounts = useGalleryPhotoCounts(galleryId);
+  const [showInviteWarnings, setShowInviteWarnings] = useState(false);
+  const inviteWarnings = inviteSanityWarnings({
+    ...photoCounts,
+    includedPhotos: includedPhotos === '' ? null : Number(includedPhotos),
+    extraPhotoPrice: extraPhotoPrice === '' ? null : Number(extraPhotoPrice),
+    clientEmail,
+    expiresAt,
+    accessCode,
+  });
 
   const hasActiveCooldown = Object.values(cooldownUntil).some((until) => (until ?? 0) > nowMs);
   useEffect(() => {
@@ -558,6 +573,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
                 expiresAt={expiresAt || null}
                 businessName={businessName}
                 logoUrl={logoUrl}
+                warnings={inviteWarnings}
               />
               <StageMessagesMenu
                 galleryId={galleryId}
@@ -718,12 +734,23 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           </button>
           <button
             type="button"
-            onClick={handleResendInvite}
+            onClick={() => (inviteWarnings.length > 0 ? setShowInviteWarnings(true) : handleResendInvite())}
             disabled={resending || cooldownLeft('invite') > 0}
             style={{ ...outlineButtonStyle, opacity: resending || cooldownLeft('invite') > 0 ? 0.6 : 1 }}
           >
             {sendButtonLabel('invite', resending, 'שליחת הזמנה מחדש')}
           </button>
+          {showInviteWarnings && inviteWarnings.length > 0 && (
+            <InviteSanityWarnings
+              warnings={inviteWarnings}
+              confirmLabel="לשלוח בכל זאת"
+              onConfirm={() => {
+                setShowInviteWarnings(false);
+                handleResendInvite();
+              }}
+              onCancel={() => setShowInviteWarnings(false)}
+            />
+          )}
           {expiresAt && (
             <button
               type="button"
