@@ -99,6 +99,8 @@ interface GalleryPhoto {
   // פרק (gallery_chapters) ורצף תמונות דומות (lib/bursts.ts) - ראו components/GalleryNavBar.tsx
   chapterId?: string | null;
   burstId?: string | null;
+  // ⭐ המלצת הצלמת (lib/pickQueries.ts) - תג וסינון בלבד
+  isPick?: boolean;
 }
 
 interface DeliveredPhoto {
@@ -2308,6 +2310,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const filteredPhotos =
     viewFilter === 'selected' || viewFilter === 'maybe'
       ? photos.filter((p) => myStatuses[p.id] === viewFilter)
+      : viewFilter === 'picks'
+      ? photos.filter((p) => p.isPick)
       : togetherIds
       ? photos.filter((p) => togetherIds.includes(p.id))
       : photos;
@@ -2338,7 +2342,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // הראשון, כשמישהו אחר כבר סימן, או בגלריה עם פרקים (הצ'יפים של הפרקים
   // עצמם - GalleryNavBar - גלויים מההתחלה). סינון פעיל תמיד נשאר גלוי.
   const othersHaveMarks = Object.values(allMarks).some((marks) => marks.some((m) => m.participantId !== myParticipant?.id));
-  const showFilterRow = mySelectedCount + maybeCount > 0 || othersHaveMarks || together.show || chapters.length > 0 || viewFilter !== 'all';
+  const pickCount = photos.filter((p) => p.isPick).length;
+  const showFilterRow = pickCount > 0 || mySelectedCount + maybeCount > 0 || othersHaveMarks || together.show || chapters.length > 0 || viewFilter !== 'all';
   // "🪄 עזרי לי לבחור" - רק לבעלים כשהבחירה פתוחה (ראו handleAiPicks)
   const aiPicksAvailable = !isLocked && isOwner && photos.length > 0;
   // תפריט "⋯ עוד" (components/GalleryMoreMenu.tsx) - פעולות משניות במקום
@@ -3594,6 +3599,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           { key: 'all', label: tr('f.all', { n: photos.length }) },
           { key: 'selected', label: tr('f.selected', { n: mySelectedCount }) },
           { key: 'maybe', label: tr('f.maybe', { n: maybeCount }) },
+          ...(pickCount > 0 ? [{ key: 'picks', label: tr('f.picks', { n: pickCount }) }] : []),
           // "בוחרים ביחד" - רק כשיש לפחות 2 משתתפים עם סימונים
           ...(together.show
             ? [
@@ -3787,6 +3793,19 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   }}
                 >
                   {isSelected ? tr('status.selected') : tr('card.badgeMaybe')}
+                </div>
+              )}
+
+              {photo.isPick && (
+                <div
+                  title={tr('card.pickTitle')}
+                  style={{
+                    position: 'absolute', top: photo.possiblyBlurry ? 52 : 30, right: 8, zIndex: 1, pointerEvents: 'none',
+                    background: 'rgba(15,22,38,0.85)', border: `1px solid ${accent}`, color: accent, fontSize: 11, lineHeight: 1.4,
+                    padding: '1px 7px', borderRadius: 10, whiteSpace: 'nowrap',
+                  }}
+                >
+                  {tr('card.pickBadge')}
                 </div>
               )}
 

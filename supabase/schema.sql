@@ -3248,3 +3248,13 @@ create policy "photographers read own logo" on storage.objects
 --
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: אשף פתיחה וגלריית דוגמה =====
+
+-- ===== מיגרציה: ⭐ המלצות הצלמת =====
+-- photos.photographer_pick - הצלמת מסמנת תמונות שהיא ממליצה עליהן; אצל הלקוחה
+-- מוצג תג "⭐ המלצת הצלמת" וסינון. לא משפיע על בחירה, מכסה או חיוב.
+-- נכתב ע"י הצלמת (session) - ה-RLS "photographers see own photos" כבר מכסה.
+-- בלי המיגרציה: אין המלצות, ולחיצה על הכוכב מציגה הודעה להריץ את ה-SQL.
+--
+-- alter table photos add column if not exists photographer_pick boolean default false not null;
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: ⭐ המלצות הצלמת =====

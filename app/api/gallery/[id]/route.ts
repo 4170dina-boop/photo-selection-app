@@ -4,6 +4,7 @@ import { requireGallerySession } from '@/lib/gallerySession';
 import { BLUR_THRESHOLD } from '@/lib/sharpness';
 import { getPresignedDownloadUrl } from '@/lib/r2';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { fetchPickedPhotoIds } from '@/lib/pickQueries';
 import { countBillableSelected } from '@/lib/gifts';
 import { gridThumbKey, hasWatermarkedThumbnail, isKeyInGallery } from '@/lib/uploadPolicy';
 import { resolveGalleryViewAccess } from '@/lib/galleryAccess';
@@ -189,6 +190,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   // תמונות מתנה (lib/gifts.ts) - אותו דפוס best-effort כמו sharpness_score למעלה.
   const giftById = new Map((await fetchGiftPhotos(supabaseAdmin, [galleryId])).map((g) => [g.id, g]));
+  const picks = await fetchPickedPhotoIds(supabaseAdmin, galleryId);
 
   // רק תמונות שכבר עובדו (יש thumbnail עם סימן מים) - תמונה שהעיבוד שלה עוד
   // לא הסתיים או נכשל פשוט לא מוצגת, במקום ליפול חזרה למקור הנקי. דף ההעלאה
@@ -239,6 +241,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         possiblyBlurry: possiblyBlurryIds.has(photo.id),
         isGift: giftById.has(photo.id),
         giftMessage: giftById.get(photo.id)?.gift_message ?? null,
+        isPick: picks.ids.has(photo.id),
         chapterId: nav.byPhoto.get(photo.id)?.chapterId ?? null,
         burstId: burstOf.get(photo.id) ?? null,
       };

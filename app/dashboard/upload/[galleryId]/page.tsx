@@ -30,6 +30,8 @@ interface ExistingPhoto {
   // תמונת מתנה (lib/gifts.ts) - בונוס ללקוחה, לא נספר במכסה/בחיוב
   isGift: boolean;
   giftMessage: string | null;
+  // ⭐ המלצת הצלמת (lib/pickQueries.ts) - תג וסינון אצל הלקוחה בלבד
+  isPick?: boolean;
   // אין עדיין thumbnail עם סימן מים - התמונה מוסתרת מהלקוחה עד שהעיבוד יצליח
   needsProcessing: boolean;
   // תמונה ישנה שעובדה לפני תמונות הגריד הקטנות - מושלמת ברקע (ראו למטה)
@@ -194,6 +196,24 @@ export default function UploadPage({ params }: UploadPageProps) {
     setGiftError('');
     setGiftEditingId(photo.id);
     setGiftDraft(photo.giftMessage ?? '');
+  }
+
+  // ⭐ המלצת הצלמת - עדכון מיידי במסך, וחזרה אחורה אם השמירה נכשלה.
+  async function togglePick(photo: ExistingPhoto) {
+    const next = !photo.isPick;
+    const setPick = (value: boolean) =>
+      setExistingPhotos((prev) => (prev ?? []).map((p) => (p.id === photo.id ? { ...p, isPick: value } : p)));
+    setPick(next);
+    const res = await fetch(`/api/galleries/${galleryId}/photos/${photo.id}/pick`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isPick: next }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      setPick(!next);
+      const data = await res?.json().catch(() => ({}));
+      window.alert(data?.error ?? 'שמירת ההמלצה נכשלה, נסי שוב');
+    }
   }
 
   // isGift=false מבטל את המתנה (וגם מוחק את ההודעה בצד השרת).
@@ -373,6 +393,7 @@ export default function UploadPage({ params }: UploadPageProps) {
             🎁 לחיצה על המתנה בפינת התמונה מסמנת אותה כ"תמונת מתנה" - הלקוחה מקבלת אותה בחינם,
             והיא לא נספרת במכסת החבילה ולא בחיוב על תמונות נוספות.
             {existingPhotos.some((p) => p.isGift) && ` (${existingPhotos.filter((p) => p.isGift).length} מסומנות כמתנה)`}
+            {existingPhotos.some((p) => p.isPick) && ` · ⭐ ${existingPhotos.filter((p) => p.isPick).length} מומלצות`}
           </p>
           {processingCount > 0 && (
             <p style={{ color: theme.warningText, fontSize: 12, marginBottom: '0.75rem' }}>
@@ -456,6 +477,23 @@ export default function UploadPage({ params }: UploadPageProps) {
                     }}
                   >
                     🎁
+                  </button>
+                  <button
+                    onClick={() => togglePick(photo)}
+                    title={photo.isPick ? 'מומלצת ללקוחה · לחצי לביטול' : 'סימון כהמלצה שלך ללקוחה'}
+                    aria-label={photo.isPick ? 'ביטול המלצת הצלמת' : 'סימון כהמלצת הצלמת'}
+                    aria-pressed={!!photo.isPick}
+                    style={{
+                      position: 'absolute', top: 38, right: 6, cursor: 'pointer',
+                      width: 26, height: 26, borderRadius: '50%', fontSize: 14,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      border: `1px solid ${photo.isPick ? theme.gold : 'rgba(255,255,255,0.4)'}`,
+                      background: photo.isPick ? theme.gold : 'rgba(0,0,0,0.55)',
+                      color: photo.isPick ? theme.goldText : '#fff',
+                      opacity: photo.isPick ? 1 : 0.85,
+                    }}
+                  >
+                    {photo.isPick ? '★' : '☆'}
                   </button>
                   {photo.note && (
                     <button
