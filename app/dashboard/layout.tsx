@@ -6,10 +6,12 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { theme, outlineButtonStyle } from '@/lib/theme';
 import { UploadProvider } from './UploadProvider';
+import { useOnboardingRedirect } from './useOnboardingRedirect';
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [isAdmin, setIsAdmin] = useState(false);
+  useOnboardingRedirect(); // צלמת חדשה -> אשף הפתיחה (פעם אחת, ראו lib/onboarding.ts)
 
   // כפתור "ניהול צלמות" מוצג רק למנהלת (ADMIN_EMAIL) - שאר הצלמות לא רואות אותו
   useEffect(() => {

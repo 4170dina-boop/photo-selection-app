@@ -66,6 +66,10 @@ create table photographers (
   -- anniversary_emails - מייל "לפני שנה צילמנו 💛" ללקוחה כ-11 חודשים אחרי
   -- המסירה (galleries.anniversary_sent_at). opt-in.
   anniversary_emails boolean default false not null,
+
+  -- מתי הצלמת סיימה/דילגה על אשף הפתיחה (app/dashboard/welcome/page.tsx,
+  -- lib/onboarding.ts). null = טרם - ואם אין לה גם אף גלריה, הדשבורד מפנה לאשף.
+  onboarding_done_at timestamptz,
   created_at timestamptz default now()
 );
 
@@ -176,6 +180,10 @@ create table galleries (
   -- בנוסף למכסה של הצלמת (photographers.ai_picks_count/date).
   ai_picks_count int default 0 not null,
   ai_picks_date date,
+  -- "גלריית דוגמה" שנוצרה מאשף הפתיחה (app/api/galleries/sample) - הלקוחה
+  -- היא הצלמת עצמה. מוצגת עם תג "דוגמה" ולא נספרת כ"גלריה ראשונה" ברשימת
+  -- השלמת ההגדרות (lib/setupChecklist.ts).
+  is_sample boolean default false not null,
   created_at timestamptz default now()
 );
 
@@ -3222,3 +3230,21 @@ create policy "photographers read own logo" on storage.objects
 --
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: אוטומציות =====
+
+-- ===== מיגרציה: אשף פתיחה וגלריית דוגמה =====
+-- אם כבר הרצת גרסה קודמת של הסכמה, מריצים את זה (idempotent - בטוח להריץ שוב).
+-- בלי המיגרציה: האשף נשמר כ"הסתיים" רק ב-localStorage של הדפדפן, וגלריית
+-- דוגמה נוצרת בלי תג "דוגמה" (ונספרת כגלריה רגילה).
+-- is_sample נכתב ע"י הצלמת עצמה (session) - protect_internal_gallery_columns
+-- לא צריך שינוי.
+--
+-- alter table photographers add column if not exists onboarding_done_at timestamptz;
+-- alter table galleries add column if not exists is_sample boolean default false not null;
+--
+-- -- צלמות קיימות שכבר יש להן גלריות לא צריכות לראות את האשף
+-- update photographers p set onboarding_done_at = now()
+-- where onboarding_done_at is null
+--   and exists (select 1 from galleries g where g.photographer_id = p.id);
+--
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: אשף פתיחה וגלריית דוגמה =====
