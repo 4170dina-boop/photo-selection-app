@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ClientProgressState } from '@/lib/clientProgress';
-import type { PaymentLinks } from '@/lib/paymentLinks';
+import type { PaymentMethod, PaymentMethodType } from '@/lib/paymentMethods';
 
 // טעינת app/api/gallery/[id]/progress לקומפוננטות "מה הבא?" ו"תשלום על
 // התוספת". מתרענן כשהעמוד חוזר לפוקוס (focus + visibilitychange), כדי
@@ -15,8 +15,9 @@ export interface ClientGalleryProgress {
   deliveredAt: string | null;
   deliveredCount: number;
   progress: ClientProgressState | null;
-  // null = לא בעלים, או שהצלמת לא הגדירה קישורי תשלום
-  payment: { amount: number; settled: boolean; links: PaymentLinks } | null;
+  // null = לא בעלים, או שהצלמת לא הפעילה אמצעי תשלום (lib/paymentMethods.ts).
+  // choice = מה שהלקוחה כבר בחרה ב"איך נוח לך לשלם?" (null = עוד לא)
+  payment: { amount: number; settled: boolean; methods: PaymentMethod[]; choice: PaymentMethodType | null } | null;
 }
 
 // פוקוס ו-visibilitychange מגיעים לרוב יחד - לא לטעון פעמיים באותו רגע

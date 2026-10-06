@@ -5,10 +5,12 @@ import { resolveGalleryViewAccess } from '@/lib/galleryAccess';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { countBillableSelected } from '@/lib/gifts';
 import { computeClientProgress } from '@/lib/clientProgress';
-import { computeClientPayAmount, EMPTY_PAYMENT_LINKS, hasAnyPaymentLink, normalizePaymentLinks } from '@/lib/paymentLinks';
+import { computeClientPayAmount } from '@/lib/paymentLinks';
+import { clientPaymentMethods, isPaymentMethodType, type PaymentMethod, type PaymentMethodType } from '@/lib/paymentMethods';
+import { loadPaymentMethods } from '@/lib/paymentMethodsQuery';
 
-// "מה הבא?" ללקוחה אחרי הבחירה (components/ClientProgressTracker.tsx) + קישורי
-// התשלום של הצלמת על התוספת (components/ClientPayButton.tsx).
+// "מה הבא?" ללקוחה אחרי הבחירה (components/ClientProgressTracker.tsx) + אמצעי
+// התשלום של הצלמת ובחירת הלקוחה (components/ClientPayButton.tsx, lib/paymentMethods.ts).
 //
 // endpoint נפרד וקל בכוונה, ולא GET /api/gallery/[id] הראשי: הקומפוננטה מרעננת
 // אותו בכל פעם שהעמוד חוזר לפוקוס, והראשי חותם URL לכל תמונה ומגדיל את מונה
@@ -58,26 +60,17 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     delivered,
   });
 
-  // תשלום על התוספת - רק לבעלים (החשבון שלה), ורק אם הצלמת הגדירה קישורים.
-  // עמודות חסרות (מיגרציה שלא רצה) = אין קישורים, בלי להפיל את הבקשה.
-  // settled = הגלריה סומנה כשולמה (paid_at) - גם סכום שמחושב בדפדפן לא יוצג אז.
-  let payment: { amount: number; settled: boolean; links: typeof EMPTY_PAYMENT_LINKS } | null = null;
+  // תשלום - רק לבעלים (החשבון שלה), ורק אם הצלמת הפעילה לפחות אמצעי תשלום
+  // אחד (lib/paymentMethods.ts). עמודות חסרות (מיגרציה שלא רצה) = נגזר מהעמודות
+  // הישנות / אין אמצעים, בלי להפיל את הבקשה. settled = הגלריה סומנה כשולמה
+  // (paid_at) - גם סכום שמחושב בדפדפן לא יוצג אז. choice = מה שהלקוחה כבר בחרה.
+  let payment: { amount: number; settled: boolean; methods: PaymentMethod[]; choice: PaymentMethodType | null } | null = null;
   const isOwner = !!session.participantId && session.participantId === gallery.owner_participant_id;
   if (isOwner) {
-    let links = EMPTY_PAYMENT_LINKS;
-    try {
-      const { data: photographerRow, error } = await supabaseAdmin
-        .from('photographers')
-        .select('payment_bit_url, payment_paybox_url, payment_bank_details')
-        .eq('id', gallery.photographer_id)
-        .maybeSingle();
-      if (!error) links = normalizePaymentLinks(photographerRow);
-    } catch {
-      // בכוונה שקט - ראו הערה למעלה
-    }
+    const methods = clientPaymentMethods((await loadPaymentMethods(supabaseAdmin, gallery.photographer_id)).methods);
 
-    if (hasAnyPaymentLink(links)) {
-      const [{ data: selectionsData }, { data: packageData }, { data: paymentsData }, gifts] = await Promise.all([
+    if (methods.length > 0) {
+      const [{ data: selectionsData }, { data: packageData }, { data: paymentsData }, gifts, choiceRes] = await Promise.all([
         supabaseAdmin
           .from('selections')
           .select('photo_id, status')
@@ -86,6 +79,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         supabaseAdmin.from('packages').select('included_photos, extra_photo_price, base_price').eq('gallery_id', galleryId).maybeSingle(),
         supabaseAdmin.from('gallery_payments').select('amount').eq('gallery_id', galleryId),
         fetchGiftPhotos(supabaseAdmin, [galleryId]),
+        // best-effort - עמודה חסרה = עוד לא בחרה
+        supabaseAdmin.from('galleries').select('client_payment_choice').eq('id', galleryId).maybeSingle(),
       ]);
       const amount = computeClientPayAmount({
         pkg: packageData,
@@ -94,7 +89,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         payments: paymentsData ?? [],
         paidAt: gallery.paid_at,
       });
-      payment = { amount, settled: !!gallery.paid_at, links };
+      const rawChoice = choiceRes.error ? null : choiceRes.data?.client_payment_choice;
+      payment = { amount, settled: !!gallery.paid_at, methods, choice: isPaymentMethodType(rawChoice) ? rawChoice : null };
     }
   }
 

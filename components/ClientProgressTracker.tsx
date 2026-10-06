@@ -6,12 +6,13 @@ import { formatIsraelDate } from '@/lib/israelTime';
 import type { ClientProgressStep } from '@/lib/clientProgress';
 import { useClientGalleryProgress } from '@/components/useClientGalleryProgress';
 import { ClientPayPanel } from '@/components/ClientPayButton';
+import type { Lang, ViewerGender } from '@/lib/i18n';
 
 // "מה הבא?" - מעקב התקדמות ללקוחה אחרי "סיימתי לבחור": בחרת תמונות ->
 // הצלמת עורכת -> התמונות מוכנות (lib/clientProgress.ts). הנתונים מ-
 // app/api/gallery/[id]/progress, מתרעננים כשהעמוד חוזר לפוקוס. מוצג גם
 // בביקורים מאוחרים יותר (גלריה נעולה / צפייה בלבד). כולל גם את "תשלום על
-// התוספת" (ClientPayButton) כשהצלמת הגדירה קישורי תשלום.
+// תשלום" (ClientPayButton) כשהצלמת הפעילה אמצעי תשלום.
 
 // TODO i18n: להעביר ל-lib/i18n
 const STRINGS = {
@@ -42,9 +43,12 @@ interface Props {
   buttonStyle?: React.CSSProperties;
   // true = עם מסגרת משלו (כשלא בתוך פאנל התודה, למשל במצב צפייה בלבד)
   framed?: boolean;
+  // שפה ולשון פנייה לפאנל התשלום (ClientPayButton - כבר ב-lib/i18n)
+  lang?: Lang;
+  gender?: ViewerGender;
 }
 
-export default function ClientProgressTracker({ galleryId, photographerName = null, accent = theme.gold, buttonStyle = goldButtonStyle, framed }: Props) {
+export default function ClientProgressTracker({ galleryId, photographerName = null, accent = theme.gold, buttonStyle = goldButtonStyle, framed, lang, gender }: Props) {
   const data = useClientGalleryProgress(galleryId);
   const progress = data?.progress;
   if (!data || !progress) return null;
@@ -110,7 +114,16 @@ export default function ClientProgressTracker({ galleryId, photographerName = nu
       )}
 
       {data.payment && !data.payment.settled && (
-        <ClientPayPanel amount={data.payment.amount} links={data.payment.links} accent={accent} buttonStyle={buttonStyle} />
+        <ClientPayPanel
+          galleryId={galleryId}
+          amount={data.payment.amount}
+          methods={data.payment.methods}
+          choice={data.payment.choice}
+          lang={lang}
+          gender={gender}
+          accent={accent}
+          buttonStyle={buttonStyle}
+        />
       )}
     </div>
   );

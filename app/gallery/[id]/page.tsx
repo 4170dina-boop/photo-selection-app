@@ -2602,10 +2602,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             lang={lang}
           />
           {/* "מה הבא?" + תשלום על התוספת (components/ClientProgressTracker.tsx) */}
-          <ClientProgressTracker galleryId={galleryId} photographerName={photographerName} accent={accent} buttonStyle={primaryButtonStyle} />
+          <ClientProgressTracker galleryId={galleryId} photographerName={photographerName} accent={accent} buttonStyle={primaryButtonStyle} lang={lang} gender={viewerGender} />
         </div>
       )}
-      {readOnly && myParticipant && <ClientProgressTracker framed galleryId={galleryId} photographerName={photographerName} accent={accent} buttonStyle={primaryButtonStyle} />}
+      {readOnly && myParticipant && <ClientProgressTracker framed galleryId={galleryId} photographerName={photographerName} accent={accent} buttonStyle={primaryButtonStyle} lang={lang} gender={viewerGender} />}
 
       {/* תמונות ערוכות סופיות שהצלמת מסרה - עצמאי לגמרי מ-galleryStatus (יכול
           להופיע גם לפני שהלקוחה סיימה לבחור, אם הצלמת כבר מסרה חלק מהתמונות). */}
@@ -3922,6 +3922,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 compact
                 galleryId={galleryId}
                 amount={priceDisplay.showExtraCosts ? summary.extraCost : undefined}
+                lang={lang}
+                gender={viewerGender}
                 accent={accent}
                 buttonStyle={primaryButtonStyle}
               />
