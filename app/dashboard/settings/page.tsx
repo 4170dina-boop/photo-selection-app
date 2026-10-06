@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import { classifySignInError, isRateLimitError, RATE_LIMIT_MESSAGE } from '@/lib/authErrors';
 import { parsePaymentUrl, PAYMENT_BANK_DETAILS_MAX_LENGTH } from '@/lib/paymentLinks';
 import { numberOrNull, missingNumberFields } from '@/lib/settingsForm';
+import GalleryTemplatesManager from '@/components/GalleryTemplatesManager';
 
 const DEFAULT_BRAND_COLOR = '#c98f89'; // theme.gold - הגוון הקבוע, מוצג כברירת מחדל בבורר הצבע
 const LOGO_BUCKET = 'photographer-logos';
@@ -723,6 +724,9 @@ export default function SettingsPage() {
           )}
         </div>
       )}
+
+      {/* תבניות גלריה - מוסתר אם הטבלה עוד לא קיימת */}
+      <GalleryTemplatesManager />
 
       <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
         <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '1rem' }}>שינוי סיסמה</h2>

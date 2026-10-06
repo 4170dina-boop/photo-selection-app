@@ -12,6 +12,8 @@ import ClientGenderField from '@/components/ClientGenderField';
 import GalleryLanguageField from '@/components/GalleryLanguageField';
 import { normalizeLang, type Lang } from '@/lib/i18n/types';
 import type { Gender } from '@/lib/gender';
+import GalleryTemplatePicker from '@/components/GalleryTemplatePicker';
+import { expiryDateFromDays, expiryDaysFromDate } from '@/lib/galleryTemplates';
 
 interface CreatedGallery {
   galleryId: string;
@@ -207,6 +209,26 @@ function NewGalleryForm() {
       )}
 
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {/* תבניות גלריה (lib/galleryTemplates.ts) - מוסתר אם הטבלה עוד לא קיימת */}
+        <GalleryTemplatePicker
+          current={() => ({
+            includedPhotos: Number(includedPhotos) || 0,
+            basePrice: Number(basePrice) || 0,
+            extraPhotoPrice: Number(extraPhotoPrice) || 0,
+            expiryDays: expiryDaysFromDate(expiresAt),
+            clientGender,
+            language,
+          })}
+          onApply={(data) => {
+            setIncludedPhotos(String(data.includedPhotos));
+            setBasePrice(String(data.basePrice));
+            setExtraPhotoPrice(String(data.extraPhotoPrice));
+            setExpiresAt(expiryDateFromDays(data.expiryDays));
+            setClientGender(data.clientGender);
+            setLanguage(data.language);
+          }}
+        />
+
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
           שם הלקוחה
           <input
