@@ -74,6 +74,16 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     gifts.map((g) => ({ photoId: g.id, filename: g.original_filename, filePath: g.file_path }))
   );
 
+  // ?names=1 - רק שמות קבצים (העתקת שמות לחיפוש ב-Lightroom, בדיקת התאמת
+  // מסירה): בלי לחתום URL לכל תמונה, וכולל גם תמונות שהמקור שלהן כבר נמחק
+  // מ-R2 - השם עדיין רלוונטי לקטלוג המקומי של הצלמת.
+  if (req.nextUrl.searchParams.get('names') === '1') {
+    return NextResponse.json({
+      photos: merged.map((p) => ({ id: p.photoId, filename: p.filename, isGift: p.isGift })),
+      missingCount: 0,
+    });
+  }
+
   const photos = await Promise.all(
     merged.map(async (p) => ({
       id: p.photoId,

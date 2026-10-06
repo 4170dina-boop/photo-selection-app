@@ -10,6 +10,7 @@ import { finish } from './finish';
 import { serverErrors } from './serverErrors';
 import { emails } from './emails';
 import { payment } from './payment';
+import { stages } from './stages';
 
 export const es = {
   ...common,
@@ -23,4 +24,5 @@ export const es = {
   ...serverErrors,
   ...emails,
   ...payment,
+  ...stages,
 };
