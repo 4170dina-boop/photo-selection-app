@@ -8,14 +8,10 @@ export const welcome: Section<typeof he> = {
   'welcome.package': ' - your package includes {n} photos',
   'welcome.until': ', open until {date}',
   'welcome.end': '.',
-  'welcome.tipOpen': '🔍 Tap a photo to see it large, then choose with the buttons below',
-  'welcome.tipCompare': '⇄ You can compare a few photos side by side',
-  'welcome.tipNote': '✎ You can leave a personal note for your photographer on any photo (from the large view)',
   'welcome.gifts': {
     one: "🎁 There's also a gift photo from me waiting for you - it doesn't count toward your package",
     other: "🎁 There are also {count} gift photos from me waiting for you - they don't count toward your package",
   },
-  'welcome.guestNote': '👀 Your picks here are suggestions to discuss - only {owner} can submit the final selection',
   'welcome.start': "Let's start ✨",
 
   'hdr.connectedAs': 'Signed in as {name}',

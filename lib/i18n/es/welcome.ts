@@ -8,14 +8,10 @@ export const welcome: Section<typeof he> = {
   'welcome.package': ': tu paquete incluye {n} fotos',
   'welcome.until': ', hasta el {date}',
   'welcome.end': '.',
-  'welcome.tipOpen': '🔍 Toca una foto para verla en grande y elige con los botones de abajo',
-  'welcome.tipCompare': '⇄ Puedes comparar varias fotos una al lado de otra',
-  'welcome.tipNote': '✎ Puedes dejar una nota personal a tu fotógrafa en cada foto (desde la vista ampliada)',
   'welcome.gifts': {
     one: '🎁 También te espera una foto de regalo de mi parte, sin descontar de tu paquete',
     other: '🎁 También te esperan {count} fotos de regalo de mi parte, sin descontar de tu paquete',
   },
-  'welcome.guestNote': '👀 Tus elecciones aquí son sugerencias para comentar; solo {owner} puede enviar la selección final',
   'welcome.start': '¡Empecemos! ✨',
 
   'hdr.connectedAs': { f: 'Conectada como {name}', m: 'Conectado como {name}', n: 'Sesión de {name}' },

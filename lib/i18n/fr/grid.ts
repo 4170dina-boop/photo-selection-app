@@ -20,7 +20,6 @@ export const grid: Section<typeof he> = {
   'card.compareOff': 'non sélectionnée pour comparer',
   'card.open': 'Ouvrir {label}',
   'card.hasNote': ', avec une note',
-  'card.viewed': 'Vous avez déjà vu cette photo',
   'card.badgeMaybe': '🤔 Peut-être',
   'card.blurAria': 'La photo n’est peut-être pas nette (estimation automatique)',
   'card.blurTitle': 'Estimation automatique de la netteté : pas toujours exacte',

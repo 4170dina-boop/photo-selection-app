@@ -20,7 +20,6 @@ export const grid: Section<typeof he> = {
   'card.compareOff': 'נישט אויסגעקליבן צום פארגלייכן',
   'card.open': 'עפענען {label}',
   'card.hasNote': ', האט א באמערקונג',
-  'card.viewed': 'איר האט שוין געקוקט דאס בילד',
   'card.badgeMaybe': '🤔 אפשר',
   'card.blurAria': 'דאס בילד איז אפשר נישט שארף (אויטאמאטישע אפשאצונג)',
   'card.blurTitle': 'אויטאמאטישע אפשאצונג לויט שארפקייט - נישט שטענדיג גענוי',

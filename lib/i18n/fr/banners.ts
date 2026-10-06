@@ -5,11 +5,6 @@ import type { banners as he } from '../he/banners';
 export const banners: Section<typeof he> = {
   'over.banner': '✨ Vous avez choisi {selected} photos ({included} incluses + {extra} en plus) · Supplément : {cost}',
   'over.bannerNoCost': '✨ Vous avez choisi {selected} photos ({included} incluses + {extra} en plus)',
-  'gift.banner': {
-    one: '🎁 Je vous ai préparé une photo cadeau : elle est déjà incluse, sans être décomptée du forfait ni facturée. Inutile de la choisir.',
-    other: '🎁 Je vous ai préparé {count} photos cadeaux : elles sont déjà incluses, sans être décomptées du forfait ni facturées. Inutile de les choisir.',
-  },
-  'hint.tap': '✨ Nouveau : touchez une photo pour l’agrandir, puis choisissez avec les boutons en bas',
   'resume.text': { f: '👋 Ravie de vous revoir ! Reprendre à la photo {n} ?', m: '👋 Ravi de vous revoir ! Reprendre à la photo {n} ?', n: '👋 Bon retour ! Reprendre à la photo {n} ?' },
   'resume.continue': 'Reprendre',
   'grid.hint': 'Touchez une photo pour l’agrandir · {heart} dans le coin pour choisir vite',

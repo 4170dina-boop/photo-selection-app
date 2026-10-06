@@ -48,7 +48,6 @@ import {
   toggleStatusTo,
   shouldAutoAdvance,
   enlargedShortcutStatus,
-  tapHintKey,
   neighborPrefetchUrls,
 } from '@/lib/galleryClient';
 import { extractAccessCode } from '@/lib/accessCodePaste';
@@ -384,9 +383,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [photographerName, setPhotographerName] = useState<string | null>(null);
   const [photographerLogo, setPhotographerLogo] = useState<string | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
-  // הודעת "חדש" חד-פעמית ללקוחות חוזרות: הקשה על תמונה כבר לא מסמנת "אולי",
-  // אלא פותחת אותה בגדול (tapHintKey ב-lib/galleryClient.ts)
-  const [showTapHint, setShowTapHint] = useState(false);
 
   // לשון הפנייה לצופה (lib/gender.ts): בעלים -> galleries.client_gender,
   // אורח/ת -> מה שבחר/ה בהצטרפות, null = לא ידוע -> צורה ניטרלית ("בחר/י").
@@ -1101,15 +1097,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       if (typeof window !== 'undefined' && data.myParticipant && !serverReadOnly) {
         const seenKey = `gallery_welcome_seen_${galleryId}_${data.myParticipant.id}`;
         try {
-          const returning = !!localStorage.getItem(seenKey);
-          setShowWelcome(!returning);
-          // לקוחה חוזרת (כבר ראתה את שער הפתיחה בגרסה הקודמת) שעוד לא ראתה את
-          // ההסבר על ההתנהגות החדשה של הקשה על תמונה, ושהבחירה עדיין פתוחה לה
-          const lockedNow = data.status === 'completed' && !data.reopenedForSelectionAt;
-          setShowTapHint(returning && !lockedNow && !localStorage.getItem(tapHintKey(galleryId)));
+          setShowWelcome(!localStorage.getItem(seenKey));
         } catch {
           setShowWelcome(false);
-          setShowTapHint(false);
         }
       } else {
         setShowWelcome(false);
@@ -1236,20 +1226,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   function dismissWelcome() {
     if (typeof window !== 'undefined' && myParticipant) {
-      localStorage.setItem(`gallery_welcome_seen_${galleryId}_${myParticipant.id}`, '1');
-      // לקוחה חדשה כבר פוגשת את ההתנהגות החדשה מההתחלה - לא צריך להציג לה "חדש:"
       try {
-        localStorage.setItem(tapHintKey(galleryId), '1');
+        localStorage.setItem(`gallery_welcome_seen_${galleryId}_${myParticipant.id}`, '1');
       } catch {}
     }
     setShowWelcome(false);
-  }
-
-  function dismissTapHint() {
-    try {
-      localStorage.setItem(tapHintKey(galleryId), '1');
-    } catch {}
-    setShowTapHint(false);
   }
 
   // הדבקה לתיבת הקוד (גם Ctrl+V/לחיצה ארוכה) - אם הודבקה ההודעה כולה
@@ -2238,6 +2219,11 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // (לתצוגה המוגדלת יש פס משלה).
   const showBottomBar = isOwner && !isLocked && !enlargedId && !slideshowActive && !swipeMode && !compareViewOpen;
 
+  // שורת הסינון ("הכל/נבחרו/אולי/ביחד") מופיעה רק כשיש מה לסנן: אחרי הסימון
+  // הראשון, כשמישהו אחר כבר סימן, או בגלריה עם פרקים (הצ'יפים של הפרקים
+  // עצמם - GalleryNavBar - גלויים מההתחלה). סינון פעיל תמיד נשאר גלוי.
+  const othersHaveMarks = Object.values(allMarks).some((marks) => marks.some((m) => m.participantId !== myParticipant?.id));
+  const showFilterRow = mySelectedCount + maybeCount > 0 || othersHaveMarks || together.show || chapters.length > 0 || viewFilter !== 'all';
   // "🪄 עזרי לי לבחור" - רק לבעלים כשהבחירה פתוחה (ראו handleAiPicks)
   const aiPicksAvailable = !isLocked && isOwner && photos.length > 0;
   // תפריט "⋯ עוד" (components/GalleryMoreMenu.tsx) - פעולות משניות במקום
@@ -2323,23 +2309,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             {expiresAt ? tr('welcome.until', { date: dateText(expiresAt) }) : ''}
             {tr('welcome.end')}
           </p>
-          <div
-            style={{
-              textAlign: 'start', background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10,
-              padding: '1rem 1.25rem', marginBottom: '1.5rem', fontSize: 13, color: theme.textMuted,
-              display: 'flex', flexDirection: 'column', gap: '0.5rem',
-            }}
-          >
-            <span>{tr('welcome.tipOpen')}</span>
-            <span>{tr('welcome.tipCompare')}</span>
-            <span>{tr('welcome.tipNote')}</span>
-            {giftPhotos.length > 0 && (
-              <span style={{ color: accent }}>{tr('welcome.gifts', { count: giftPhotos.length })}</span>
-            )}
-            {!isOwner && (
-              <span>{trOwner('welcome.guestNote', { owner: ownerLabel(owner?.displayName) })}</span>
-            )}
-          </div>
+          {/* שער פתיחה קצר: שורה אחת על הגלריה (+ שורת מתנות אם יש) וכפתור
+              התחלה - ההסברים עצמם מופיעים בגריד ברגע שהם רלוונטיים */}
+          {giftPhotos.length > 0 && (
+            <p style={{ color: accent, fontSize: 14, marginTop: '-0.75rem', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+              {tr('welcome.gifts', { count: giftPhotos.length })}
+            </p>
+          )}
           <button onClick={dismissWelcome} style={{ ...primaryButtonStyle, width: '100%' }}>
             {tr('welcome.start')}
           </button>
@@ -2535,43 +2511,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           {priceDisplay.showExtraCosts
             ? tr('over.banner', { selected: ownerSelectedCount, included: packageInfo.included, extra: overIncluded, cost: money(extraCost) })
             : tr('over.bannerNoCost', { selected: ownerSelectedCount, included: packageInfo.included, extra: overIncluded })}
-        </div>
-      )}
-
-      {giftPhotos.length > 0 && (
-        <div
-          role="note"
-          style={{
-            margin: '0.6rem 1.5rem 0', padding: '0.6rem 1rem', borderRadius: 8,
-            background: `linear-gradient(90deg, ${accent}2b, ${accent}0d)`, border: `1px dashed ${accent}88`,
-            color: theme.text, fontSize: 14,
-          }}
-        >
-          {tr('gift.banner', { count: giftPhotos.length })}
-        </div>
-      )}
-
-      {!isLocked && showTapHint && (
-        <div
-          role="status"
-          style={{
-            margin: '0.6rem 1.5rem 0', padding: '0.5rem 0.75rem 0.5rem 0.5rem', borderRadius: 8,
-            background: `${accent}1f`, border: `1px solid ${accent}55`, color: theme.text, fontSize: 13,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem',
-          }}
-        >
-          <span>{tr('hint.tap')}</span>
-          <button
-            type="button"
-            onClick={dismissTapHint}
-            aria-label={tr('common.closeNotice')}
-            style={{
-              flexShrink: 0, width: 44, height: 44, borderRadius: '50%', border: 'none',
-              background: 'transparent', color: theme.textMuted, fontSize: 16, cursor: 'pointer',
-            }}
-          >
-            ✕
-          </button>
         </div>
       )}
 
@@ -3486,6 +3425,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         </div>
       )}
 
+      {showFilterRow && (
       <div id="gallery-filter-row" style={{ display: 'flex', gap: '0.5rem', padding: '0 1.5rem 0.75rem', justifyContent: 'center', flexWrap: 'wrap', scrollMarginTop: 96 }}>
         {([
           { key: 'all', label: tr('f.all', { n: photos.length }) },
@@ -3515,6 +3455,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </button>
         ))}
       </div>
+      )}
 
       {/* כמה תמונות כבר נפתחו במסך מלא (מקומי, למכשיר הזה) - שורה עדינה
           מתחת לסינון, במקום מונה נוסף בכותרת */}
@@ -3677,8 +3618,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   padding: '1px 7px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 4,
                 }}
               >
-                {/* מספר רץ במקום שם הקובץ; כבר נפתחה במסך מלא - אייקון עין קטן, לא רק צבע */}
-                {viewedIds.has(photo.id) && <span title={tr('card.viewed')} style={{ opacity: 0.85 }}>👁</span>}
+                {/* מספר רץ במקום שם הקובץ (מה שכבר נצפה נשמר ב-viewedIds - להתקדמות
+                    ולפרקים, בלי אייקון על כל כרטיס) */}
                 <bdi dir="ltr">{photoNumber}</bdi>
               </div>
 

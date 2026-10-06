@@ -20,7 +20,6 @@ export const grid = {
   'card.compareOff': 'לא נבחרה להשוואה',
   'card.open': 'פתיחת {label}',
   'card.hasNote': ', יש הערה',
-  'card.viewed': 'כבר צפית בתמונה הזו',
   'card.badgeMaybe': '🤔 אולי',
   'card.blurAria': 'ייתכן שהתמונה לא חדה (הערכה אוטומטית)',
   'card.blurTitle': 'הערכה אוטומטית לפי חדות - לא תמיד מדויקת',

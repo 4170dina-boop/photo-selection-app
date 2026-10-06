@@ -20,7 +20,6 @@ export const grid: Section<typeof he> = {
   'card.compareOff': 'not selected for comparison',
   'card.open': 'Open {label}',
   'card.hasNote': ', has a note',
-  'card.viewed': "You've already viewed this photo",
   'card.badgeMaybe': '🤔 Maybe',
   'card.blurAria': 'This photo may not be sharp (automatic estimate)',
   'card.blurTitle': 'Automatic sharpness estimate - not always accurate',
