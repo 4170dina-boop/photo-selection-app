@@ -47,5 +47,6 @@ export const welcome = {
   'info.extraPrice': '✨ כל תמונה נוספת: {price}',
   'info.estimate': 'סה״כ משוער לחבילה: {total}',
   'info.estimateBreakdown': ' ({base} חבילה + {extra} תוספת)',
+  'info.agreedTotal': 'סה״כ לתשלום: {total}',
   'info.until': 'ניתן לבחור עד {date}',
 } satisfies Record<string, Message>;

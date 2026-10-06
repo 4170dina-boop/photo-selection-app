@@ -8,6 +8,7 @@ import ExtensionCountdownBanner from '@/components/ExtensionCountdownBanner';
 import GiftCollage from '@/components/GiftCollage';
 import ClientProgressTracker, { DELIVERED_SECTION_ID } from '@/components/ClientProgressTracker';
 import ClientPayButton from '@/components/ClientPayButton';
+import { resolveClientPriceDisplay, type ClientPackageInfo } from '@/lib/clientPricing';
 import GalleryNavBar, { BurstBadge, BurstChooser } from '@/components/GalleryNavBar';
 import { applyNavFilters, burstMembers } from '@/lib/galleryNav';
 import type { Chapter } from '@/lib/chapters';
@@ -345,7 +346,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [zipMessage, setZipMessage] = useState('');
   const [myMarks, setMyMarks] = useState<Record<string, { status: 'maybe' | 'selected'; note: string | null; photographerReply: string | null }>>({});
   const [allMarks, setAllMarks] = useState<Record<string, Mark[]>>({});
-  const [packageInfo, setPackageInfo] = useState<{ included: number; extraPrice: number; basePrice: number } | null>(null);
+  const [packageInfo, setPackageInfo] = useState<ClientPackageInfo | null>(null);
   const [ownerSelectedCount, setOwnerSelectedCount] = useState(0);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [galleryStatus, setGalleryStatus] = useState<string>('sent');
@@ -771,7 +772,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     }
     const prev = prevOwnerSelectedRef.current;
     prevOwnerSelectedRef.current = ownerSelectedCount;
-    if (packageInfo.extraPrice <= 0 || !crossedIncludedQuota(prev, ownerSelectedCount, packageInfo.included)) return;
+    // סכום ידני של הצלמת (lib/clientPricing.ts) - מחיר לתמונה נוספת כבר לא רלוונטי
+    if (packageInfo.priceOverridden || packageInfo.extraPrice <= 0 || !crossedIncludedQuota(prev, ownerSelectedCount, packageInfo.included)) return;
     const key = extraPriceToastKey(galleryId, myParticipant.id);
     try {
       if (localStorage.getItem(key)) return;
@@ -1966,7 +1968,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // setPhotoStatus לכל תמונה (בקשת רשת מיותרת לכל אחת); אחרי הריצה טוענים
   // מחדש מהשרת את הסימונים והמונים.
   async function handleAiPicks() {
-    if (!myParticipant || isLocked || aiPicksRunning) return;
+    if (!myParticipant?.isOwner || isLocked || aiPicksRunning) return;
 
     setAiPicksRunning(true);
     setAiPicksMessage('');
@@ -2176,6 +2178,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const extraCost = usage?.extraCost ?? 0;
   const totalEstimate = usage?.totalEstimate ?? 0;
   const progressPct = usage?.progressPct ?? 0;
+  // סכום ידני של הצלמת גובר על "N × מחיר" - ראו lib/clientPricing.ts
+  const priceDisplay = resolveClientPriceDisplay(packageInfo, { extraCount: overIncluded, totalEstimate });
   const giftPhotos = photos.filter((p) => p.isGift);
   // סינון תצוגה בלבד ("הצג רק בחירות שלי") - לא נוגע בנתונים עצמם, רק
   // באיזה תת-קבוצה מוצגת בגריד. עוזר לסקור לפני "סיימתי לבחור" בגלריות גדולות.
@@ -2198,7 +2202,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const photoNumberById = new Map(photos.map((p, i) => [p.id, i + 1]));
   const isOwner = myParticipant?.isOwner ?? false;
   // "✨ כל תמונה נוספת: X ₪" - רק כשיש מחיר לתמונה נוספת
-  const extraLabel = packageInfo && Number(packageInfo.extraPrice) > 0 ? tr('info.extraPrice', { price: money(packageInfo.extraPrice) }) : null;
+  const extraLabel = packageInfo && priceDisplay.showExtraCosts && Number(packageInfo.extraPrice) > 0 ? tr('info.extraPrice', { price: money(packageInfo.extraPrice) }) : null;
   const viewProgress = viewedProgress(viewedIds, photos.map((p) => p.id));
   // הפס התחתון הקבוע בגריד - רק לבעלים כשהבחירה פתוחה, ולא כשמסך מלא פתוח
   // (לתצוגה המוגדלת יש פס משלה).
@@ -2408,12 +2412,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         )}
         {/* מחיר תמונה נוספת מוצג מראש, לא רק אחרי שכבר חרגו מהחבילה */}
         {packageInfo && extraLabel && <span style={{ color: theme.text }}>{extraLabel}</span>}
-        {packageInfo && packageInfo.basePrice > 0 && (
+        {packageInfo && priceDisplay.total != null && (
           <span>
-            {rich('info.estimate', { total: <b style={{ color: accent }}>{money(Math.round(totalEstimate))}</b> })}
-            {overIncluded > 0 && (
+            {priceDisplay.mode === 'agreed'
+              ? rich('info.agreedTotal', { total: <b style={{ color: accent }}>{money(priceDisplay.total)}</b> })
+              : rich('info.estimate', { total: <b style={{ color: accent }}>{money(priceDisplay.total)}</b> })}
+            {priceDisplay.showBreakdown && (
               <span style={{ color: theme.textFaint }}>
-                {tr('info.estimateBreakdown', { base: money(Math.round(packageInfo.basePrice)), extra: money(Math.round(extraCost)) })}
+                {tr('info.estimateBreakdown', { base: money(packageInfo.basePrice), extra: money(extraCost) })}
               </span>
             )}
           </span>
@@ -2446,7 +2452,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             background: `${accent}1f`, border: `1px solid ${accent}44`, color: accent, fontSize: 14,
           }}
         >
-          {tr('over.banner', { selected: ownerSelectedCount, included: packageInfo.included, extra: overIncluded, cost: money(Math.round(extraCost)) })}
+          {priceDisplay.showExtraCosts
+            ? tr('over.banner', { selected: ownerSelectedCount, included: packageInfo.included, extra: overIncluded, cost: money(extraCost) })
+            : tr('over.bannerNoCost', { selected: ownerSelectedCount, included: packageInfo.included, extra: overIncluded })}
         </div>
       )}
 
@@ -2711,7 +2719,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           </button>
         )}
 
-        {!isLocked && photos.length > 0 && (
+        {/* רק לבעלים - השרת מחזיר 403 לאורחים (עלות AI לצלמת), ראו app/api/gallery/[id]/ai-picks */}
+        {!isLocked && isOwner && photos.length > 0 && (
           <button
             onClick={handleAiPicks}
             disabled={aiPicksRunning}
@@ -3109,7 +3118,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     </bdi>
                     {overIncluded > 0 && (
                       <span style={{ color: accent }}>
-                        {' · '}{tr('en.extra', { n: overIncluded })}{extraCost > 0 ? tr('en.extraCost', { cost: money(Math.round(extraCost)) }) : ''}
+                        {' · '}{tr('en.extra', { n: overIncluded })}{priceDisplay.showExtraCosts && extraCost > 0 ? tr('en.extraCost', { cost: money(extraCost) }) : ''}
                       </span>
                     )}
                   </>
@@ -3887,7 +3896,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 <div style={rowStyle}>
                   <span>{tr('fm.extra')}</span>
                   <b style={{ color: accent }}>
-                    {summary.extraPrice > 0 ? (
+                    {priceDisplay.showExtraCosts && summary.extraPrice > 0 ? (
                       <bdi dir="ltr">{summary.extraCount} × {money(summary.extraPrice)} = {money(summary.extraCost)}</bdi>
                     ) : (
                       summary.extraCount
@@ -3901,7 +3910,21 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   <b>{giftPhotos.length}</b>
                 </div>
               )}
-              <ClientPayButton compact galleryId={galleryId} amount={summary.extraCost} accent={accent} buttonStyle={primaryButtonStyle} />
+              {priceDisplay.mode === 'agreed' && priceDisplay.total != null && (
+                <div style={rowStyle}>
+                  <span>{tr('fm.agreedTotal')}</span>
+                  <b style={{ color: accent }}>{money(priceDisplay.total)}</b>
+                </div>
+              )}
+              {/* עם סכום ידני - הסכום שהשרת חישב (app/api/gallery/[id]/progress, כולל
+                  amount_due_override ותשלומים שנרשמו), לא "N × מחיר" מהדפדפן */}
+              <ClientPayButton
+                compact
+                galleryId={galleryId}
+                amount={priceDisplay.showExtraCosts ? summary.extraCost : undefined}
+                accent={accent}
+                buttonStyle={primaryButtonStyle}
+              />
 
               {packageInfo && summary.remainingIncluded > 0 && (
                 <p style={{ fontSize: 13, color: theme.textMuted, margin: '0.75rem 0 0' }}>

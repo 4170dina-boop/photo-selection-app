@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
+import { fetchAllPages } from '@/lib/fetchAllPages';
 import { giftExclusionFilter, groupGiftIdsByGallery } from '@/lib/gifts';
 import { computePaymentSummary, type PaymentSummary } from '@/lib/payments';
 import { israelDateString } from '@/lib/israelTime';
@@ -44,24 +45,44 @@ export interface ClientsData {
 }
 
 export async function loadClientsData(supabase: SupabaseClient): Promise<ClientsData> {
-  const [clientsRes, galleriesRes, shootsRes] = await Promise.all([
-    supabase.from('clients').select('id, full_name, email, created_at').order('created_at', { ascending: false }),
-    supabase
-      .from('galleries')
-      .select('id, client_id, status, created_at, expires_at, last_activity_at, sent_at, delivered_at, paid_at, owner_participant_id, amount_due_override, packages(included_photos, base_price, extra_photo_price), gallery_payments(amount)')
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('shoots')
-      .select('id, client_id, gallery_id, shoot_date, start_time, location, created_at')
-      .order('shoot_date', { ascending: false }),
-  ]);
-
+  // pagination (lib/fetchAllPages.ts) - PostgREST חותך כל שאילתה ב-1000 שורות,
+  // וצלמת ותיקה עם יותר לקוחות/גלריות/צילומים הייתה רואה רשימה חסרה בשקט.
+  // order משני לפי id כדי שהעמודים יהיו יציבים (בלי חפיפות/דילוגים).
   // שגיאה ב-clients/galleries מפילה את הדף (אחרת זה נראה כמו "אין לקוחות").
   // shoots - best-effort: אם המיגרציה של יומן הצילומים עוד לא רצה, ממשיכים בלעדיו.
-  if (clientsRes.error) throw new Error(clientsRes.error.message);
-  if (galleriesRes.error) throw new Error(galleriesRes.error.message);
-  const rawGalleries = (galleriesRes.data ?? []) as any[];
-  const shoots = (shootsRes.error ? [] : shootsRes.data ?? []) as ClientShoot[];
+  const [clientsRows, rawGalleries, shoots] = await Promise.all([
+    fetchAllPages<any>((from, to) =>
+      supabase
+        .from('clients')
+        .select('id, full_name, email, created_at')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, to)
+    ).catch((error) => {
+      throw new Error(error?.message ?? String(error));
+    }),
+    fetchAllPages<any>((from, to) =>
+      supabase
+        .from('galleries')
+        .select('id, client_id, status, created_at, expires_at, last_activity_at, sent_at, delivered_at, paid_at, owner_participant_id, amount_due_override, packages(included_photos, base_price, extra_photo_price), gallery_payments(amount)')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, to)
+    ).catch((error) => {
+      throw new Error(error?.message ?? String(error));
+    }),
+    fetchAllPages<ClientShoot>((from, to) =>
+      supabase
+        .from('shoots')
+        .select('id, client_id, gallery_id, shoot_date, start_time, location, created_at')
+        .order('shoot_date', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, to)
+    ).catch((error) => {
+      console.warn('[clients] טעינת הצילומים נכשלה - ממשיכים בלעדיהם:', error);
+      return [] as ClientShoot[];
+    }),
+  ]);
 
   // ספירת הבחירות לחיוב - בדיוק כמו app/dashboard/galleries/page.tsx: רק של
   // הבעלים, סטטוס 'selected', בלי תמונות מתנה (lib/gifts.ts).
@@ -91,7 +112,7 @@ export async function loadClientsData(supabase: SupabaseClient): Promise<Clients
   );
 
   const clients = buildClientSummaries({
-    clients: clientsRes.data ?? [],
+    clients: clientsRows,
     galleries: galleries.map((g) => ({ ...g, paid: g.summary.paid, outstanding: g.summary.outstanding })),
     shoots,
     todayDate: israelDateString(new Date()),

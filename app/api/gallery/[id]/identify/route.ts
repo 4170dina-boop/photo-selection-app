@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireGallerySession } from '@/lib/gallerySession';
-import { signSession } from '@/lib/session';
+import { signSession, signValue, verifyValue } from '@/lib/session';
 import { SESSION_MAX_AGE_MS } from '@/lib/gallerySession';
 import {
   checkGalleryWritable,
@@ -9,8 +9,20 @@ import {
   evaluateOwnerClaim,
   loadGalleryViewAccess,
   MAX_PARTICIPANTS_PER_GALLERY,
+  normalizeEmailForCompare,
 } from '@/lib/galleryAccess';
 import { isMissingColumnError, parseGenderInput } from '@/lib/gender';
+import { isMissingFunctionError } from '@/lib/rpcErrors';
+import {
+  browserStateAfterFailure,
+  isBrowserOwnerClaimLocked,
+  OWNER_CLAIM_COOKIE_MAX_AGE_SECONDS,
+  OWNER_CLAIM_COOKIE_PREFIX,
+  OWNER_CLAIM_GLOBAL_MAX_ATTEMPTS,
+  parseOwnerClaimBrowserState,
+  parseOwnerClaimDbResult,
+  type OwnerClaimBrowserState,
+} from '@/lib/ownerClaimSession';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -34,8 +46,9 @@ const DISPLAY_NAME_MAX_LENGTH = 40;
 // אחרי זה ה-session נושא participantId של הבעלים (מסלול reuse) ו-verify-access
 // שומר עליו גם כשמקלידים שוב את הקוד.
 // ניסיונות שגויים נספרים במונה נפרד (clients.owner_claim_failed_attempts/
-// owner_claim_locked_until, RPC register_failed_owner_claim ב-supabase/schema.sql,
-// אותה לוגיקה בדיוק כמו lib/accessLockout.ts) ולא במונה של קוד הגישה - כי
+// owner_claim_locked_until, RPC try_owner_claim ב-supabase/schema.sql), ובנוסף
+// במונה לדפדפן (עוגייה חתומה) כדי שבן משפחה שטועה לא ינעל את הבעלים במכשיר
+// אחר - ראו lib/ownerClaimSession.ts. לא במונה של קוד הגישה - כי
 // verify-access מאפס את המונה ההוא בכל הקלדת קוד נכונה, ומי שמחזיק בקוד היה
 // יכול לנחש מיילים בלי הגבלה ע"י הקלדה חוזרת של הקוד בין ניחוש לניחוש.
 const OWNER_CLAIM_LOCKED_ERROR = 'יותר מדי ניסיונות שגויים - נסי שוב בעוד כמה דקות';
@@ -108,9 +121,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: decision.error }, { status: decision.status });
   }
 
+  // מונה "זאת אני" לדפדפן הזה (lib/ownerClaimSession.ts) - נמחק אחרי זיהוי מוצלח
+  const claimCookieName = `${OWNER_CLAIM_COOKIE_PREFIX}${galleryId}`;
+  let clearClaimCookie = false;
+
   if (decision.kind === 'owner') {
-    const claim = await verifyOwnerClaim(gallery.client_id, body.ownerEmail);
-    if (claim) return claim;
+    const browserState = parseOwnerClaimBrowserState(verifyValue(req.cookies.get(claimCookieName)?.value), gallery.client_id);
+    const claim = await verifyOwnerClaim(gallery.client_id, body.ownerEmail, browserState);
+    if (claim.response) {
+      if (claim.nextBrowserState) setClaimCookie(claim.response, claimCookieName, claim.nextBrowserState);
+      return claim.response;
+    }
+    clearClaimCookie = (browserState.failed_access_attempts ?? 0) > 0 || !!browserState.locked_until;
 
     const { data: owner } = await supabaseAdmin
       .from('gallery_participants')
@@ -202,15 +224,83 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     maxAge: SESSION_MAX_AGE_MS / 1000,
     path: '/',
   });
+  if (clearClaimCookie) response.cookies.delete(claimCookieName);
 
   return response;
 }
 
-// אימות המייל של "זאת אני" מול clients.email + רישום/איפוס ניסיונות שגויים.
-// מחזירה תשובת שגיאה מוכנה, או null אם מותר להמשיך כבעלים.
-async function verifyOwnerClaim(clientId: string, rawEmail: unknown): Promise<NextResponse | null> {
-  const providedEmail = typeof rawEmail === 'string' ? rawEmail.slice(0, EMAIL_MAX_LENGTH) : '';
+function setClaimCookie(response: NextResponse, name: string, state: OwnerClaimBrowserState) {
+  response.cookies.set(name, signValue(state), {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: OWNER_CLAIM_COOKIE_MAX_AGE_SECONDS,
+    path: '/',
+  });
+}
 
+// אימות המייל של "זאת אני" מול clients.email + רישום/איפוס ניסיונות שגויים.
+// response = תשובת שגיאה מוכנה, או null אם מותר להמשיך כבעלים.
+// nextBrowserState = מצב חדש לעוגיית המונה של הדפדפן (רק אחרי ניסיון שגוי).
+//
+// הנתיב הראשי: try_owner_claim (supabase/schema.sql) - נעילת השורה, בדיקת
+// נעילה, השוואה ורישום/איפוס באותה טרנזקציה. קודם ההשוואה הייתה כאן ב-JS
+// מול מצב שנקרא *לפני* הנעילה, כך שעשרות ניחושים מקבילים עברו כולם את בדיקת
+// הנעילה, והנכון ביניהם הצליח גם אחרי שהשאר כבר נעלו. אם הפונקציה עוד לא
+// קיימת (מיגרציה שלא רצה) - נופלים לנתיב הישן (verifyOwnerClaimLegacy).
+async function verifyOwnerClaim(
+  clientId: string,
+  rawEmail: unknown,
+  browserState: OwnerClaimBrowserState
+): Promise<{ response: NextResponse | null; nextBrowserState?: OwnerClaimBrowserState }> {
+  // הדפדפן הזה כבר נעול - בלי לגעת במונה הגלובלי (ובלי לנעול את הבעלים במכשיר אחר)
+  if (isBrowserOwnerClaimLocked(browserState)) {
+    return { response: NextResponse.json({ error: OWNER_CLAIM_LOCKED_ERROR }, { status: 429 }) };
+  }
+
+  const providedEmail = normalizeEmailForCompare(typeof rawEmail === 'string' ? rawEmail.slice(0, EMAIL_MAX_LENGTH) : '');
+  if (!providedEmail) {
+    return { response: NextResponse.json({ error: 'צריך להקליד את כתובת המייל שלך', needsOwnerEmail: true }, { status: 400 }) };
+  }
+
+  const { data, error } = await supabaseAdmin.rpc('try_owner_claim', {
+    p_client_id: clientId,
+    p_email: providedEmail,
+    p_max_attempts: OWNER_CLAIM_GLOBAL_MAX_ATTEMPTS,
+  });
+
+  if (error && isMissingFunctionError(error)) {
+    return verifyOwnerClaimLegacy(clientId, providedEmail, browserState);
+  }
+
+  const result = error ? null : parseOwnerClaimDbResult(data);
+  if (!result || result === 'not_found') {
+    console.error('[identify] try_owner_claim נכשל:', error ?? data);
+    return { response: NextResponse.json({ error: 'השירות לא זמין כרגע, נסי שוב בעוד כמה דקות' }, { status: 503 }) };
+  }
+  if (result === 'locked') {
+    return { response: NextResponse.json({ error: OWNER_CLAIM_LOCKED_ERROR }, { status: 429 }) };
+  }
+  if (result === 'no_registered_email') {
+    return { response: NextResponse.json({ error: 'לא רשום מייל ללקוחה בגלריה הזו - פני לצלמת' }, { status: 403 }) };
+  }
+  if (result === 'mismatch') {
+    return {
+      response: NextResponse.json({ error: OWNER_EMAIL_MISMATCH_ERROR }, { status: 401 }),
+      nextBrowserState: browserStateAfterFailure(browserState),
+    };
+  }
+  return { response: null };
+}
+
+// הנתיב הישן (לפני try_owner_claim): השוואה ב-JS ורישום אטומי של הכשל בלבד
+// (register_failed_owner_claim). נשאר כ-fallback עד שהמיגרציה רצה. המונה
+// הגלובלי כאן עדיין בסף הישן (5) - הפרדת הדפדפן מהבעלים מלאה רק אחרי המיגרציה.
+async function verifyOwnerClaimLegacy(
+  clientId: string,
+  providedEmail: string,
+  browserState: OwnerClaimBrowserState
+): Promise<{ response: NextResponse | null; nextBrowserState?: OwnerClaimBrowserState }> {
   const { data: client, error } = await supabaseAdmin
     .from('clients')
     .select('id, email, owner_claim_failed_attempts, owner_claim_locked_until')
@@ -221,7 +311,7 @@ async function verifyOwnerClaim(clientId: string, rawEmail: unknown): Promise<Ne
   // נכשלים "סגור": לא נותנים זכויות בעלים בלי אפשרות לספור ניסיונות שגויים.
   if (error || !client) {
     console.error('[identify] טעינת פרטי הלקוחה לאימות בעלים נכשלה:', error);
-    return NextResponse.json({ error: 'השירות לא זמין כרגע, נסי שוב בעוד כמה דקות' }, { status: 503 });
+    return { response: NextResponse.json({ error: 'השירות לא זמין כרגע, נסי שוב בעוד כמה דקות' }, { status: 503 }) };
   }
 
   const check = evaluateOwnerClaim({
@@ -231,13 +321,13 @@ async function verifyOwnerClaim(clientId: string, rawEmail: unknown): Promise<Ne
   });
 
   if (check.kind === 'locked') {
-    return NextResponse.json({ error: OWNER_CLAIM_LOCKED_ERROR }, { status: 429 });
+    return { response: NextResponse.json({ error: OWNER_CLAIM_LOCKED_ERROR }, { status: 429 }) };
   }
   if (check.kind === 'missing') {
-    return NextResponse.json({ error: 'צריך להקליד את כתובת המייל שלך', needsOwnerEmail: true }, { status: 400 });
+    return { response: NextResponse.json({ error: 'צריך להקליד את כתובת המייל שלך', needsOwnerEmail: true }, { status: 400 }) };
   }
   if (check.kind === 'no_registered_email') {
-    return NextResponse.json({ error: 'לא רשום מייל ללקוחה בגלריה הזו - פני לצלמת' }, { status: 403 });
+    return { response: NextResponse.json({ error: 'לא רשום מייל ללקוחה בגלריה הזו - פני לצלמת' }, { status: 403 }) };
   }
   if (check.kind === 'mismatch') {
     // אטומי ב-DB (נעילת שורה), כמו register_failed_access_attempt ב-verify-access
@@ -247,12 +337,13 @@ async function verifyOwnerClaim(clientId: string, rawEmail: unknown): Promise<Ne
     if (attemptError) {
       // בלי רישום הניסיון אין הגבלה על ניחושים - לא מחזירים 401 רגיל
       console.error('[identify] register_failed_owner_claim נכשל:', attemptError);
-      return NextResponse.json({ error: 'השירות לא זמין כרגע, נסי שוב בעוד כמה דקות' }, { status: 503 });
+      return { response: NextResponse.json({ error: 'השירות לא זמין כרגע, נסי שוב בעוד כמה דקות' }, { status: 503 }) };
     }
+    const nextBrowserState = browserStateAfterFailure(browserState);
     if (attemptRows?.[0]?.already_locked_out) {
-      return NextResponse.json({ error: OWNER_CLAIM_LOCKED_ERROR }, { status: 429 });
+      return { response: NextResponse.json({ error: OWNER_CLAIM_LOCKED_ERROR }, { status: 429 }), nextBrowserState };
     }
-    return NextResponse.json({ error: OWNER_EMAIL_MISMATCH_ERROR }, { status: 401 });
+    return { response: NextResponse.json({ error: OWNER_EMAIL_MISMATCH_ERROR }, { status: 401 }), nextBrowserState };
   }
 
   if ((client.owner_claim_failed_attempts ?? 0) > 0 || client.owner_claim_locked_until) {
@@ -261,5 +352,5 @@ async function verifyOwnerClaim(clientId: string, rawEmail: unknown): Promise<Ne
       .update({ owner_claim_failed_attempts: 0, owner_claim_locked_until: null })
       .eq('id', client.id);
   }
-  return null;
+  return { response: null };
 }

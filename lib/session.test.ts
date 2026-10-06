@@ -1,5 +1,39 @@
 import { describe, it, expect } from 'vitest';
-import { signSession, verifySession, safeCompare, accessCodesMatch, assertValidSessionSecret } from './session';
+import {
+  signSession,
+  verifySession,
+  safeCompare,
+  accessCodesMatch,
+  assertValidSessionSecret,
+  signValue,
+  verifyValue,
+  normalizeAccessCodeForCompare,
+} from './session';
+
+describe('signValue / verifyValue', () => {
+  it('round-trips a value and rejects tampering', () => {
+    const token = signValue({ clientId: 'c1', failed_access_attempts: 2, locked_until: null });
+    expect(verifyValue(token)).toEqual({ clientId: 'c1', failed_access_attempts: 2, locked_until: null });
+    const [body, sig] = token.split('.');
+    const forged = Buffer.from(JSON.stringify({ clientId: 'c1', failed_access_attempts: 0 })).toString('base64url');
+    expect(verifyValue(`${forged}.${sig}`)).toBeNull();
+    expect(verifyValue(`${body}.x`)).toBeNull();
+    expect(verifyValue(undefined)).toBeNull();
+  });
+
+  it('is domain-separated from gallery session tokens', () => {
+    const payload = { galleryId: 'g1', clientId: 'c1', participantId: 'p1', iat: Date.now() };
+    expect(verifySession(signValue(payload), 'g1', 24 * 60 * 60 * 1000)).toBeNull();
+    expect(verifyValue(signSession(payload))).toBeNull();
+  });
+});
+
+describe('normalizeAccessCodeForCompare', () => {
+  it('trims and upper-cases like accessCodesMatch', () => {
+    expect(normalizeAccessCodeForCompare('  ab12cd \n')).toBe('AB12CD');
+    expect(normalizeAccessCodeForCompare(null)).toBe('');
+  });
+});
 
 describe('assertValidSessionSecret', () => {
   it('throws a clear error when the secret is missing', () => {

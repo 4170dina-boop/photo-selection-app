@@ -45,4 +45,7 @@ export const serverErrors = {
   'srv.extAlreadyDone': 'הבחירה כבר הסתיימה - אין צורך בהארכה',
   'srv.extUnavailable': 'בקשת הארכה עוד לא זמינה בגלריה הזו',
   'srv.extSendFailed': 'שליחת הבקשה נכשלה, נסי שוב',
+  'srv.loadFailed': 'טעינת הגלריה נכשלה, נסו שוב',
+  'srv.aiOwnerOnly': 'הבחירה בעזרת AI זמינה רק ללקוחה הראשית - אפשר להמשיך לסמן תמונות כרגיל',
+  'srv.aiGalleryLimit': 'הבחירה בעזרת AI כבר הופעלה 3 פעמים היום בגלריה הזו - אפשר לנסות שוב מחר',
 } satisfies Record<string, Message>;

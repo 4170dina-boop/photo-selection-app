@@ -43,4 +43,7 @@ export const serverErrors: Section<typeof he> = {
   'srv.extAlreadyDone': 'La selección ya terminó; no hace falta prórroga',
   'srv.extUnavailable': 'Las prórrogas aún no están disponibles en esta galería',
   'srv.extSendFailed': 'No se pudo enviar la solicitud, inténtalo de nuevo',
+  'srv.loadFailed': 'No se pudo cargar la galería, inténtalo de nuevo',
+  'srv.aiOwnerOnly': 'La selección con IA solo está disponible para la clienta principal; puedes seguir marcando fotos como siempre',
+  'srv.aiGalleryLimit': 'La selección con IA ya se usó 3 veces hoy en esta galería; inténtalo de nuevo mañana',
 };

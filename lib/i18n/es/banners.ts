@@ -4,6 +4,7 @@ import type { banners as he } from '../he/banners';
 
 export const banners: Section<typeof he> = {
   'over.banner': '✨ Elegiste {selected} fotos ({included} incluidas + {extra} extra) · Extra: {cost}',
+  'over.bannerNoCost': '✨ Elegiste {selected} fotos ({included} incluidas + {extra} extra)',
   'gift.banner': {
     one: '🎁 Te preparé una foto de regalo: ya está incluida, sin descontar del paquete y sin coste extra. No hace falta elegirla.',
     other: '🎁 Te preparé {count} fotos de regalo: ya están incluidas, sin descontar del paquete y sin coste extra. No hace falta elegirlas.',

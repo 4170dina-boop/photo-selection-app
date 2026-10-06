@@ -4,6 +4,7 @@ import type { Message } from '../types';
 
 export const banners = {
   'over.banner': '✨ בחרת {selected} תמונות ({included} כלולות + {extra} נוספות) · תוספת: {cost}',
+  'over.bannerNoCost': '✨ בחרת {selected} תמונות ({included} כלולות + {extra} נוספות)',
   'gift.banner': {
     one: '🎁 הכנתי לך תמונת מתנה - היא כבר כלולה אצלך, בלי לגרוע מהחבילה ובלי תוספת תשלום. אין צורך לבחור אותה.',
     other: '🎁 הכנתי לך {count} תמונות מתנה - הן כבר כלולות אצלך, בלי לגרוע מהחבילה ובלי תוספת תשלום. אין צורך לבחור אותן.',

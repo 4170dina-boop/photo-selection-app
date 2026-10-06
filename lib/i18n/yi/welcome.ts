@@ -44,5 +44,6 @@ export const welcome: Section<typeof he> = {
   'info.extraPrice': '✨ יעדעס עקסטערע בילד: {price}',
   'info.estimate': 'אומגעפערער סך הכל: {total}',
   'info.estimateBreakdown': ' ({base} פעקעדזש + {extra} עקסטרא)',
+  'info.agreedTotal': 'סך הכל צו באצאָלן: {total}',
   'info.until': 'מען קען אויסקלייבן ביז {date}',
 };

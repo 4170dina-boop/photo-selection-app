@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { signSession, accessCodesMatch } from '@/lib/session';
+import { signSession, accessCodesMatch, normalizeAccessCodeForCompare } from '@/lib/session';
 import { SESSION_MAX_AGE_MS, requireGallerySession } from '@/lib/gallerySession';
 import { isLockedOut, clearedLockoutState } from '@/lib/accessLockout';
 import { loadGalleryViewAccess } from '@/lib/galleryAccess';
+import { isMissingFunctionError } from '@/lib/rpcErrors';
+import { parseAccessCodeDbResult } from '@/lib/ownerClaimSession';
 
 // שימו לב: כאן (ורק כאן, בצד שרת) משתמשים ב-service_role key, לא ב-anon key.
 // ה-service key חייב להישאר בסביבת השרת בלבד ולעולם לא להגיע לדפדפן.
@@ -35,7 +37,9 @@ export async function POST(req: NextRequest) {
     .eq('id', galleryId)
     .single();
 
-  if (galleryError || !gallery) {
+  // טיוטה (draft) עוד לא נשלחה ללקוחה - לא פותחים אותה גם עם קוד נכון,
+  // ומחזירים בדיוק כמו גלריה שלא קיימת (בלי לחשוף שיש כזו).
+  if (galleryError || !gallery || gallery.status === 'draft') {
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
@@ -55,9 +59,40 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: LOCKED_OUT_ERROR }, { status: 429 });
   }
 
-  // השוואה בזמן קבוע ובלי תלות ברישיות (lib/session.ts) - לא חושפת מידע על
+  // הנתיב הראשי: try_access_code (supabase/schema.sql) - נעילת שורת הלקוחה,
+  // בדיקת נעילה, השוואת הקוד ורישום הכשל/איפוס המונה בטרנזקציה אחת. קודם
+  // ההשוואה הייתה ב-JS מול מצב שנקרא *לפני* הנעילה: עשרות ניחושים מקבילים
+  // עברו כולם את isLockedOut למעלה, והנכון ביניהם הצליח גם אחרי שהשאר כבר
+  // נעלו את הלקוחה. isLockedOut למעלה נשאר רק כקיצור דרך זול.
+  // אם הפונקציה עוד לא קיימת (מיגרציה שלא רצה) - הנתיב הישן למטה.
+  let verified = false;
+  if (client?.id) {
+    const { data: tryRows, error: tryError } = await supabaseAdmin.rpc('try_access_code', {
+      p_client_id: client.id,
+      p_code: normalizeAccessCodeForCompare(accessCode),
+    });
+    if (!tryError) {
+      const result = parseAccessCodeDbResult(tryRows);
+      if (!result) {
+        console.error('[verify-access] try_access_code החזיר תשובה לא צפויה:', tryRows);
+        return NextResponse.json({ error: 'השירות לא זמין כרגע, נסו שוב בעוד כמה דקות' }, { status: 503 });
+      }
+      if (result.lockedOut) {
+        return NextResponse.json({ error: LOCKED_OUT_ERROR }, { status: 429 });
+      }
+      if (!result.ok) {
+        return NextResponse.json({ error: 'קוד גישה שגוי' }, { status: 401 });
+      }
+      verified = true;
+    } else if (!isMissingFunctionError(tryError)) {
+      console.error('[verify-access] try_access_code נכשל:', tryError);
+      return NextResponse.json({ error: 'השירות לא זמין כרגע, נסו שוב בעוד כמה דקות' }, { status: 503 });
+    }
+  }
+
+  // נתיב ישן (fallback) - השוואה בזמן קבוע ובלי תלות ברישיות (lib/session.ts) - לא חושפת מידע על
   // אורך/תוכן הקוד הנכון דרך תזמון התשובה
-  if (!accessCodesMatch(expectedCode, accessCode)) {
+  if (!verified && !accessCodesMatch(expectedCode, accessCode)) {
     if (client?.id) {
       // הרצה אטומית ב-DB (register_failed_access_attempt, ראו supabase/schema.sql)
       // במקום read-then-write מהערך שכבר נקרא למעלה - כדי לסגור מרוץ בין ניחושים
@@ -80,7 +115,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'קוד גישה שגוי' }, { status: 401 });
   }
 
-  if (client?.id && ((client.failed_access_attempts ?? 0) > 0 || client.locked_until)) {
+  // try_access_code כבר איפס את המונה ב-DB; בנתיב הישן מאפסים כאן
+  if (!verified && client?.id && ((client.failed_access_attempts ?? 0) > 0 || client.locked_until)) {
     await supabaseAdmin.from('clients').update(clearedLockoutState).eq('id', client.id);
   }
 

@@ -86,7 +86,37 @@ export function safeCompare(a: string, b: string): boolean {
 // קודי הגישה נוצרים באותיות גדולות (hex, ראו generateAccessCode ב-
 // app/api/galleries/route.ts), אבל לקוחה שמקלידה ממובייל מקבלת לרוב אותיות
 // קטנות - משווים בלי תלות ברישיות ובלי רווחים בקצוות, עדיין בזמן קבוע.
+export function normalizeAccessCodeForCompare(code: string | null | undefined): string {
+  return typeof code === 'string' ? code.trim().toUpperCase() : '';
+}
+
 export function accessCodesMatch(expected: string | null | undefined, provided: string | null | undefined): boolean {
   if (!expected || !provided) return false;
-  return safeCompare(expected.trim().toUpperCase(), provided.trim().toUpperCase());
+  return safeCompare(normalizeAccessCodeForCompare(expected), normalizeAccessCodeForCompare(provided));
+}
+
+// חתימה כללית (אותו HMAC של ה-session) לעוגיות קטנות אחרות שהשרת צריך לסמוך
+// עליהן - למשל מונה ניסיונות "זאת אני" לדפדפן (lib/ownerClaimSession.ts).
+// מחזירה null לטוקן חסר/מזויף/לא JSON. בלי תוקף מובנה - מי שקורא בודק בעצמו.
+// הפרדת תחום (הקידומת 'value:' בחתימה) - כדי שטוקן כזה לעולם לא יתקבל כ-session
+// גלריה ולהפך, גם אם התוכן במקרה נראה דומה.
+const VALUE_SIG_PREFIX = 'value:';
+
+export function signValue(value: unknown): string {
+  const body = Buffer.from(JSON.stringify(value)).toString('base64url');
+  return `${body}.${hmac(VALUE_SIG_PREFIX + body)}`;
+}
+
+export function verifyValue(token: string | undefined): unknown | null {
+  if (!token) return null;
+  const [body, sig] = token.split('.');
+  if (!body || !sig) return null;
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(hmac(VALUE_SIG_PREFIX + body));
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) return null;
+  try {
+    return JSON.parse(Buffer.from(body, 'base64url').toString());
+  } catch {
+    return null;
+  }
 }
