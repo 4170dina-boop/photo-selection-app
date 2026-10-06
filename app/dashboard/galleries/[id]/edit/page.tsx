@@ -10,6 +10,7 @@ import { israelEndOfDayIso } from '@/lib/israelTime';
 import { canDeliverFinals } from '@/lib/galleryLifecycle';
 import { createClient } from '@/lib/supabase/client';
 import MagicButton from '@/components/MagicButton';
+import LightroomNamesCopy from '@/components/LightroomNamesCopy';
 import GalleryPaymentsSection from '@/components/GalleryPaymentsSection';
 import EmailInput from '@/components/EmailInput';
 import ClientInviteMessageCopy from '@/components/ClientInviteMessageCopy';
@@ -827,6 +828,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           </Link>
         </p>
         <MagicButton galleryId={galleryId} />
+        <LightroomNamesCopy galleryId={galleryId} />
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.4rem', marginTop: '0.75rem' }}>
           <a
             href={`/api/galleries/${galleryId}/selections-export`}
