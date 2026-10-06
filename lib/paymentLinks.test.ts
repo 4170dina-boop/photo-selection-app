@@ -106,6 +106,18 @@ describe('computeClientPayAmount', () => {
     expect(computeClientPayAmount({ pkg, billableSelectedCount: 35, amountDueOverride: '50', payments: [], paidAt: null })).toBe(50);
   });
 
+  it('shows the manual agreed total even without extra photos', () => {
+    // סכום ידני = הסכום לתשלום, גם כשלא נבחרו תמונות נוספות (לא 0)
+    expect(computeClientPayAmount({ pkg, billableSelectedCount: 10, amountDueOverride: '1800', payments: [], paidAt: null })).toBe(1800);
+    expect(computeClientPayAmount({ pkg: null, billableSelectedCount: 0, amountDueOverride: 900, payments: [], paidAt: null })).toBe(900);
+    // פחות תשלומים שנרשמו, ו-0 כשסומן כשולם / שולם במלואו
+    expect(computeClientPayAmount({ pkg, billableSelectedCount: 10, amountDueOverride: '1800', payments: [{ amount: 500 }], paidAt: null })).toBe(1300);
+    expect(computeClientPayAmount({ pkg, billableSelectedCount: 10, amountDueOverride: '1800', payments: [], paidAt: '2026-01-01' })).toBe(0);
+    expect(computeClientPayAmount({ pkg, billableSelectedCount: 10, amountDueOverride: '1800', payments: [{ amount: 2000 }], paidAt: null })).toBe(0);
+    // סכום ידני ריק = כמו בלי סכום ידני
+    expect(computeClientPayAmount({ pkg, billableSelectedCount: 30, amountDueOverride: '', payments: [], paidAt: null })).toBe(0);
+  });
+
   it('works in agorot (no float leftovers)', () => {
     expect(
       computeClientPayAmount({ pkg: { included_photos: 0, base_price: 0, extra_photo_price: '0.1' }, billableSelectedCount: 3, amountDueOverride: null, payments: [], paidAt: null })

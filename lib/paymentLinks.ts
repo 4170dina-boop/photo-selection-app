@@ -95,6 +95,20 @@ export function computeClientPayAmount(input: {
   payments: PaymentLike[] | null | undefined;
   paidAt: string | null | undefined;
 }): number {
+  // סכום ידני שסוכם (amount_due_override, ראו lib/clientPricing.ts) - הוא הסכום
+  // לתשלום, גם כשאין תמונות נוספות (אחרת הלקוחה הייתה רואה 0 ולא כפתור תשלום).
+  // מוצג מה שנשאר ממנו אחרי תשלומים שנרשמו (0 כשסומן כשולם).
+  const override = input.amountDueOverride;
+  if (override != null && override !== '' && Number.isFinite(Number(override))) {
+    const { outstanding } = computePaymentSummary({
+      pkg: input.pkg,
+      selectedCount: input.billableSelectedCount,
+      amountDueOverride: override,
+      payments: input.payments,
+      paidAt: input.paidAt,
+    });
+    return Math.max(0, Math.round(outstanding * 100)) / 100;
+  }
   if (!input.pkg) return 0;
   const extraPhotos = Math.max(0, input.billableSelectedCount - (input.pkg.included_photos ?? 0));
   const extraAgorot = extraPhotos * Math.round(Number(input.pkg.extra_photo_price ?? 0) * 100);
