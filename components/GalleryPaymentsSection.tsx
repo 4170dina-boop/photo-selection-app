@@ -5,6 +5,8 @@ import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/th
 import { formatShekels, type PaymentSummary } from '@/lib/payments';
 import { israelDateString } from '@/lib/israelTime';
 import { toHebrewDateString } from '@/lib/hebrewDate';
+import { formatIsraelDate } from '@/lib/israelTime';
+import { PAYMENT_METHOD_ICONS, isPaymentMethodType, paymentMethodLabel } from '@/lib/paymentMethods';
 
 // אזור "תשלומים" בדף עריכת גלריה - סכום לתשלום (אוטומטי מהחבילה או דריסה
 // ידנית), רשימת תשלומים שהתקבלו, והיתרה. עצמאי לגמרי מטופס העריכה הראשי
@@ -23,6 +25,8 @@ interface PaymentsState {
   summary: PaymentSummary;
   amountDueOverride: number | null;
   paidAt: string | null;
+  clientPaymentChoice?: string | null;
+  clientPaymentChoiceAt?: string | null;
 }
 
 const METHOD_SUGGESTIONS = ['מזומן', 'ביט', 'פייבוקס', 'העברה בנקאית', "צ'ק", 'אשראי'];
@@ -129,6 +133,9 @@ export default function GalleryPaymentsSection({ galleryId }: { galleryId: strin
   }
 
   const { summary, payments, paidAt } = state;
+  // "איך נוח לך לשלם?" בגלריה (components/ClientPayButton.tsx)
+  const choice = state.clientPaymentChoice;
+  const choiceLabel = paymentMethodLabel(choice);
   const balanceColor = summary.balance > 0 && !paidAt ? theme.warningText : theme.successText;
 
   let balanceLabel: string;
@@ -163,6 +170,20 @@ export default function GalleryPaymentsSection({ galleryId }: { galleryId: strin
           </div>
         ))}
       </div>
+
+      {choiceLabel && isPaymentMethodType(choice) && (
+        <p
+          style={{
+            background: theme.panel, border: `1px solid ${theme.borderLight}`, borderRadius: 8,
+            padding: '0.5rem 0.75rem', fontSize: 14, marginBottom: '1rem',
+          }}
+        >
+          {PAYMENT_METHOD_ICONS[choice]} הלקוחה בחרה לשלם: <b>{choiceLabel}</b>
+          {state.clientPaymentChoiceAt && (
+            <span style={{ color: theme.textFaint, fontSize: 12 }}> · {formatIsraelDate(state.clientPaymentChoiceAt)}</span>
+          )}
+        </p>
+      )}
 
       {editingTotal ? (
         <form

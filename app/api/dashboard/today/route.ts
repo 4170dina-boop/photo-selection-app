@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { giftExclusionFilter, groupGiftIdsByGallery } from '@/lib/gifts';
 import { computePaymentSummary } from '@/lib/payments';
+import { isPaymentMethodType } from '@/lib/paymentMethods';
 import { mapWithConcurrency } from '@/lib/concurrency';
 import { sortShoots, todayAndTomorrow, type TodayGalleryRow, type TodayShoot } from '@/lib/todayDashboard';
 
@@ -89,6 +90,25 @@ export async function GET() {
     selectedCounts.set(g.id, count ?? 0);
   });
 
+  // בחירת אמצעי התשלום של הלקוחה (lib/paymentMethods.ts) - רק לגלריות שלא
+  // סומנו כשולמו; שאילתה נפרדת ו-best-effort, עמודה חסרה (מיגרציה שלא רצה) = בלי תגית
+  const paymentChoices = new Map<string, string>();
+  try {
+    const { data: choiceRows, error: choiceError } = await supabase
+      .from('galleries')
+      .select('id, client_payment_choice')
+      .eq('photographer_id', photographer.id)
+      .is('paid_at', null)
+      .not('client_payment_choice', 'is', null);
+    if (!choiceError) {
+      for (const r of (choiceRows ?? []) as { id: string; client_payment_choice: unknown }[]) {
+        if (isPaymentMethodType(r.client_payment_choice)) paymentChoices.set(r.id, r.client_payment_choice);
+      }
+    }
+  } catch {
+    // בכוונה שקט - ראו הערה למעלה
+  }
+
   const rows: TodayGalleryRow[] = galleries.map((g) => {
     const selectedCount = selectedCounts.get(g.id) ?? 0;
     const summary = computePaymentSummary({
@@ -115,6 +135,7 @@ export async function GET() {
       pendingExtension: pendingByGallery.get(g.id) ?? null,
       clientName: g.clients?.full_name ?? '',
       includedPhotos: g.packages?.included_photos ?? 0,
+      paymentChoice: paymentChoices.get(g.id) ?? null,
     };
   });
 

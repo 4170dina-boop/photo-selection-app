@@ -29,6 +29,10 @@ export interface PaymentsState {
   summary: PaymentSummary;
   amountDueOverride: number | null;
   paidAt: string | null;
+  // "איך נוח לך לשלם?" - מה שהלקוחה בחרה (lib/paymentMethods.ts), null = עוד לא
+  // בחרה או שהמיגרציה לא רצה
+  clientPaymentChoice: string | null;
+  clientPaymentChoiceAt: string | null;
 }
 
 interface OwnedGallery {
@@ -70,7 +74,7 @@ export async function loadPaymentsState(
 ): Promise<PaymentsState | null> {
   // תמונות מתנה לא נספרות כתמונות נוספות לחיוב (ראו lib/gifts.ts)
   const giftFilter = giftExclusionFilter((await fetchGiftPhotos(supabase, [gallery.id])).map((g) => g.id));
-  const [{ data: payments, error: paymentsError }, { data: pkg }, { count }] = await Promise.all([
+  const [{ data: payments, error: paymentsError }, { data: pkg }, { count }, choiceRes] = await Promise.all([
     supabase
       .from('gallery_payments')
       .select('id, amount, paid_on, method, note, created_at')
@@ -94,6 +98,16 @@ export async function loadPaymentsState(
           return q;
         })()
       : Promise.resolve({ count: 0 }),
+    // best-effort, שאילתה נפרדת - עמודה חסרה (מיגרציה שלא רצה) = בלי בחירה
+    supabase
+      .from('galleries')
+      .select('client_payment_choice, client_payment_choice_at')
+      .eq('id', gallery.id)
+      .maybeSingle()
+      .then(
+        (r: { data: any; error: unknown }) => r,
+        () => ({ data: null, error: true })
+      ),
   ]);
 
   if (paymentsError) return null;
@@ -105,6 +119,8 @@ export async function loadPaymentsState(
     payments: rows,
     amountDueOverride,
     paidAt: gallery.paid_at,
+    clientPaymentChoice: choiceRes.error ? null : choiceRes.data?.client_payment_choice ?? null,
+    clientPaymentChoiceAt: choiceRes.error ? null : choiceRes.data?.client_payment_choice_at ?? null,
     summary: computePaymentSummary({
       pkg,
       selectedCount: count ?? 0,

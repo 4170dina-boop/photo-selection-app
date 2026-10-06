@@ -46,6 +46,8 @@ export interface TodayGallery {
 export interface TodayGalleryRow extends TodayGallery {
   clientName: string;
   includedPhotos: number;
+  // "איך נוח לך לשלם?" - מה שהלקוחה בחרה (lib/paymentMethods.ts), אם בחרה
+  paymentChoice?: string | null;
 }
 
 export interface TodayShoot {

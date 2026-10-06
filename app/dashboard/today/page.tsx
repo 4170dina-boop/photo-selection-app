@@ -6,6 +6,7 @@ import { theme, outlineButtonStyle, goldButtonStyle } from '@/lib/theme';
 import { formatShekels } from '@/lib/payments';
 import { toHebrewDateString } from '@/lib/hebrewDate';
 import { formatIsraelDate } from '@/lib/israelTime';
+import { PAYMENT_METHOD_ICONS, isPaymentMethodType, paymentMethodLabel } from '@/lib/paymentMethods';
 import {
   buildTodayView,
   daysSince,
@@ -349,7 +350,23 @@ export default function TodayPage() {
         );
       }
       case 'payment':
-        return <span style={{ color: theme.warningText, fontWeight: 'bold' }}>יתרה לתשלום: {formatShekels(g.outstanding)}</span>;
+        return (
+          <>
+            <span style={{ color: theme.warningText, fontWeight: 'bold' }}>יתרה לתשלום: {formatShekels(g.outstanding)}</span>
+            {/* מה שהלקוחה בחרה ב"איך נוח לך לשלם?" (components/ClientPayButton.tsx) */}
+            {isPaymentMethodType(row.paymentChoice) && (
+              <span
+                title="הלקוחה בחרה לשלם"
+                style={{
+                  marginInlineStart: '0.5rem', fontSize: 12, padding: '0.1rem 0.5rem', borderRadius: 999,
+                  border: `1px solid ${theme.borderLight}`, color: theme.text, whiteSpace: 'nowrap',
+                }}
+              >
+                {PAYMENT_METHOD_ICONS[row.paymentChoice]} {paymentMethodLabel(row.paymentChoice)}
+              </span>
+            )}
+          </>
+        );
     }
   }
 
