@@ -19,6 +19,9 @@ export const banners: Section<typeof he> = {
   'thanks.viewOnly': '✓ Vous pouvez encore voir les photos ci-dessous, mais plus modifier la sélection.',
   'cele.done': '🎉 C’est terminé ! Votre photographe est en train d’être prévenu·e',
 
+  'reveal.title': '✨ Vos photos sont prêtes',
+  'reveal.sub': { one: '1 photo retouchée vous attend', other: '{count} photos retouchées vous attendent' },
+  'reveal.cta': 'Voir mes photos',
   'dl.title': '💛 Vos photos finales sont prêtes !',
   'dl.sub': {
     one: '1 photo retouchée : vous pouvez la voir et la télécharger.',

@@ -19,6 +19,9 @@ export const banners: Section<typeof he> = {
   'thanks.viewOnly': '✓ Aún puedes ver las fotos abajo, pero ya no cambiar la selección.',
   'cele.done': '🎉 ¡Listo! Tu fotógrafa ya está recibiendo el aviso',
 
+  'reveal.title': '✨ Tus fotos están listas',
+  'reveal.sub': { one: '1 foto editada te espera', other: '{count} fotos editadas te esperan' },
+  'reveal.cta': 'Ver mis fotos',
   'dl.title': '💛 ¡Tus fotos finales están listas!',
   'dl.sub': {
     one: '1 foto editada: puedes verla y descargarla.',

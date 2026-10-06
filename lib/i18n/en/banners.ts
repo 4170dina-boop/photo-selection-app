@@ -19,6 +19,9 @@ export const banners: Section<typeof he> = {
   'thanks.viewOnly': "✓ You can still view the photos below, but the selection can't be changed.",
   'cele.done': '🎉 All done! Your photographer is being notified',
 
+  'reveal.title': '✨ Your photos are ready',
+  'reveal.sub': { one: '1 edited photo is waiting for you', other: '{count} edited photos are waiting for you' },
+  'reveal.cta': 'View my photos',
   'dl.title': '💛 Your final photos are ready!',
   'dl.sub': {
     one: '1 edited photo - view and download it.',

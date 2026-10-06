@@ -348,6 +348,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
   const [photos, setPhotos] = useState<GalleryPhoto[]>([]);
   const [deliveredPhotos, setDeliveredPhotos] = useState<DeliveredPhoto[]>([]);
+  const [showReveal, setShowReveal] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [myMarks, setMyMarks] = useState<Record<string, { status: 'maybe' | 'selected'; note: string | null; photographerReply: string | null }>>({});
@@ -421,6 +422,25 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // tr('err.loadFailed') - לפי הצופה הנוכחי/ת; trOwner - לפי מגדר הבעלים
   // (טקסטים בגוף שלישי, "רק X יכולה לסיים"); trG - מגדר מפורש.
   const tr = (key: MessageKey, params?: MessageParams) => translate(lang, key, params, viewerGender);
+
+  // "רגע החשיפה" - בפעם הראשונה שהלקוחה נכנסת אחרי שהתמונות הסופיות נמסרו.
+  // נשמר לפי גלריה בדפדפן; אם האחסון חסום פשוט לא מציגים (עדיף מלהציג בכל כניסה).
+  useEffect(() => {
+    if (deliveredPhotos.length === 0) return;
+    try {
+      const key = `gallery_reveal_seen_${galleryId}`;
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, '1');
+      setShowReveal(true);
+    } catch {
+      // אחסון חסום - מדלגים
+    }
+  }, [deliveredPhotos.length, galleryId]);
+
+  function closeReveal() {
+    setShowReveal(false);
+    document.getElementById(DELIVERED_SECTION_ID)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
   const trOwner = (key: MessageKey, params?: MessageParams) => translate(lang, key, params, ownerGender);
   const trG = (gender: ViewerGender, key: MessageKey, params?: MessageParams) => translate(lang, key, params, gender);
   // כמו tr, אבל פרמטרים יכולים להיות אלמנטים (מספר מודגש, <bdi> וכו')
@@ -2739,6 +2759,41 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
       {/* תמונות ערוכות סופיות שהצלמת מסרה - עצמאי לגמרי מ-galleryStatus (יכול
           להופיע גם לפני שהלקוחה סיימה לבחור, אם הצלמת כבר מסרה חלק מהתמונות). */}
+      {showReveal && deliveredPhotos.length > 0 && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reveal-title"
+          onClick={closeReveal}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(8,12,22,0.88)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem',
+            animation: 'revealFade 0.6s ease-out',
+          }}
+        >
+          <style>{`@keyframes revealFade{from{opacity:0}to{opacity:1}}@keyframes revealUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}`}</style>
+          <div onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center', maxWidth: 360, width: '100%', animation: 'revealUp 0.8s ease-out' }}>
+            {deliveredPhotos[0]?.url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={deliveredPhotos[0].url}
+                alt=""
+                style={{ width: '100%', maxHeight: '45vh', objectFit: 'cover', borderRadius: 14, border: `1px solid ${accent}88`, marginBottom: '1.25rem' }}
+              />
+            )}
+            <p id="reveal-title" style={{ fontSize: 24, fontFamily: theme.fontSerif, color: theme.text, margin: '0 0 0.5rem' }}>
+              {tr('reveal.title')}
+            </p>
+            <p style={{ color: theme.textMuted, fontSize: 14, margin: '0 0 1.25rem' }}>
+              {tr('reveal.sub', { count: deliveredPhotos.length })}
+            </p>
+            <button onClick={closeReveal} autoFocus style={{ ...primaryButtonStyle, minHeight: 44, padding: '0.7rem 1.6rem', fontSize: 15 }}>
+              {tr('reveal.cta')}
+            </button>
+          </div>
+        </div>
+      )}
+
       {deliveredPhotos.length > 0 && (
         <div
           id={DELIVERED_SECTION_ID}
