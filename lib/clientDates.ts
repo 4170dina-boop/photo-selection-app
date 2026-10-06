@@ -126,6 +126,13 @@ export function familyLabel(fullName: string): string {
   return `משפחת ${words[words.length - 1]}`;
 }
 
+// טבלה חסרה (client_dates לפני המיגרציה): 42P01 מ-Postgres, PGRST205 מ-PostgREST
+export function isMissingTableError(error: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!error) return false;
+  if (error.code === '42P01' || error.code === 'PGRST205') return true;
+  return /relation .* does not exist|could not find the table/i.test(error.message ?? '');
+}
+
 // הצעה לברכה (לצלמת - בלשון נקבה) לפי סוג התאריך.
 export function greetingSuggestion(label: string): string {
   if (/הולדת/.test(label)) return 'אולי לשלוח ברכת יום הולדת קטנה - ולהציע צילום לכבוד היום 🎂';

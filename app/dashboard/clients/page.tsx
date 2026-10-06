@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { theme, inputStyle, outlineButtonStyle } from '@/lib/theme';
 import { formatShekels } from '@/lib/payments';
 import { filterClients, type ClientSummary } from '@/lib/clientGroups';
 import { loadClientsData, clientHref, formatDate } from './loadClients';
+import ClientDates from './ClientDates';
 
 // רשימת הלקוחות - קריאה בלבד. כל השורות של אותה לקוחה (לפי מייל, ראו
 // lib/clientGroups.ts) מאוחדות לשורה אחת, ממוינות לפי פעילות אחרונה.
@@ -16,6 +17,8 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  // הלקוחה שהבלוק "תאריכים חשובים" שלה פתוח (אחת בכל פעם)
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -89,11 +92,13 @@ export default function ClientsPage() {
                 <th style={th}>פעילות אחרונה</th>
                 <th style={th}>שולם</th>
                 <th style={th}>יתרה לתשלום</th>
+                <th style={th}>תאריכים חשובים</th>
               </tr>
             </thead>
             <tbody>
               {visible.map((c) => (
-                <tr key={c.key} style={{ borderTop: `1px solid ${theme.border}` }}>
+                <Fragment key={c.key}>
+                <tr style={{ borderTop: `1px solid ${theme.border}` }}>
                   <td style={td}>
                     <Link href={clientHref(c.key)} style={{ color: theme.text, fontWeight: 600 }}>
                       {c.name || '(ללא שם)'}
@@ -105,7 +110,25 @@ export default function ClientsPage() {
                   <td style={td}>{formatDate(c.lastActivity)}</td>
                   <td style={td}>{formatShekels(c.totalPaid)}</td>
                   <td style={{ ...td, color: c.balanceDue > 0 ? theme.warningText : theme.textMuted }}>{formatShekels(c.balanceDue)}</td>
+                  <td style={td}>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedKey((k) => (k === c.key ? null : c.key))}
+                      aria-expanded={expandedKey === c.key}
+                      style={{ background: 'none', border: 'none', color: theme.gold, cursor: 'pointer', fontSize: 13, padding: 0 }}
+                    >
+                      📅 {expandedKey === c.key ? 'סגירה' : 'תאריכים'}
+                    </button>
+                  </td>
                 </tr>
+                {expandedKey === c.key && (
+                  <tr>
+                    <td colSpan={8} style={{ padding: '0 0.5rem 0.75rem', background: theme.panelInput }}>
+                      <ClientDates supabase={supabase} clientIds={c.clientIds} clientName={c.name} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
