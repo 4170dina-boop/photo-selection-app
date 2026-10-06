@@ -59,3 +59,85 @@ export function toHebrewDateString(date: Date): string {
 
   return `${numberToHebrewLetters(day)} ב${month} ${numberToHebrewLetters(year % 1000)}`;
 }
+
+// ---------- רכיבי תאריך עברי כמספרים (לחישובי חגים/תאריכים חוזרים) ----------
+
+// מספור חודשים קבוע שלא תלוי בשנה מעוברת: 1 = תשרי ... 13 = אלול, כאשר
+// 6 = אדר א׳ (קיים רק בשנה מעוברת) ו-7 = אדר (בשנה רגילה) / אדר ב׳ (במעוברת).
+// כך "ניסן" הוא תמיד 8, בניגוד למספור של Intl/ICU שזז לפי השנה.
+export const HEBREW_MONTH_NAMES_HE: Record<number, string> = {
+  1: 'תשרי',
+  2: 'חשון',
+  3: 'כסלו',
+  4: 'טבת',
+  5: 'שבט',
+  6: 'אדר א׳',
+  7: 'אדר',
+  8: 'ניסן',
+  9: 'אייר',
+  10: 'סיון',
+  11: 'תמוז',
+  12: 'אב',
+  13: 'אלול',
+};
+
+// שמות החודשים כפי ש-Intl מחזיר ב-'en-u-ca-hebrew' (בדקנו בפועל ב-Node/ICU)
+const INTL_MONTH_TO_NUMBER: Record<string, number> = {
+  Tishri: 1,
+  Heshvan: 2,
+  Kislev: 3,
+  Tevet: 4,
+  Shevat: 5,
+  'Adar I': 6,
+  Adar: 7,
+  'Adar II': 7,
+  Nisan: 8,
+  Iyar: 9,
+  Sivan: 10,
+  Tamuz: 11,
+  Av: 12,
+  Elul: 13,
+};
+
+export interface HebrewDateParts {
+  day: number;
+  month: number; // ראו HEBREW_MONTH_NAMES_HE
+  year: number;
+  // שנה מעוברת (יש בה אדר א׳ ואדר ב׳)
+  isLeapYear: boolean;
+}
+
+// cache ברמת המודול - ריצת cron/חישוב "המופע הבא" ממירים את אותם ימים שוב ושוב
+const partsCache = new Map<string, HebrewDateParts | null>();
+
+// התאריך העברי של יום אזרחי "YYYY-MM-DD" (היום עצמו, לא הערב שלפניו - כלומר
+// בלי להתחשב בכך שהיום העברי מתחיל בשקיעה). צהריים UTC + timeZone UTC כדי
+// שאזור הזמן של השרת לא יזיז את היום. null = מחרוזת לא תקינה.
+export function hebrewDateParts(dateStr: string): HebrewDateParts | null {
+  if (partsCache.has(dateStr)) return partsCache.get(dateStr) ?? null;
+  let result: HebrewDateParts | null = null;
+  const probe = new Date(`${dateStr}T12:00:00Z`);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr) && !Number.isNaN(probe.getTime())) {
+    const parts = new Intl.DateTimeFormat('en-u-ca-hebrew', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).formatToParts(probe);
+    const day = Number(parts.find((p) => p.type === 'day')?.value);
+    const monthName = parts.find((p) => p.type === 'month')?.value ?? '';
+    const year = Number(parts.find((p) => p.type === 'year')?.value);
+    const month = INTL_MONTH_TO_NUMBER[monthName];
+    if (month && Number.isFinite(day) && Number.isFinite(year)) {
+      result = { day, month, year, isLeapYear: isHebrewLeapYear(year) };
+    }
+  }
+  if (partsCache.size > 5000) partsCache.clear();
+  partsCache.set(dateStr, result);
+  return result;
+}
+
+// מחזור 19 השנים: שנים 3, 6, 8, 11, 14, 17, 19 במחזור מעוברות
+export function isHebrewLeapYear(year: number): boolean {
+  return (7 * year + 1) % 19 < 7;
+}
