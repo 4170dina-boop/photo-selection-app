@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'crypto';
 import { israelDateString, daysBetweenDateStrings } from '@/lib/israelTime';
 import { isSelectionFinal } from '@/lib/galleryLifecycle';
 import type { RowGuard } from '@/lib/rowGuard';
+import { effectiveExpiryIso } from '@/lib/jewishCalendar';
 
 // לוגיקה טהורה של app/api/cron/tick/route.ts (בלי DB ובלי שליחת מיילים) -
 // כדי שההחלטות "האם מותר/צריך עכשיו" ייבדקו ב-vitest.
@@ -181,6 +182,80 @@ export function deletableOriginalPaths(photos: { file_path: string | null; thumb
   return photos
     .filter((p) => p.file_path && p.thumbnail_path && p.thumbnail_path !== p.file_path)
     .map((p) => p.file_path as string);
+}
+
+// ---------- תפוגה בשבת/חג (שלב 1) ----------
+
+export interface ExpiryCandidate {
+  id: string;
+  expires_at: string | null;
+  photographer_id: string;
+}
+
+// כמה ימים קדימה מחפשים גלריות שתוקפן נופל בשבת/חג כדי לדחות אותו מראש
+// (לפני שהלקוחה ננעלת בחוץ במוצאי שבת) - רצף שבת/חג הוא עד 3 ימים, +1 מרווח
+// לריצה יומית שהתפספסה.
+export const SHABBAT_EXTENSION_LOOKAHEAD_DAYS = 4;
+
+export function shabbatExtensionQueryUpperBound(now: Date): string {
+  return new Date(now.getTime() + SHABBAT_EXTENSION_LOOKAHEAD_DAYS * MS_PER_DAY).toISOString();
+}
+
+// מה לעשות עם כל גלריה פעילה שתוקפה עבר / מתקרב: תפוגה שנופלת (לפי התאריך
+// בישראל) בשבת/חג נדחית לסוף יום החול הבא (effectiveExpiryIso) - "extend"
+// מעדכן את expires_at בפועל, כדי שגם בדיקות הגישה של הלקוחה (isGalleryExpired)
+// יכבדו את הדחייה. "expire" רק לגלריות שגם התפוגה האפקטיבית שלהן כבר עברה.
+// respectFor(photographerId) - photographers.respect_shabbat (חסר = true).
+export function planExpiryActions(
+  rows: ExpiryCandidate[],
+  respectFor: (photographerId: string) => boolean,
+  now: Date
+): { extend: { id: string; from: string; to: string }[]; expire: string[] } {
+  const extend: { id: string; from: string; to: string }[] = [];
+  const expire: string[] = [];
+  for (const row of rows) {
+    if (!row.expires_at) continue;
+    const original = new Date(row.expires_at);
+    if (Number.isNaN(original.getTime())) continue;
+    const effective = effectiveExpiryIso(row.expires_at, respectFor(row.photographer_id));
+    if (effective && effective !== original.toISOString() && new Date(effective).getTime() > now.getTime()) {
+      extend.push({ id: row.id, from: row.expires_at, to: effective });
+    } else if (original.getTime() < now.getTime()) {
+      expire.push(row.id);
+    }
+  }
+  return { extend, expire };
+}
+
+// ---------- מייל "לפני שנה צילמנו" (שלב 7) ----------
+
+// כ-11 חודשים אחרי המסירה, עם חלון של חודש: ריצות שנדחו (שבת/חג, כישלון
+// שליחה) עדיין מספיקות לשלוח, אבל גלריה ותיקה (שנמסרה לפני יותר משנה, למשל
+// כשהצלמת רק עכשיו הפעילה את האפשרות) לא מקבלת מייל "לפני שנה" באיחור.
+export const ANNIVERSARY_MIN_DAYS = 335;
+export const ANNIVERSARY_MAX_DAYS = 365;
+
+export function isAnniversaryEmailDue(deliveredAt: string | null, sentAt: string | null, now: Date): boolean {
+  if (!deliveredAt || sentAt) return false;
+  const delivered = new Date(deliveredAt);
+  if (Number.isNaN(delivered.getTime())) return false;
+  const days = daysBetweenDateStrings(israelDateString(delivered), israelDateString(now));
+  return days >= ANNIVERSARY_MIN_DAYS && days <= ANNIVERSARY_MAX_DAYS;
+}
+
+// גבולות ל-SQL על delivered_at (יום מרווח לכל צד - הבדיקה המדויקת למעלה)
+export function anniversaryQueryBounds(now: Date): { from: string; to: string } {
+  return {
+    from: new Date(now.getTime() - (ANNIVERSARY_MAX_DAYS + 1) * MS_PER_DAY).toISOString(),
+    to: new Date(now.getTime() - (ANNIVERSARY_MIN_DAYS - 1) * MS_PER_DAY).toISOString(),
+  };
+}
+
+// טבלה חסרה (client_dates לפני המיגרציה): 42P01 מ-Postgres, PGRST205 מ-PostgREST
+export function isMissingTableError(error: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!error) return false;
+  if (error.code === '42P01' || error.code === 'PGRST205') return true;
+  return /relation .* does not exist|could not find the table/i.test(error.message ?? '');
 }
 
 // ---------- עזרי ריצה ----------
