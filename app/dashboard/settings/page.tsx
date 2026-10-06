@@ -5,6 +5,7 @@ import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/th
 import PriceInput from '@/components/PriceInput';
 import { createClient } from '@/lib/supabase/client';
 import { classifySignInError, isRateLimitError, RATE_LIMIT_MESSAGE } from '@/lib/authErrors';
+import { parsePaymentUrl, PAYMENT_BANK_DETAILS_MAX_LENGTH } from '@/lib/paymentLinks';
 
 const DEFAULT_BRAND_COLOR = '#c98f89'; // theme.gold - הגוון הקבוע, מוצג כברירת מחדל בבורר הצבע
 const LOGO_BUCKET = 'photographer-logos';
@@ -33,6 +34,12 @@ export default function SettingsPage() {
   const [reviewLink, setReviewLink] = useState('');
   const [shootReminderDays, setShootReminderDays] = useState('1');
   const [shootDailySummaryEnabled, setShootDailySummaryEnabled] = useState(true);
+  // קישורי תשלום ללקוחה (lib/paymentLinks.ts) - false = העמודות עוד לא קיימות ב-DB
+  const [paymentBitUrl, setPaymentBitUrl] = useState('');
+  const [paymentPayboxUrl, setPaymentPayboxUrl] = useState('');
+  const [paymentBankDetails, setPaymentBankDetails] = useState('');
+  const [paymentLinksAvailable, setPaymentLinksAvailable] = useState(true);
+  const [paymentNotice, setPaymentNotice] = useState('');
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoError, setLogoError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -92,6 +99,10 @@ export default function SettingsPage() {
         setReviewLink(data.review_link ?? '');
         setShootReminderDays(String(data.shoot_reminder_days ?? 1));
         setShootDailySummaryEnabled(data.shoot_daily_summary_enabled ?? true);
+        setPaymentBitUrl(data.payment_bit_url ?? '');
+        setPaymentPayboxUrl(data.payment_paybox_url ?? '');
+        setPaymentBankDetails(data.payment_bank_details ?? '');
+        setPaymentLinksAvailable(data.payment_links_available !== false);
         // '#000000' הוא ברירת המחדל של העמודה (=טרם הוגדר) - מציגים את גוון
         // הפלטה המקורי בבורר הצבע במקום שחור, כך שמה שרואים תואם למה שהלקוחה רואה כרגע
         setBrandColor(data.brand_color && data.brand_color !== '#000000' ? data.brand_color : DEFAULT_BRAND_COLOR);
@@ -239,6 +250,20 @@ export default function SettingsPage() {
     e.preventDefault();
     setError('');
     setSaved(false);
+    setPaymentNotice('');
+
+    // בדיקה מקדימה בדפדפן (השרת בודק שוב) - https בלבד
+    for (const [value, label] of [
+      [paymentBitUrl, 'קישור לתשלום בביט'],
+      [paymentPayboxUrl, 'קישור PayBox'],
+    ] as const) {
+      const r = parsePaymentUrl(value, label);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+    }
+
     setSaving(true);
 
     const res = await fetch('/api/photographer', {
@@ -254,6 +279,14 @@ export default function SettingsPage() {
         reviewLink: reviewLink.trim() || null,
         shootReminderDays: Number(shootReminderDays),
         shootDailySummaryEnabled,
+        // נשלחים רק כשהעמודות קיימות - אחרת אין טעם (והשרת ממילא מדלג)
+        ...(paymentLinksAvailable
+          ? {
+              paymentBitUrl: paymentBitUrl.trim() || null,
+              paymentPayboxUrl: paymentPayboxUrl.trim() || null,
+              paymentBankDetails: paymentBankDetails.trim() || null,
+            }
+          : {}),
       }),
     });
 
@@ -265,6 +298,11 @@ export default function SettingsPage() {
       return;
     }
 
+    const data = await res.json().catch(() => ({}));
+    if (data.paymentLinksSaved === false) {
+      setPaymentLinksAvailable(false);
+      setPaymentNotice('שאר ההגדרות נשמרו, אבל קישורי התשלום עוד לא זמינים - צריך להריץ את המיגרציה בסוף supabase/schema.sql.');
+    }
     setSaved(true);
   }
 
@@ -479,6 +517,63 @@ export default function SettingsPage() {
           <span style={{ color: theme.textFaint, fontSize: 12, display: 'block', marginTop: '0.5rem' }}>
             אם מוגדר, יופיע כפתור "בקשת ביקורת" בעריכת גלריה אחרי שסימנת אותה כנמסרה.
           </span>
+        </div>
+
+        <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '1rem', marginTop: '0.25rem' }}>
+          <span style={{ fontWeight: 700, display: 'block', marginBottom: '0.25rem' }}>קישורי תשלום ללקוחה</span>
+          <span style={{ color: theme.textFaint, fontSize: 12, display: 'block', marginBottom: '0.75rem' }}>
+            אופציונלי. אם מוגדר, הלקוחה תראה אחרי הבחירה כפתור "💳 תשלום על התוספת" עם הסכום של התמונות הנוספות.
+            האפליקציה לא מעבדת תשלומים - אלה רק קישורים, ואת התשלום עצמו ממשיכים לרשום ידנית בעריכת הגלריה.
+          </span>
+          {!paymentLinksAvailable && (
+            <p style={{ background: theme.warningBg, color: theme.warningText, padding: '0.5rem 0.75rem', borderRadius: 6, fontSize: 13, marginBottom: '0.75rem' }}>
+              כדי להפעיל את קישורי התשלום צריך להריץ פעם אחת את המיגרציה &quot;קישורי תשלום&quot; בסוף supabase/schema.sql.
+            </p>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', opacity: paymentLinksAvailable ? 1 : 0.5 }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              קישור לתשלום בביט
+              <input
+                type="url"
+                dir="ltr"
+                value={paymentBitUrl}
+                onChange={(e) => setPaymentBitUrl(e.target.value)}
+                placeholder="https://www.bitpay.co.il/..."
+                disabled={!paymentLinksAvailable}
+                style={inputStyle}
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              קישור PayBox
+              <input
+                type="url"
+                dir="ltr"
+                value={paymentPayboxUrl}
+                onChange={(e) => setPaymentPayboxUrl(e.target.value)}
+                placeholder="https://..."
+                disabled={!paymentLinksAvailable}
+                style={inputStyle}
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              פרטי העברה בנקאית
+              <textarea
+                value={paymentBankDetails}
+                onChange={(e) => setPaymentBankDetails(e.target.value)}
+                placeholder={'בנק, סניף, מספר חשבון, שם המוטב'}
+                maxLength={PAYMENT_BANK_DETAILS_MAX_LENGTH}
+                rows={3}
+                disabled={!paymentLinksAvailable}
+                style={{ ...inputStyle, resize: 'vertical' }}
+              />
+            </label>
+          </div>
+          <span style={{ color: theme.textFaint, fontSize: 12, display: 'block', marginTop: '0.5rem' }}>
+            קישורים רק ב-https://. הלקוחה תוכל להעתיק את פרטי ההעברה בלחיצה.
+          </span>
+          {paymentNotice && (
+            <p role="status" style={{ color: theme.warningText, fontSize: 13, marginTop: '0.5rem' }}>{paymentNotice}</p>
+          )}
         </div>
 
         <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '1rem', marginTop: '0.25rem' }}>

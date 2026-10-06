@@ -6,6 +6,8 @@ import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/th
 import { computePackageUsage } from '@/lib/gifts';
 import ExtensionCountdownBanner from '@/components/ExtensionCountdownBanner';
 import GiftCollage from '@/components/GiftCollage';
+import ClientProgressTracker, { DELIVERED_SECTION_ID } from '@/components/ClientProgressTracker';
+import ClientPayButton from '@/components/ClientPayButton';
 import {
   type PendingAction,
   NOTE_MAX_LENGTH,
@@ -2510,13 +2512,17 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             fileLabel={myParticipant?.displayName ?? photographerName}
             refreshPhotos={async () => (await refreshGallerySilently())?.photos ?? null}
           />
+          {/* "מה הבא?" + תשלום על התוספת (components/ClientProgressTracker.tsx) */}
+          <ClientProgressTracker galleryId={galleryId} photographerName={photographerName} accent={accent} buttonStyle={primaryButtonStyle} />
         </div>
       )}
+      {readOnly && myParticipant && <ClientProgressTracker framed galleryId={galleryId} photographerName={photographerName} accent={accent} buttonStyle={primaryButtonStyle} />}
 
       {/* תמונות ערוכות סופיות שהצלמת מסרה - עצמאי לגמרי מ-galleryStatus (יכול
           להופיע גם לפני שהלקוחה סיימה לבחור, אם הצלמת כבר מסרה חלק מהתמונות). */}
       {deliveredPhotos.length > 0 && (
         <div
+          id={DELIVERED_SECTION_ID}
           style={{
             margin: '1rem 1.5rem 0', padding: '1.5rem', borderRadius: 14,
             background: theme.panel, border: `1px solid ${accent}55`,
@@ -3777,6 +3783,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   <b>{giftPhotos.length}</b>
                 </div>
               )}
+              <ClientPayButton compact galleryId={galleryId} amount={summary.extraCost} accent={accent} buttonStyle={primaryButtonStyle} />
 
               {packageInfo && summary.remainingIncluded > 0 && (
                 <p style={{ fontSize: 13, color: theme.textMuted, margin: '0.75rem 0 0' }}>

@@ -29,7 +29,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error: galleryError } = await supabaseAdmin
     .from('galleries')
-    .select('id, status, expires_at, delivered_at, owner_participant_id, view_count, reopened_for_selection_at, clients(full_name), photographers(brand_color, business_name, logo_url, custom_theme)')
+    .select('id, status, expires_at, delivered_at, editing_started_at, owner_participant_id, view_count, reopened_for_selection_at, clients(full_name), photographers(brand_color, business_name, logo_url, custom_theme)')
     .eq('id', galleryId)
     .single();
 
@@ -234,6 +234,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     status: gallery.status,
     readOnly,
     reopenedForSelectionAt: gallery.reopened_for_selection_at,
+    // "מה הבא?" (lib/clientProgress.ts) - רק דגלים, בלי התאריכים הפנימיים.
+    // הרענון בפוקוס עובר דרך app/api/gallery/[id]/progress (קל יותר).
+    editingStarted: !!(gallery as any).editing_started_at,
+    delivered: !!gallery.delivered_at || deliveredPhotos.length > 0,
     photos,
     deliveredPhotos,
     myParticipant,
