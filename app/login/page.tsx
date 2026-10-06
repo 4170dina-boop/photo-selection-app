@@ -25,7 +25,7 @@ export default function LoginPage() {
 
 // יעד קישור האישור במייל אחרי הרשמה. בלי query string משלנו במכוון: Supabase
 // בודק את emailRedirectTo מול רשימת ה-Redirect URLs המורשים (ראו README), ו-
-// /auth/callback ממילא ממשיך ל-/dashboard/galleries כברירת מחדל.
+// /auth/callback ממילא ממשיך ל-/dashboard/today כברירת מחדל.
 function signupRedirectUrl(): string {
   return `${window.location.origin}/auth/callback`;
 }

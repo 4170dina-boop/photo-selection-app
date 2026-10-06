@@ -66,6 +66,8 @@ export default function GalleriesDashboard() {
   const [coverUrls, setCoverUrls] = useState<Record<string, string>>({});
   // גלריות עם בקשת הארכה ממתינה מהלקוחה (gallery_extension_requests) - תג בלבד
   const [pendingExtensionIds, setPendingExtensionIds] = useState<Set<string>>(new Set());
+  // photographers.is_unlimited - פטורה ממגבלת החשבון החינמי
+  const [isUnlimited, setIsUnlimited] = useState(false);
 
   useEffect(() => {
     loadGalleries();
@@ -263,6 +265,13 @@ export default function GalleriesDashboard() {
       .then((data) => data?.covers && setCoverUrls(data.covers))
       .catch(() => {});
 
+    // best-effort: בלי זה פשוט מתנהגים כחשבון חינמי (כמו קודם)
+    supabase
+      .from('photographers')
+      .select('is_unlimited')
+      .maybeSingle()
+      .then(({ data }) => setIsUnlimited(!!(data as { is_unlimited?: boolean } | null)?.is_unlimited), () => {});
+
     // best-effort: טבלה חסרה (מיגרציה שלא רצה) / שגיאה = פשוט בלי תגים
     supabase
       .from('gallery_extension_requests')
@@ -350,12 +359,8 @@ export default function GalleriesDashboard() {
   // מבחינת ה-trigger, גם אם היא כבר מוצגת פה כ"באיחור".
   const activeCount = rows.filter((r) => r.status !== 'completed' && r.status !== 'expired').length;
   const freeGalleryLimit = 1;
-
-  // מבט-על מהיר לראש הדף - כמה גלריות יש בסה"כ, כמה עדיין ממתינות לפעולה
-  // (טרם נפתחו/בבחירה - לא כולל הושלמו/פג תוקפן), וכמה הושלמו.
-  const totalCount = rows.length;
-  const pendingActionCount = rows.filter((r) => r.status === 'draft' || r.status === 'sent' || r.status === 'in_progress').length;
-  const completedCount = rows.filter((r) => r.status === 'completed').length;
+  // צלמת עם מנוי (is_unlimited) פטורה מהמגבלה - לא מציגים לה את ההודעה
+  const freeLimitReached = !isUnlimited && activeCount >= freeGalleryLimit;
 
   // סה"כ הכנסה = הסכום לתשלום של כל הגלריות (לא רק פעילות - בדרך כלל גובים
   // על החבילה בזמן ההזמנה), כולל דריסה ידנית של הסכום, באגורות שלמות - ראו
@@ -368,21 +373,8 @@ export default function GalleriesDashboard() {
   const owingCount = rows.filter((row) => rowPaymentSummary(row).outstanding > 0).length;
   const totalOutstanding = rows.reduce((sum, row) => sum + rowPaymentSummary(row).outstanding, 0);
 
-  // גלריות שדורשות תשומת לב עכשיו: תוקף מתקרב (עד 3 ימים) והלקוחה עדיין לא
-  // סיימה לבחור - לא כולל גלריות שכבר פגו (אלה כבר "באיחור", אין מה לדחוף שם)
-  // או שהושלמו. ממוינות מהדחוף ביותר, כדי שהצלמת תדע את מי לדחוף קודם
-  // (עם "🔔 שליחת תזכורת עכשיו" בדף העריכה, ראו app/api/galleries/[id]/send-reminder).
-  const ATTENTION_WINDOW_DAYS = 3;
-  const urgentRows = rows
-    .filter((row) => {
-      if (!row.expires_at || effectiveStatus(row) === 'completed' || effectiveStatus(row) === 'expired') return false;
-      const daysLeft = (new Date(row.expires_at).getTime() - Date.now()) / 86400000;
-      return daysLeft >= 0 && daysLeft <= ATTENTION_WINDOW_DAYS;
-    })
-    .sort((a, b) => new Date(a.expires_at!).getTime() - new Date(b.expires_at!).getTime());
-
   // חיפוש/סינון על מה שכבר נטען - אין קריאת API נוספת, רשימת הגלריות של צלמת
-  // בודדת קטנה מספיק שסינון בצד לקוח מספיק. הכותרת (הכנסה, X/1 פעילות) נשארת
+  // בודדת קטנה מספיק שסינון בצד לקוח מספיק. הכותרת (הכנסה, יתרה לגבייה) נשארת
   // מחושבת על כל הגלריות תמיד, לא רק על התוצאה המסוננת - זה סיכום כללי, לא "לפי מסך".
   const filteredRows = rows.filter((row) => {
     const status = effectiveStatus(row);
@@ -435,64 +427,18 @@ export default function GalleriesDashboard() {
             </p>
           )}
         </div>
-        <Link href="/dashboard/galleries/new" style={{ ...goldButtonStyle, textDecoration: 'none' }}>
-          + גלריה חדשה
-        </Link>
-      </div>
-
-      {rows.length > 0 && (
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          {[
-            { label: 'סה"כ גלריות', value: totalCount, color: theme.text },
-            { label: 'ממתינות לפעולה', value: pendingActionCount, color: theme.gold },
-            { label: 'הושלמו', value: completedCount, color: theme.successText },
-          ].map((stat) => (
-            <div
-              key={stat.label}
-              style={{
-                flex: '1 1 140px', background: theme.panel, border: `1px solid ${theme.border}`,
-                borderRadius: 10, padding: '0.75rem 1rem', textAlign: 'center',
-              }}
-            >
-              <div style={{ fontSize: 24, fontWeight: 'bold', color: stat.color }}>{stat.value}</div>
-              <div style={{ fontSize: 12, color: theme.textMuted, marginTop: '0.15rem' }}>{stat.label}</div>
-            </div>
-          ))}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.3rem' }}>
+          <Link href="/dashboard/galleries/new" style={{ ...goldButtonStyle, textDecoration: 'none' }}>
+            + גלריה חדשה
+          </Link>
+          {/* רק כשהמגבלה הושגה - המונה המלא (X/Y פעילות) וייצוא אנשי הקשר עברו להגדרות */}
+          {freeLimitReached && (
+            <p style={{ color: theme.errorText, fontSize: 12, margin: 0, maxWidth: 240, textAlign: 'left' }}>
+              הגעת למגבלת הגלריות הפעילות בחשבון החינמי ({activeCount}/{freeGalleryLimit})
+            </p>
+          )}
         </div>
-      )}
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '-0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-        <p style={{ color: activeCount >= freeGalleryLimit ? theme.errorText : theme.textMuted, fontSize: 13, margin: 0 }}>
-          {activeCount}/{freeGalleryLimit} גלריות פעילות (חשבון חינמי)
-        </p>
-        {rows.length > 0 && (
-          <a href="/api/galleries/export-contacts" style={{ color: theme.textMuted, fontSize: 12, textDecoration: 'underline' }}>
-            ייצוא רשימת אנשי קשר (CSV)
-          </a>
-        )}
       </div>
-
-      {urgentRows.length > 0 && (
-        <div style={{ background: theme.warningBg, border: `1px solid ${theme.warningText}`, borderRadius: 10, padding: '0.85rem 1rem' }}>
-          <p style={{ color: theme.warningText, fontSize: 13, fontWeight: 'bold', margin: '0 0 0.5rem' }}>
-            ⚠️ דורש תשומת לב - תוקף מתקרב
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-            {urgentRows.map((row) => {
-              const daysLeft = Math.ceil((new Date(row.expires_at!).getTime() - Date.now()) / 86400000);
-              const daysLabel = daysLeft <= 0 ? 'פג היום' : daysLeft === 1 ? 'נשאר יום אחד' : `נשארו ${daysLeft} ימים`;
-              return (
-                <div key={row.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', fontSize: 13 }}>
-                  <span>{row.clients?.full_name ?? 'ללא שם'} - {daysLabel}, נבחרו {row.selectedCount}/{row.packages?.included_photos ?? 0}</span>
-                  <Link href={`/dashboard/galleries/${row.id}/edit`} style={{ color: theme.warningText, textDecoration: 'underline', whiteSpace: 'nowrap' }}>
-                    שליחת תזכורת ←
-                  </Link>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {rows.length > 0 && (
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.25rem' }}>

@@ -481,6 +481,14 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     }
   }
 
+  // קישור עם #payments (ממסך "היום"): הדפדפן מנסה לגלול לפני שהטופס נטען
+  // (בזמן "טוען..." אין עדיין אלמנט כזה) - גוללים שוב אחרי הטעינה.
+  useEffect(() => {
+    if (loading || window.location.hash !== '#payments') return;
+    const timer = setTimeout(() => document.getElementById('payments')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+    return () => clearTimeout(timer);
+  }, [loading]);
+
   if (loading) return <p style={{ color: theme.textMuted }}>טוען...</p>;
 
   if (notFound) {
@@ -775,7 +783,10 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         </p>
       )}
 
-      <GalleryPaymentsSection galleryId={galleryId} />
+      {/* id="payments" - יעד הקישור "רישום תשלום" ממסך "היום" (app/dashboard/today) */}
+      <div id="payments" style={{ scrollMarginTop: '1rem' }}>
+        <GalleryPaymentsSection galleryId={galleryId} />
+      </div>
 
       <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
         <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.5rem' }}>תמונות שנבחרו</h2>
