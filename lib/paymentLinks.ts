@@ -4,6 +4,9 @@
 //
 // עמודות: photographers.payment_bit_url / payment_paybox_url / payment_bank_details
 // (ראו supabase/schema.sql). לוגיקה טהורה - משותפת ל-API ולדפדפן.
+// הוחלף ע"י "אמצעי תשלום" (lib/paymentMethods.ts) - העמודות הישנות נשארו
+// לתאימות לאחור (נקראות כש-payment_methods עוד null/חסרה), והאימות כאן
+// (isSafePaymentUrl / parseBankDetails) וחישוב הסכום משמשים גם שם.
 
 import { computePaymentSummary, type PackagePricing, type PaymentLike } from '@/lib/payments';
 
