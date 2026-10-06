@@ -43,6 +43,19 @@ export const SIGN_IN_ERROR_MESSAGES: Record<SignInErrorKind, string> = {
 
 export const RATE_LIMIT_MESSAGE = 'יותר מדי ניסיונות. חכי כמה דקות ונסי שוב';
 
+export const ALREADY_REGISTERED_MESSAGE = 'כתובת המייל כבר רשומה - אפשר להתחבר או לאפס סיסמה';
+
+// הרשמה עם מייל שכבר רשום: כש-"Confirm email" דלוק, Supabase לא מחזיר שגיאה
+// (כדי לא לחשוף אילו כתובות רשומות) אלא user "מזויף" עם identities ריק ובלי
+// session - בלי הבדיקה הזו הצלמת הייתה רואה "נרשמת בהצלחה" ומחכה למייל שלא יגיע.
+export function isExistingUserSignup(
+  user: { identities?: unknown[] | null } | null | undefined,
+  hasSession: boolean
+): boolean {
+  if (!user || hasSession) return false;
+  return Array.isArray(user.identities) && user.identities.length === 0;
+}
+
 // קודים שה-callback מעביר ל-/login?error=... (ול-/login/forgot-password?error=...)
 export type CallbackErrorCode = 'link_expired' | 'link_invalid';
 

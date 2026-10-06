@@ -38,3 +38,26 @@ export function isAdminUser(user: AdminCandidate | null | undefined, env: AdminE
 
   return true;
 }
+
+/**
+ * האם הניהול נעול לחשבון ספציפי (ADMIN_USER_ID מוגדר). בלי זה - בפרויקט שבו
+ * "Confirm email" כבוי, email_confirmed_at מתמלא אוטומטית בהרשמה, כך שמי
+ * שנרשמת ראשונה עם הכתובת של ADMIN_EMAIL מקבלת ניהול. לא נועלים בכוח (המנהלת
+ * הייתה מאבדת גישה עד שתגדיר את המשתנה) - רק אזהרה בשרת והודעה בדף הניהול.
+ */
+export function isAdminLockedToUserId(env: AdminEnv): boolean {
+  return (env.ADMIN_USER_ID ?? '').trim().length > 0;
+}
+
+/**
+ * עוטפת פונקציית לוג כך שתרוץ פעם אחת בלבד לכל חיי התהליך (instance של השרת) -
+ * כדי שאזהרת "ADMIN_USER_ID לא מוגדר" לא תציף את הלוגים בכל בקשת ניהול.
+ */
+export function once<A extends unknown[]>(fn: (...args: A) => void): (...args: A) => void {
+  let done = false;
+  return (...args: A) => {
+    if (done) return;
+    done = true;
+    fn(...args);
+  };
+}

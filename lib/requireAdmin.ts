@@ -1,5 +1,14 @@
 import { createClient } from '@/lib/supabase/server';
-import { isAdminUser } from '@/lib/adminCheck';
+import { isAdminLockedToUserId, isAdminUser, once } from '@/lib/adminCheck';
+
+// אזהרה חד-פעמית (לכל instance של השרת) כשהניהול לא נעול ל-ADMIN_USER_ID -
+// ראו isAdminLockedToUserId ב-lib/adminCheck.ts.
+const warnUnlockedAdmin = once((userId: string) => {
+  console.warn(
+    `[admin] ADMIN_USER_ID לא מוגדר - הניהול פתוח לכל מי שמחוברת עם ADMIN_EMAIL. ` +
+      `מומלץ להגדיר ב-Vercel: ADMIN_USER_ID=${userId}`
+  );
+});
 
 // שער יחיד לכל app/api/admin/* - רק המייל שמוגדר ב-ADMIN_EMAIL (משתני סביבה,
 // לא ב-DB) עובר, ורק אחרי שאומת (email_confirmed_at). אם מוגדר גם
@@ -12,14 +21,21 @@ export async function requireAdmin() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (
-    !isAdminUser(user, {
-      ADMIN_EMAIL: process.env.ADMIN_EMAIL,
-      ADMIN_USER_ID: process.env.ADMIN_USER_ID,
-    })
-  ) {
+  const env = {
+    ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+    ADMIN_USER_ID: process.env.ADMIN_USER_ID,
+  };
+
+  if (!user || !isAdminUser(user, env)) {
     return null;
   }
 
+  if (!isAdminLockedToUserId(env)) warnUnlockedAdmin(user.id);
+
   return user;
+}
+
+// לדף הניהול - האם להציג את ההמלצה לנעול את הניהול ל-ADMIN_USER_ID.
+export function adminLockedToUserId(): boolean {
+  return isAdminLockedToUserId({ ADMIN_USER_ID: process.env.ADMIN_USER_ID });
 }

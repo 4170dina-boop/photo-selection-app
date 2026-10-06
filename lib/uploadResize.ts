@@ -44,7 +44,16 @@ export function shouldUseResized(originalBytes: number, resizedBytes: number | n
   return resizedBytes !== null && resizedBytes > 0 && resizedBytes < originalBytes;
 }
 
-type AnyCanvas = OffscreenCanvas | HTMLCanvasElement;
+// אחרי כמה קריסות של workers (אירוע 'error') מפסיקים לנסות ועוברים ל-main
+// thread לכל ההמשך. קריסה בודדת (למשל קובץ אחד שגרם ל-OOM) רק מחליפה את
+// ה-worker הזה בחדש - לא מבטלת את ההקטנה ברקע לכל שאר התמונות.
+export const MAX_WORKER_FAILURES = 3;
+
+export function workersExhausted(failures: number, max: number = MAX_WORKER_FAILURES): boolean {
+  return failures >= max;
+}
+
+type AnyCanvas =OffscreenCanvas | HTMLCanvasElement;
 
 async function decode(file: Blob): Promise<ImageBitmap> {
   // imageOrientation: 'from-image' = מיישמים את סיבוב ה-EXIF כבר בפענוח. הקובץ
@@ -58,8 +67,8 @@ async function decode(file: Blob): Promise<ImageBitmap> {
   }
 }
 
-// מפענחת, מקטינה (אם צריך) ומקודדת ל-JPEG. מחזירה null אם משהו נכשל - הקורא
-// מעלה את המקור במקרה כזה. createCanvas מאפשר אותו קוד ב-worker
+// מפענחת, מקטינה ומקודדת ל-JPEG. מחזירה null אם משהו נכשל או שהתמונה לא צריכה
+// הקטנה - הקורא מעלה את המקור במקרה כזה. createCanvas מאפשר אותו קוד ב-worker
 // (OffscreenCanvas) ועל ה-main thread (canvas רגיל) כגיבוי.
 export async function resizeImageToJpeg(
   file: Blob,
@@ -71,6 +80,10 @@ export async function resizeImageToJpeg(
   try {
     bitmap = await decode(file);
     const target = targetDimensions(bitmap.width, bitmap.height, maxEdge);
+    // כבר קטנה מספיק - לא מקודדים מחדש בכלל (null = הקורא מעלה את המקור כמו
+    // שהוא). קידוד חוזר ל-JPEG רק היה מוריד איכות ומוחק את ה-EXIF, בלי לחסוך
+    // ברזולוציה. אותו כלל ל-JPEG, PNG ו-WebP.
+    if (!target.scaled) return null;
     const canvas = createCanvas(target.width, target.height);
     const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
     if (!ctx) return null;

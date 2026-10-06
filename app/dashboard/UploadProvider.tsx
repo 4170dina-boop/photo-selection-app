@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { theme } from '@/lib/theme';
-import { FREE_PHOTO_LIMIT, indicesToUpload, mapWithConcurrency } from '@/lib/uploadPolicy';
+import { canRetryRegisterOnly, FREE_PHOTO_LIMIT, indicesToUpload, mapWithConcurrency } from '@/lib/uploadPolicy';
 import { createMicroBatcher } from '@/lib/microBatch';
 import { prepareForUpload } from './uploadCompressor';
 import { readTakenAtFromFile } from '@/lib/exifDate';
@@ -22,6 +22,11 @@ export interface UploadItem {
   error?: string;
   isDuplicateExisting?: boolean; // כבר קיים בגלריה (לפי original_filename)
   isDuplicateInSelection?: boolean; // נבחר יותר מפעם אחת בבחירה הנוכחית
+  // ה-key ב-R2 אחרי שה-PUT הצליח (ושעת הצילום שנשלחה איתו) - אם רק הרישום
+  // נכשל (למשל התשובה אבדה ברשת), "נסי שוב" שולח שוב רק את הרישום עם אותו
+  // path במקום להעלות קובץ שני (ראו canRetryRegisterOnly ב-lib/uploadPolicy.ts).
+  uploadedPath?: string;
+  takenAt?: string | null;
 }
 
 interface GalleryUploadState {
@@ -130,10 +135,30 @@ export function UploadProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [states, setStates] = useState<Record<string, GalleryUploadState>>({});
   const fadeTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // העותק הסמכותי של הסטייט - מתעדכן סינכרונית בכל updateGallery, כך ש-
+  // startUpload קורא את הפריטים העדכניים בלי לחכות לרנדר, וה-updaters עצמם
+  // רצים פעם אחת בדיוק (מחוץ ל-setStates). React רשאי להריץ updater של
+  // setStates פעמיים (Strict Mode / רנדר חוזר) - לכן אסור שתהיה בו תופעת לוואי.
+  const statesRef = useRef<Record<string, GalleryUploadState>>({});
+  // גלריות שתור העלאה רץ עליהן כרגע - דגל סינכרוני, כדי שקריאה כפולה
+  // (דאבל-קליק, Strict Mode) לא תתחיל תור שני ותעלה כל תמונה פעמיים.
+  const runningUploads = useRef<Set<string>>(new Set());
 
   const updateGallery = useCallback((galleryId: string, updater: (prev: GalleryUploadState) => GalleryUploadState) => {
-    setStates((prev) => ({ ...prev, [galleryId]: updater(prev[galleryId] ?? EMPTY_STATE) }));
+    const next = { ...statesRef.current, [galleryId]: updater(statesRef.current[galleryId] ?? EMPTY_STATE) };
+    statesRef.current = next;
+    setStates(next);
   }, []);
+
+  const patchItem = useCallback(
+    (galleryId: string, i: number, patch: Partial<UploadItem>) => {
+      updateGallery(galleryId, (prev) => ({
+        ...prev,
+        items: prev.items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)),
+      }));
+    },
+    [updateGallery]
+  );
 
   const setGalleryItems = useCallback(
     (galleryId: string, items: UploadItem[]) => {
@@ -152,47 +177,34 @@ export function UploadProvider({ children }: { children: ReactNode }) {
   async function uploadOne(
     galleryId: string,
     i: number,
-    originalFile: File,
+    item: UploadItem,
     batchers: ReturnType<typeof createGalleryBatchers>,
     options: StartUploadOptions
   ) {
-    updateGallery(galleryId, (prev) => ({
-      ...prev,
-      items: prev.items.map((it, idx) => (idx === i ? { ...it, status: 'uploading' } : it)),
-    }));
+    const originalFile = item.file;
+    patchItem(galleryId, i, { status: 'uploading' });
 
     try {
-      // הקטנה ל-3000px בצלע הארוכה (ראו lib/uploadResize.ts) ב-Web Worker -
-      // קובץ מצלמה של ~10MB הופך ל-~1-2MB, והדף לא קופא בזמן הפענוח.
-      // "עובדים" אחרים מעלים בזמן שהתמונה הזו מוקטנת.
-      // שעת הצילום (EXIF) נקראת מהמקור לפני ההקטנה - הקנבס מוחק את ה-EXIF
-      // (ראו lib/exifDate.ts). משמשת לחלוקה לפרקים ולזיהוי תמונות דומות.
-      const [file, takenAt] = await Promise.all([
-        prepareForUpload(originalFile, !!options.fullResolution),
-        readTakenAtFromFile(originalFile),
-      ]);
-
-      // אחסון עבר ל-Cloudflare R2 (ראו lib/r2.ts) - ל-R2 (כמו S3) אין מקבילה
-      // ל-RLS שמאפשרת לדפדפן להעלות ישירות בבטחה, אז מבקשים URL חתום מהשרת
-      // (הוא גם קובע את הנתיב עצמו, לא מתקבל מהלקוח) ומעלים אליו ישירות -
-      // הבייטים עצמם עדיין לא עוברים דרך שרת האפליקציה שלנו, בדיוק כמו קודם.
-      // סוג התוכן והגודל נחתמים לתוך ה-URL (ראו lib/r2.ts) - השרת מאמת אותם
-      // (רשימת סוגים מותרים + גודל מקסימלי) ובודק את מכסת התמונות לפני החתימה.
-      const presignData = await batchers.presign({ contentType: file.type, size: file.size });
-      if (presignData.error || !presignData.path || !presignData.uploadUrl) {
-        throw new Error(presignData.error ?? 'בקשת URL להעלאה נכשלה');
+      let path = item.uploadedPath;
+      let takenAt = item.takenAt ?? null;
+      // הקובץ כבר ב-R2 מניסיון קודם (רק הרישום לא אושר) - מדלגים ישר לרישום.
+      if (!path || !canRetryRegisterOnly(item)) {
+        ({ path, takenAt } = await putToStorage(originalFile, batchers, options));
+        patchItem(galleryId, i, { uploadedPath: path, takenAt });
       }
-      const { path, uploadUrl, contentType } = presignData;
-
-      const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': contentType ?? file.type } });
-      if (!putRes.ok) throw new Error('העלאת הקובץ נכשלה');
 
       // הרישום ב-DB קורה בצד שרת (app/api/galleries/[id]/photos/route.ts) - אם
       // הוא נכשל (למשל מגבלת התמונות), השרת גם מוחק את הקובץ מ-R2 כדי שלא
       // יישאר יתום. thumbnail_path נשאר null עד שהעיבוד למטה מסיים - עד אז
       // התמונה לא מוצגת ללקוחה בכלל (אף פעם לא המקור הנקי).
-      const registerData = await batchers.register({ path, originalFilename: file.name, takenAt });
-      if (registerData.error || !registerData.id) throw new Error(registerData.error ?? 'שמירת התמונה נכשלה');
+      // אם הבקשה עצמה נזרקת (רשת/תשובה שאבדה) - uploadedPath נשאר, כי ייתכן
+      // שהשרת כבר רשם; הרישום אידמפוטנטי לאותו path. אם השרת ענה בשגיאה
+      // לפריט הזה - הוא כבר מחק את הקובץ, אז הניסיון הבא מעלה מחדש.
+      const registerData = await batchers.register({ path, originalFilename: originalFile.name, takenAt });
+      if (registerData.error || !registerData.id) {
+        patchItem(galleryId, i, { uploadedPath: undefined });
+        throw new Error(registerData.error ?? 'שמירת התמונה נכשלה');
+      }
       const photo = { id: registerData.id };
 
       // התמונה כבר בטוחה ב-Storage וב-DB - זה מה שקובע "הועלה בהצלחה" מבחינת
@@ -203,61 +215,94 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       // האיטי, לא ההעלאה עצמה.
       fetch(`/api/galleries/${galleryId}/photos/${photo.id}/process`, { method: 'POST' }).catch(() => {});
 
-      updateGallery(galleryId, (prev) => ({
-        ...prev,
-        items: prev.items.map((it, idx) => (idx === i ? { ...it, status: 'done' } : it)),
-      }));
+      patchItem(galleryId, i, { status: 'done' });
     } catch (err: any) {
       // מגבלת חשבון חינמי (טריגר enforce_photo_limit ב-DB) - ראו supabase/schema.sql
       const message: string = err.message ?? 'שגיאה לא ידועה';
       const displayMessage = message.includes('LIMIT_PHOTOS')
         ? `חשבון חינמי מוגבל ל-${FREE_PHOTO_LIMIT} תמונות בגלריה`
         : message;
-      updateGallery(galleryId, (prev) => ({
-        ...prev,
-        items: prev.items.map((it, idx) => (idx === i ? { ...it, status: 'error', error: displayMessage } : it)),
-      }));
+      patchItem(galleryId, i, { status: 'error', error: displayMessage });
     }
+  }
+
+  // הקטנה + presign + PUT ל-R2. מחזירה את ה-key שנוצר ואת שעת הצילום.
+  async function putToStorage(
+    originalFile: File,
+    batchers: ReturnType<typeof createGalleryBatchers>,
+    options: StartUploadOptions
+  ): Promise<{ path: string; takenAt: string | null }> {
+    // הקטנה ל-3000px בצלע הארוכה (ראו lib/uploadResize.ts) ב-Web Worker -
+    // קובץ מצלמה של ~10MB הופך ל-~1-2MB, והדף לא קופא בזמן הפענוח.
+    // "עובדים" אחרים מעלים בזמן שהתמונה הזו מוקטנת.
+    // שעת הצילום (EXIF) נקראת מהמקור לפני ההקטנה - הקנבס מוחק את ה-EXIF
+    // (ראו lib/exifDate.ts). משמשת לחלוקה לפרקים ולזיהוי תמונות דומות.
+    const [file, takenAt] = await Promise.all([
+      prepareForUpload(originalFile, !!options.fullResolution),
+      readTakenAtFromFile(originalFile),
+    ]);
+
+    // אחסון עבר ל-Cloudflare R2 (ראו lib/r2.ts) - ל-R2 (כמו S3) אין מקבילה
+    // ל-RLS שמאפשרת לדפדפן להעלות ישירות בבטחה, אז מבקשים URL חתום מהשרת
+    // (הוא גם קובע את הנתיב עצמו, לא מתקבל מהלקוח) ומעלים אליו ישירות -
+    // הבייטים עצמם עדיין לא עוברים דרך שרת האפליקציה שלנו, בדיוק כמו קודם.
+    // סוג התוכן והגודל נחתמים לתוך ה-URL (ראו lib/r2.ts) - השרת מאמת אותם
+    // (רשימת סוגים מותרים + גודל מקסימלי) ובודק את מכסת התמונות לפני החתימה.
+    const presignData = await batchers.presign({ contentType: file.type, size: file.size });
+    if (presignData.error || !presignData.path || !presignData.uploadUrl) {
+      throw new Error(presignData.error ?? 'בקשת URL להעלאה נכשלה');
+    }
+    const { path, uploadUrl, contentType } = presignData;
+
+    const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': contentType ?? file.type } });
+    if (!putRes.ok) throw new Error('העלאת הקובץ נכשלה');
+
+    return { path, takenAt };
   }
 
   const startUpload = useCallback(
     (galleryId: string, options: StartUploadOptions = {}) => {
-      // קורא את הסטייט הנוכחי ישירות (לא מה-closure של הרנדר האחרון) כדי
-      // שקריאה כפולה בטעות (למשל דאבל-קליק) לא תתחיל תור שני על אותה גלריה.
-      setStates((prev) => {
-        const current = prev[galleryId] ?? EMPTY_STATE;
-        if (current.uploading || current.items.length === 0) return prev;
+      // קורא את הסטייט העדכני מ-statesRef (לא מה-closure של הרנדר האחרון),
+      // והדגל runningUploads נבדק ונדלק סינכרונית - כך שקריאה כפולה (דאבל-קליק,
+      // Strict Mode) לא תתחיל תור שני על אותה גלריה. ה-IIFE מופעל כאן, מחוץ
+      // לכל updater של setStates - updater חייב להיות טהור (React רשאי להריץ
+      // אותו פעמיים, ואז כל תמונה הייתה עולה פעמיים ונספרת פעמיים במכסה).
+      if (runningUploads.current.has(galleryId)) return;
+      const current = statesRef.current[galleryId] ?? EMPTY_STATE;
+      if (current.uploading || current.items.length === 0) return;
 
-        const timer = fadeTimers.current[galleryId];
-        if (timer) {
-          clearTimeout(timer);
-          delete fadeTimers.current[galleryId];
-        }
+      const items = current.items;
+      // רק pending/error - פריט שכבר הועלה (done) לא נשלח שוב בלחיצה חוזרת,
+      // אחרת "נסי שוב" אחרי כישלון חלקי יוצר כפילויות של כל מה שכבר הצליח.
+      const queue = indicesToUpload(items);
+      if (queue.length === 0) return;
 
-        const items = current.items;
-        // רק pending/error - פריט שכבר הועלה (done) לא נשלח שוב בלחיצה חוזרת,
-        // אחרת "נסי שוב" אחרי כישלון חלקי יוצר כפילויות של כל מה שכבר הצליח.
-        const queue = indicesToUpload(items);
-        if (queue.length === 0) return prev;
+      runningUploads.current.add(galleryId);
+      const timer = fadeTimers.current[galleryId];
+      if (timer) {
+        clearTimeout(timer);
+        delete fadeTimers.current[galleryId];
+      }
+      updateGallery(galleryId, (p) => ({ ...p, uploading: true, showBanner: true }));
 
-        // "מאגר עובדים" קטן: עד UPLOAD_CONCURRENCY העלאות פעילות בו-זמנית.
-        // ה-IIFE רץ בלי תלות בהמשך חיי רכיב כלשהו - זה בדיוק העניין: הוא ממשיך
-        // גם אם דף ההעלאה עצמו יתפרק.
-        const batchers = createGalleryBatchers(galleryId);
-        (async () => {
+      // "מאגר עובדים" קטן: עד UPLOAD_CONCURRENCY העלאות פעילות בו-זמנית.
+      // ה-IIFE רץ בלי תלות בהמשך חיי רכיב כלשהו - זה בדיוק העניין: הוא ממשיך
+      // גם אם דף ההעלאה עצמו יתפרק.
+      const batchers = createGalleryBatchers(galleryId);
+      (async () => {
+        try {
           await mapWithConcurrency(queue, UPLOAD_CONCURRENCY, (i) =>
-            uploadOne(galleryId, i, items[i].file, batchers, options)
+            uploadOne(galleryId, i, items[i], batchers, options)
           );
-
+        } finally {
+          runningUploads.current.delete(galleryId);
           updateGallery(galleryId, (p) => ({ ...p, uploading: false }));
           fadeTimers.current[galleryId] = setTimeout(() => {
             updateGallery(galleryId, (p) => ({ ...p, showBanner: false }));
             delete fadeTimers.current[galleryId];
           }, BANNER_FADE_MS);
-        })();
-
-        return { ...prev, [galleryId]: { ...current, uploading: true, showBanner: true } };
-      });
+        }
+      })();
     },
     [updateGallery] // eslint-disable-line react-hooks/exhaustive-deps
   );
