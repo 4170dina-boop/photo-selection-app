@@ -539,6 +539,23 @@ create policy "photographers update own extension requests" on gallery_extension
 revoke update on gallery_extension_requests from anon, authenticated;
 grant update (status, decided_at) on gallery_extension_requests to authenticated;
 
+-- תבניות גלריה ("חתונה", "בר מצווה"...) - חבילה, ימי תוקף, לשון פנייה ושפה
+-- (data jsonb, מאומת ב-lib/galleryTemplates.ts לפני כתיבה). הצלמת בוחרת
+-- "תבנית:" בטופס גלריה חדשה. רק דרך app/api/gallery-templates (session
+-- הצלמת + RLS). שם ייחודי לכל צלמת (בלי רישיות/רווחים בקצוות).
+create table gallery_templates (
+  id uuid primary key default uuid_generate_v4(),
+  photographer_id uuid references photographers(id) on delete cascade not null,
+  name text not null check (char_length(btrim(name)) between 1 and 60),
+  data jsonb not null default '{}'::jsonb check (jsonb_typeof(data) = 'object'),
+  created_at timestamptz default now() not null
+);
+create unique index gallery_templates_photographer_name on gallery_templates(photographer_id, lower(btrim(name)));
+alter table gallery_templates enable row level security;
+create policy "photographers manage own gallery templates" on gallery_templates
+  for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
+  with check (photographer_id in (select id from photographers where auth_user_id = auth.uid()));
+
 -- אינדקסים בסיסיים לביצועים
 create index idx_clients_photographer on clients(photographer_id);
 create index idx_galleries_photographer on galleries(photographer_id);
@@ -3024,3 +3041,25 @@ create policy "photographers read own logo" on storage.objects
 --
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: הקשחת מגבלות קצב, עמודות פנימיות ומגבלות חשבון חינמי =====
+
+-- ===== מיגרציה: תבניות גלריה (gallery_templates) =====
+-- להריץ פעם אחת על פרויקט קיים (idempotent). עד שמריצים - הקוד לא נשבר:
+-- app/api/gallery-templates מחזיר available: false והממשק ("תבנית:" בגלריה
+-- חדשה, "תבניות גלריה" בהגדרות) פשוט מוסתר.
+--
+-- create table if not exists gallery_templates (
+--   id uuid primary key default uuid_generate_v4(),
+--   photographer_id uuid references photographers(id) on delete cascade not null,
+--   name text not null check (char_length(btrim(name)) between 1 and 60),
+--   data jsonb not null default '{}'::jsonb check (jsonb_typeof(data) = 'object'),
+--   created_at timestamptz default now() not null
+-- );
+-- create unique index if not exists gallery_templates_photographer_name on gallery_templates(photographer_id, lower(btrim(name)));
+-- alter table gallery_templates enable row level security;
+-- drop policy if exists "photographers manage own gallery templates" on gallery_templates;
+-- create policy "photographers manage own gallery templates" on gallery_templates
+--   for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
+--   with check (photographer_id in (select id from photographers where auth_user_id = auth.uid()));
+--
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: תבניות גלריה =====
