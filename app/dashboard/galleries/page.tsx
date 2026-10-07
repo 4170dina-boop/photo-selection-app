@@ -12,6 +12,7 @@ import { galleryRevenue, sumShekels } from '@/lib/revenue';
 import { canDeliverFinals, isReminderEligible } from '@/lib/galleryLifecycle';
 import SetupChecklist from '@/components/SetupChecklist';
 import SampleGalleryTag, { useSampleGalleryIds } from '@/components/SampleGalleryTag';
+import { matchesArchiveFilter, type GalleryArchiveFilter } from '@/lib/galleryArchive';
 
 interface GalleryRow {
   id: string;
@@ -25,6 +26,7 @@ interface GalleryRow {
   delivered_at: string | null;
   reopened_for_selection_at: string | null;
   paid_at: string | null;
+  archived_at: string | null;
   owner_participant_id: string | null;
   clients: { full_name: string } | null;
   // packages.gallery_id הוא unique, אז PostgREST מחזיר יחס 1:1 - אובייקט בודד, לא מערך
@@ -58,6 +60,7 @@ export default function GalleriesDashboard() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'expired'>('all');
+  const [archiveFilter, setArchiveFilter] = useState<GalleryArchiveFilter>('active');
   const [sortBy, setSortBy] = useState<'newest' | 'expiry' | 'activity' | 'name'>('newest');
   const [loadError, setLoadError] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -67,6 +70,7 @@ export default function GalleriesDashboard() {
   const [togglingEditingId, setTogglingEditingId] = useState<string | null>(null);
   const [togglingDeliveredId, setTogglingDeliveredId] = useState<string | null>(null);
   const [togglingPaidId, setTogglingPaidId] = useState<string | null>(null);
+  const [togglingArchiveId, setTogglingArchiveId] = useState<string | null>(null);
   const [coverUrls, setCoverUrls] = useState<Record<string, string>>({});
   // גלריות עם בקשת הארכה ממתינה מהלקוחה (gallery_extension_requests) - תג בלבד
   const [pendingExtensionIds, setPendingExtensionIds] = useState<Set<string>>(new Set());
@@ -156,6 +160,30 @@ export default function GalleriesDashboard() {
       // שגיאת רשת - הסימון פשוט לא משתנה
     } finally {
       setTogglingPaidId(null);
+    }
+  }
+
+  async function handleToggleArchive(row: GalleryRow, e: React.MouseEvent) {
+    e.stopPropagation();
+    setTogglingArchiveId(row.id);
+
+    try {
+      const res = await fetch(`/api/galleries/${row.id}/archive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: !row.archived_at }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (data.error) window.alert(data.error);
+        return;
+      }
+      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, archived_at: data.archivedAt } : r)));
+      if (archiveFilter !== 'all') setArchiveFilter((prev) => (row.archived_at ? 'active' : prev));
+    } catch {
+      // אין שינוי בטעינת הרשימה במקרה של כשל רשת
+    } finally {
+      setTogglingArchiveId(null);
     }
   }
 
@@ -267,7 +295,7 @@ export default function GalleriesDashboard() {
 
     const { data: galleries, error } = await supabase
       .from('galleries')
-      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, editing_started_at, delivered_at, paid_at, reopened_for_selection_at, owner_participant_id, amount_due_override, clients(full_name), packages(included_photos, base_price, extra_photo_price), gallery_payments(amount)')
+      .select('id, status, created_at, expires_at, last_activity_at, last_reminder_sent_at, sent_at, editing_started_at, delivered_at, paid_at, archived_at, reopened_for_selection_at, owner_participant_id, amount_due_override, clients(full_name), packages(included_photos, base_price, extra_photo_price), gallery_payments(amount)')
       .order('created_at', { ascending: false });
 
     // בלי הבדיקה הזו, שגיאת שאילתה (למשל RLS, או עמודה חסרה אם המיגרציה
@@ -428,8 +456,9 @@ export default function GalleriesDashboard() {
     const status = effectiveStatus(row);
     const bucket = status === 'draft' || status === 'sent' ? 'pending' : status;
     const matchesStatus = statusFilter === 'all' || bucket === statusFilter;
+    const matchesArchive = matchesArchiveFilter(row, archiveFilter);
     const matchesSearch = !searchQuery.trim() || (row.clients?.full_name ?? '').toLowerCase().includes(searchQuery.trim().toLowerCase());
-    return matchesStatus && matchesSearch;
+    return matchesStatus && matchesArchive && matchesSearch;
   });
 
   // נבחרות שגלויות כרגע (הפעולות המרוכזות פועלות רק עליהן) מול נבחרות שהוסתרו
@@ -523,6 +552,23 @@ export default function GalleriesDashboard() {
                 }}
               >
                 {label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+            {(['all', 'active', 'archived'] as const).map((value) => (
+              <button
+                key={value}
+                onClick={() => setArchiveFilter(value)}
+                style={{
+                  ...outlineButtonStyle,
+                  padding: '0.35rem 0.75rem',
+                  fontSize: 12,
+                  borderColor: archiveFilter === value ? theme.gold : theme.border,
+                  color: archiveFilter === value ? theme.gold : theme.textMuted,
+                }}
+              >
+                {value === 'all' ? 'הכל' : value === 'active' ? 'פעילות' : 'בארכיון'}
               </button>
             ))}
           </div>
@@ -710,6 +756,21 @@ export default function GalleriesDashboard() {
               }}
             >
               {row.paid_at ? '💰 שולם' : 'סימון כשולם'}
+            </button>
+
+            <button
+              onClick={(e) => handleToggleArchive(row, e)}
+              disabled={togglingArchiveId === row.id}
+              title={row.archived_at ? 'החזרת גלריה מהרשימת ארכיון' : 'העברת גלריה לארכיון'}
+              style={{
+                padding: '0.25rem 0.75rem', borderRadius: 16, fontSize: 12, whiteSpace: 'nowrap', cursor: 'pointer',
+                border: `1px solid ${row.archived_at ? theme.successText : theme.border}`,
+                color: row.archived_at ? theme.successText : theme.textFaint,
+                background: 'transparent',
+                opacity: togglingArchiveId === row.id ? 0.6 : 1,
+              }}
+            >
+              {row.archived_at ? '📁 בארכיון' : '🗂️ לארכיון'}
             </button>
 
             <div style={{ minWidth: 160, flex: 1 }}>

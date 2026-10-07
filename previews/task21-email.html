@@ -1,64 +1,425 @@
 <!doctype html>
-<html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>בחירה במייל</title>
-<style>
-:root{--panel:#161c2d;--input:#1b2236;--text:#efe8db;--muted:rgba(239,232,219,.64);--faint:rgba(239,232,219,.42);--gold:#c98f89;--goldb:#e3b3ac;--green:#7fae86;--red:#e08a8a;--border:rgba(232,224,210,.14)}
-*{box-sizing:border-box}body{margin:0;background:#0a0f1b;color:var(--text);font-family:system-ui,"Segoe UI",Arial,sans-serif;padding:24px 16px 50px}
-h1{text-align:center;font-size:22px;margin:0 0 6px}.sub{text-align:center;color:var(--muted);margin:0 0 24px;font-size:14px}
-.wrap{display:flex;gap:28px;justify-content:center;flex-wrap:wrap;align-items:flex-start}
-.label{text-align:center;font-weight:700;margin-bottom:10px;color:var(--goldb)}
-.mail{width:440px;max-width:100%;background:#fff;color:#222;border-radius:8px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.5);font-size:14px}
-.mh{background:#f1f1f1;padding:10px 14px;font-size:12px;color:#555;line-height:1.7;border-bottom:1px solid #ddd}
-.mb{padding:18px}
-.mb h2{margin:0 0 8px;font-size:18px;color:#7a4f4a}
-.box{background:#faf5f2;border:1px solid #ecdcd6;border-radius:6px;padding:10px 12px;line-height:1.8;margin:10px 0 14px}
-.how{background:#fff8e6;border:1px solid #f0dca8;border-radius:6px;padding:10px 12px;line-height:1.7;margin-bottom:14px}
-.pg{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.pg div{text-align:center}.pg .im{aspect-ratio:3/4;border-radius:4px;position:relative}
-.pg .im:after{content:"© דינה שוורץ";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.45);font-size:10px;transform:rotate(-25deg)}
-.pg b{display:block;font-size:20px;margin-top:2px}
-.part{text-align:center;color:#888;font-size:12px;margin-top:14px}
-.set{width:400px;max-width:100%;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;font-size:14px}
-.set h3{margin:0 0 6px;font-size:15px}
-textarea{width:100%;background:var(--input);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:10px;font-size:16px;font-family:inherit;direction:ltr;text-align:right}
-.res{margin-top:10px;background:var(--input);border-radius:8px;padding:10px;font-size:13px;line-height:1.7}
-.ok{color:var(--green)}.bad{color:var(--red)}
-.btn{width:100%;margin-top:10px;background:linear-gradient(135deg,var(--goldb),var(--gold));color:#20120f;border:none;border-radius:8px;padding:11px;font-weight:700;font-size:15px;cursor:pointer}
-.btn2{width:100%;background:transparent;color:var(--text);border:1px solid var(--gold);border-radius:8px;padding:10px;font-size:14px;cursor:pointer;margin-bottom:6px}
-.hint{color:var(--faint);font-size:12px;margin-top:8px;line-height:1.6}
-hr{border:none;border-top:1px solid var(--border);margin:16px 0}
-.a{background:linear-gradient(135deg,#6b4f4a,#c9a48f)}.b{background:linear-gradient(135deg,#3d5566,#9fb6c2)}.c{background:linear-gradient(135deg,#5b6b4a,#c2c99f)}.d{background:linear-gradient(135deg,#66503d,#d1b48c)}
-</style></head><body>
-<h1>📧 בחירת תמונות במייל - תצוגה מקדימה</h1>
-<p class="sub">ימין: המייל שהלקוחה מקבלת (התמונות בתוך המייל, בלי קישורים) · שמאל: מה שאת עושה</p>
-<div class="wrap">
- <div><div class="label">📬 אצל הלקוחה - בתיבת המייל</div><div class="mail">
-  <div class="mh">מאת: דינה שוורץ - צילום<br>נושא: <b>התמונות שלך מהצילום 📸 (חלק 1 מתוך 2)</b></div>
-  <div class="mb">
-   <h2>שלום משפחת כהן,</h2>
-   <div>התמונות מהצילום מוכנות לבחירה! 🌸</div>
-   <div class="box">✔ כלולות בחבילה: <b>20 תמונות</b><br>➕ כל תמונה נוספת: <b>40 ₪</b><br>📅 נשמח לתשובה עד: <b>כ"ה בתשרי</b></div>
-   <div class="how"><b>איך בוחרים?</b><br>פשוט <b>משיבים למייל הזה</b> עם המספרים של התמונות שאהבת.<br>לדוגמה: <b dir="ltr">3, 7, 12-15</b></div>
-   <div class="pg" id="pg"></div>
-   <div class="part">חלק 1 מתוך 2 · תמונות 1-12 · החלק השני נשלח במייל נפרד</div>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>תצוגה מקדימה - שליחת תמונות במייל</title>
+  <style>
+    :root {
+      --bg: #0f1626;
+      --panel: #161c2d;
+      --panel-2: #1b2236;
+      --border: rgba(232,224,210,0.11);
+      --border-strong: rgba(232,224,210,0.22);
+      --text: #efe8db;
+      --muted: rgba(239,232,219,0.64);
+      --faint: rgba(239,232,219,0.42);
+      --gold: #c98f89;
+      --gold-bright: #e3b3ac;
+      --gold-text: #20120f;
+      --green: #7fae86;
+      --red: #e08a8a;
+      --shadow: rgba(0,0,0,0.42);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top, rgba(201,143,137,0.18), transparent 35%),
+        var(--bg);
+      color: var(--text);
+      font-family: system-ui, "Segoe UI", Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 26px 18px;
+    }
+
+    .screen {
+      width: min(100%, 960px);
+      background: rgba(15,22,38,0.94);
+      border: 1px solid var(--border-strong);
+      border-radius: 24px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.42);
+      padding: 22px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+      gap: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--gold-bright), var(--gold));
+      color: var(--gold-text);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+    }
+
+    .title {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(22px, 3vw, 28px);
+      font-weight: 700;
+      color: var(--text);
+      text-align: center;
+    }
+
+    .sub {
+      margin: 0 0 18px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+    }
+
+    .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 10px;
+      font-weight: 700;
+    }
+
+    .mail-card {
+      background: #ffffff;
+      color: #1d1d1f;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid rgba(0,0,0,0.06);
+      box-shadow: 0 10px 26px rgba(0,0,0,0.20);
+    }
+
+    .mail-header {
+      background: #f5f3f2;
+      border-bottom: 1px solid #e7e1dc;
+      padding: 10px 14px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #4d4d4d;
+    }
+
+    .mail-body {
+      padding: 18px 16px 16px;
+    }
+
+    .mail-body h2 {
+      margin: 0 0 8px;
+      color: #6d4a47;
+      font-size: 18px;
+    }
+
+    .box {
+      background: #faf4f2;
+      border: 1px solid #efd7d3;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin: 12px 0 14px;
+      line-height: 1.8;
+      font-size: 14px;
+      color: #2f2d2c;
+    }
+
+    .how {
+      background: #fff8e6;
+      border: 1px solid #ebd7a0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      line-height: 1.7;
+      margin-bottom: 14px;
+      font-size: 13px;
+      color: #3c302d;
+    }
+
+    .thumbs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .thumb {
+      text-align: center;
+    }
+
+    .thumb-art {
+      height: 108px;
+      border-radius: 8px;
+      margin-bottom: 5px;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(0,0,0,0.08);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);
+    }
+
+    .thumb-art::after {
+      content: "© דינה שוורץ";
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255,255,255,0.42);
+      font-size: 10px;
+      transform: rotate(-22deg);
+      letter-spacing: 0.4px;
+    }
+
+    .thumb b {
+      display: inline-block;
+      font-size: 18px;
+      color: #2c2c2c;
+    }
+
+    .part {
+      text-align: center;
+      margin-top: 12px;
+      font-size: 12px;
+      color: #6c6c6c;
+    }
+
+    .settings {
+      padding: 15px;
+    }
+
+    .ghost {
+      width: 100%;
+      border: 1px solid var(--gold);
+      background: transparent;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 14px;
+      cursor: pointer;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+
+    .ghost.secondary {
+      border-color: var(--border);
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 12px 0 14px;
+    }
+
+    .mini-title {
+      margin: 0 0 8px;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 72px;
+      resize: vertical;
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 16px;
+      direction: ltr;
+      text-align: right;
+      font-family: inherit;
+    }
+
+    .result {
+      margin-top: 12px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      line-height: 1.7;
+      font-size: 13px;
+    }
+
+    .ok { color: var(--green); }
+    .bad { color: var(--red); }
+
+    .primary {
+      width: 100%;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-top: 12px;
+      background: linear-gradient(135deg, var(--gold-bright), var(--gold));
+      color: var(--gold-text);
+      font-size: 15px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .hint {
+      margin-top: 10px;
+      color: var(--faint);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .a { background: linear-gradient(135deg, #6b4f4a, #c9a48f); }
+    .b { background: linear-gradient(135deg, #3d5566, #9fb6c2); }
+    .c { background: linear-gradient(135deg, #5b6b4a, #c2c99f); }
+    .d { background: linear-gradient(135deg, #66503d, #d1b48c); }
+
+    @media (max-width: 760px) {
+      .screen { padding: 14px; }
+      .grid { grid-template-columns: 1fr; }
+      .thumbs { grid-template-columns: repeat(3, minmax(0,1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="screen">
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-mark">ד</div>
+        <span>דינה שוורץ • גלריה</span>
+      </div>
+      <div style="color: var(--muted); font-size: 12px;">שליחת מייל ללקוחה</div>
+    </div>
+
+    <h1 class="title">📧 בחירת תמונות במייל</h1>
+    <p class="sub">המראה בדומה לאתר: כהה, זהב-ורוד, עברית, RTL, וגודל נייד</p>
+
+    <div class="grid">
+      <div>
+        <div class="label">📬 אצל הלקוחה</div>
+        <div class="mail-card">
+          <div class="mail-header">
+            מאת: דינה שוורץ - צילום<br>
+            נושא: <b>התמונות שלך מהצילום 📸 (חלק 1 מתוך 2)</b>
+          </div>
+          <div class="mail-body">
+            <h2>שלום משפחת כהן,</h2>
+            <div>התמונות מהצילום מוכנות לבחירה! 🌸</div>
+            <div class="box">
+              ✔ כלולות בחבילה: <b>20 תמונות</b><br>
+              ➕ כל תמונה נוספת: <b>40 ₪</b><br>
+              📅 נשמח לתשובה עד: <b>כ"ה בתשרי</b>
+            </div>
+            <div class="how">
+              <b>איך בוחרים?</b><br>
+              פשוט <b>משיבים למייל הזה</b> עם המספרים של התמונות שאהבת.<br>
+              לדוגמה: <b dir="ltr">3, 7, 12-15</b>
+            </div>
+            <div class="thumbs" id="thumbs"></div>
+            <div class="part">חלק 1 מתוך 2 · תמונות 1-12 · החלק השני נשלח במייל נפרד</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel settings">
+        <button class="ghost">📧 שליחת התמונות במייל ללקוחה</button>
+        <button class="ghost secondary">✉️ מייל ניסיון אליי</button>
+        <hr class="divider" />
+        <h3 class="mini-title">⌨️ הלקוחה ענתה? הקלידי את המספרים</h3>
+        <textarea id="in" rows="3">3, 7, 12-15, 40</textarea>
+        <div class="result" id="res"></div>
+        <button class="primary" id="save">שמירה כבחירה של הלקוחה</button>
+        <div class="hint">אחרי השמירה זה כאילו היא בחרה בעצמה: המחיר מחושב, והצעד הבא ממשיך אוטומטית.</div>
+      </div>
+    </div>
   </div>
- </div></div>
- <div><div class="label">⚙️ אצלך, בדף הגלריה</div><div class="set">
-  <button class="btn2">📧 שליחת התמונות במייל ללקוחה</button>
-  <button class="btn2" style="border-color:var(--border)">✉️ מייל ניסיון אליי (לבדוק שהסינון מעביר)</button>
-  <hr>
-  <h3>⌨️ הלקוחה ענתה? הקלידי את המספרים</h3>
-  <textarea id="in" rows="2">3, 7, 12-15, 40</textarea>
-  <div class="res" id="res"></div>
-  <button class="btn" id="save">שמירה כבחירה של הלקוחה</button>
-  <div class="hint">אחרי השמירה זה כאילו היא בחרה בעצמה: המחיר מחושב, ו"מה הלאה" מתקדם.</div>
- </div></div>
-</div>
-<script>
-const N=24,ks=['a','b','c','d'];const pg=document.getElementById('pg');
-for(let i=1;i<=12;i++)pg.innerHTML+=`<div><div class="im ${ks[i%4]}"></div><b>${i}</b></div>`;
-function parse(s){const ok=new Set(),bad=[];s.split(/[,\s،]+/).filter(Boolean).forEach(p=>{const m=p.match(/^(\d+)-(\d+)$/);if(m){for(let i=+m[1];i<=+m[2];i++)(i>=1&&i<=N?ok.add(i):bad.push(i))}else if(/^\d+$/.test(p)){(+p>=1&&+p<=N)?ok.add(+p):bad.push(p)}else bad.push(p)});return{ok:[...ok].sort((a,b)=>a-b),bad}}
-function r(){const {ok,bad}=parse(document.getElementById('in').value);const extra=Math.max(0,ok.length-20);
-document.getElementById('res').innerHTML=`<div class="ok">✓ נבחרו ${ok.length}: ${ok.join(', ')||'-'}</div>`+(bad.length?`<div class="bad">✗ לא קיימות בגלריה (יש ${N}): ${bad.join(', ')}</div>`:'')+`<div>תשלום נוסף: ${extra*40} ₪</div>`}
-document.getElementById('in').oninput=r;document.getElementById('save').onclick=()=>alert('בתצוגה המקדימה זה לא נשמר - רק הדגמה ✓');r();
-</script></body></html>
+
+  <script>
+    const thumbs = document.getElementById('thumbs');
+    const palette = ['a','b','c','d'];
+    for (let i = 1; i <= 12; i++) {
+      const div = document.createElement('div');
+      div.className = 'thumb';
+      div.innerHTML = `<div class="thumb-art ${palette[(i-1)%4]}"></div><b>${i}</b>`;
+      thumbs.appendChild(div);
+    }
+
+    function parseSelection(input) {
+      const ok = new Set();
+      const bad = [];
+      const total = 24;
+      const tokens = input.split(/[\s,،]+/).filter(Boolean);
+
+      tokens.forEach(token => {
+        const range = token.match(/^(\d+)-(\d+)$/);
+        if (range) {
+          const start = Number(range[1]);
+          const end = Number(range[2]);
+          if (start > end) {
+            bad.push(token);
+            return;
+          }
+          for (let i = start; i <= end; i++) {
+            if (i >= 1 && i <= total) ok.add(i);
+            else bad.push(String(i));
+          }
+          return;
+        }
+
+        if (/^\d+$/.test(token)) {
+          const n = Number(token);
+          if (n >= 1 && n <= total) ok.add(n);
+          else bad.push(token);
+        } else {
+          bad.push(token);
+        }
+      });
+
+      return {
+        ok: [...ok].sort((a, b) => a - b),
+        bad: [...new Set(bad)]
+      };
+    }
+
+    function renderPreview() {
+      const value = document.getElementById('in').value;
+      const { ok, bad } = parseSelection(value);
+      const extraPrice = Math.max(0, ok.length - 20) * 40;
+      const extraHtml = bad.length
+        ? `<div class="bad">✗ לא קיימות בגלריה: ${bad.join(', ')}</div>`
+        : '';
+      document.getElementById('res').innerHTML = `
+        <div class="ok">✓ נבחרו ${ok.length}: ${ok.join(', ') || '-'}</div>
+        ${extraHtml}
+        <div>תשלום נוסף: ${extraPrice} ₪</div>
+      `;
+    }
+
+    document.getElementById('in').addEventListener('input', renderPreview);
+    document.getElementById('save').addEventListener('click', () => alert('תצוגה מקדימה בלבד - אין שמירה אמיתית כאן.'));
+    renderPreview();
+  </script>
+</body>
+</html>
+

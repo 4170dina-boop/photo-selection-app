@@ -80,22 +80,35 @@ export default function GalleryNavBar({
     borderColor: active ? accent : theme.border,
     color: active ? accent : theme.textMuted,
     background: active ? `${accent}22` : 'transparent',
+    minHeight: 44,
   });
 
   return (
     <div style={{ padding: '0 1.5rem 0.75rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+      <style>{`
+        .gnav-chip:focus-visible,
+        .gnav-toggle:focus-visible,
+        .gburst-badge:focus-visible,
+        .gburst-close:focus-visible {
+          outline: 2px solid ${accent};
+          outline-offset: 2px;
+          box-shadow: 0 0 0 3px ${accent}44;
+        }
+      `}</style>
       {showChapters && (
         <div
           role="group"
           aria-label={S.chaptersLabel}
           style={{ display: 'flex', gap: '0.4rem', overflowX: 'auto', maxWidth: '100%', paddingBottom: 2, scrollbarWidth: 'thin' }}
         >
-          <button aria-pressed={chapterFilter === 'all'} onClick={() => onChapterFilter('all')} style={chipStyle(chapterFilter === 'all')}>
+          <button className="gnav-chip" type="button" aria-pressed={chapterFilter === 'all'} onClick={() => onChapterFilter('all')} style={chipStyle(chapterFilter === 'all')}>
             {S.all}
           </button>
           {progress.map((c) => (
             <button
               key={c.id}
+              type="button"
+              className="gnav-chip"
               aria-pressed={chapterFilter === c.id}
               onClick={() => onChapterFilter(c.id)}
               title={S.progress(c.viewed, c.total, c.selected)}
@@ -120,7 +133,7 @@ export default function GalleryNavBar({
             </button>
           ))}
           {withoutChapter > 0 && (
-            <button aria-pressed={chapterFilter === NO_CHAPTER} onClick={() => onChapterFilter(NO_CHAPTER)} style={chipStyle(chapterFilter === NO_CHAPTER)}>
+            <button className="gnav-chip" type="button" aria-pressed={chapterFilter === NO_CHAPTER} onClick={() => onChapterFilter(NO_CHAPTER)} style={chipStyle(chapterFilter === NO_CHAPTER)}>
               {S.noChapter} (<bdi dir="ltr">{withoutChapter}</bdi>)
             </button>
           )}
@@ -128,8 +141,8 @@ export default function GalleryNavBar({
       )}
 
       {hasBursts && (
-        <label title={S.hideSimilarHint} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: 12, color: theme.textMuted, cursor: 'pointer' }}>
-          <input type="checkbox" checked={hideSimilar} onChange={(e) => onHideSimilar(e.target.checked)} />
+        <label title={S.hideSimilarHint} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: 12, color: theme.textMuted, cursor: 'pointer', minHeight: 44 }}>
+          <input className="gnav-toggle" type="checkbox" checked={hideSimilar} onChange={(e) => onHideSimilar(e.target.checked)} />
           {S.hideSimilar}
         </label>
       )}
@@ -143,6 +156,7 @@ export function BurstBadge({ count, onOpen }: { count: number; onOpen: () => voi
   return (
     <button
       type="button"
+      className="gburst-badge"
       onClick={(e) => {
         e.stopPropagation();
         onOpen();
@@ -153,6 +167,7 @@ export function BurstBadge({ count, onOpen }: { count: number; onOpen: () => voi
         position: 'absolute', bottom: 34, left: 8, zIndex: 1, cursor: 'pointer',
         background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 11, lineHeight: 1.4,
         padding: '2px 8px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.35)', whiteSpace: 'nowrap',
+        minHeight: 44,
       }}
     >
       {S.similarBadge(count)}
@@ -211,12 +226,16 @@ export function BurstChooser({ photos, photoNumberById, isSelected, onPick, onCl
           {onPick && <div style={{ fontSize: 12, opacity: 0.7 }}>{S.chooserHint}</div>}
         </div>
         <button
+          type="button"
+          className="gburst-close"
           onClick={onClose}
           aria-label={S.close}
           title={S.close}
           style={{
             width: 40, height: 40, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
             background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 18, cursor: 'pointer',
+            minWidth: 44,
+            minHeight: 44,
           }}
         >
           ✕
@@ -259,6 +278,7 @@ export function BurstChooser({ photos, photoNumberById, isSelected, onPick, onCl
                   <span style={{ color: accent, fontWeight: 'bold', fontSize: 14 }}>{S.picked}</span>
                 ) : (
                   <button
+                    type="button"
                     onClick={() => onPick(photo.id)}
                     style={{
                       background: accent, color: accentText, border: 'none', borderRadius: 4,

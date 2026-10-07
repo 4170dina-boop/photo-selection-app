@@ -78,6 +78,13 @@ export function parseAdditionalInviteEmails(
   return { ok: true, value: emails };
 }
 
+interface EmailAttachment {
+  filename: string;
+  content: string;
+  contentType?: string;
+  cid?: string;
+}
+
 interface SendOptions {
   // שם התצוגה שמופיע אצל הנמען לצד הכתובת (למשל '"סטודיו דינה" <onboarding@resend.dev>') -
   // הכתובת עצמה נשארת קבועה (עד שיהיה דומיין מאומת ב-Resend), אבל שם התצוגה
@@ -87,6 +94,7 @@ interface SendOptions {
   // כדי שתשובה של לקוחה על המייל תגיע ישירות לתיבת הדואר של הצלמת, לא
   // לכתובת השליחה הטכנית של Resend.
   replyTo?: string;
+  attachments?: EmailAttachment[];
 }
 
 // שם התצוגה נכנס לכותרת From בתוך מרכאות - מרכאות/לוכסן הפוך/סוגריים
@@ -99,6 +107,157 @@ export function sanitizeDisplayName(name: string): string {
 export function buildFromHeader(fromAddress: string, fromName?: string): string {
   const name = fromName ? sanitizeDisplayName(fromName) : '';
   return name ? `"${name}" <${fromAddress}>` : fromAddress;
+}
+
+export function parseSelectionNumbers(input: string, totalPhotos: number, includedPhotos?: number): {
+  selected: number[];
+  invalid: string[];
+  extraPhotos: number;
+  totalValidSelected: number;
+} {
+  const seen = new Set<number>();
+  const invalid: string[] = [];
+  const tokens = (input || '').split(/[\s,،]+/).filter(Boolean);
+
+  for (const token of tokens) {
+    const range = token.match(/^(\d+)-(\d+)$/);
+    if (range) {
+      const start = Number(range[1]);
+      const end = Number(range[2]);
+      if (start > end) {
+        invalid.push(token);
+        continue;
+      }
+      for (let n = start; n <= end; n++) {
+        if (n >= 1 && n <= totalPhotos) seen.add(n);
+        else invalid.push(String(n));
+      }
+      continue;
+    }
+
+    if (/^\d+$/.test(token)) {
+      const n = Number(token);
+      if (n >= 1 && n <= totalPhotos) seen.add(n);
+      else invalid.push(token);
+    } else if (token.trim()) {
+      invalid.push(token);
+    }
+  }
+
+  const selected = [...seen].sort((a, b) => a - b);
+  const totalValidSelected = selected.length;
+  const extraPhotos = typeof includedPhotos === 'number' ? Math.max(0, totalValidSelected - includedPhotos) : 0;
+  return {
+    selected,
+    invalid: [...new Set(invalid)],
+    extraPhotos,
+    totalValidSelected,
+  };
+}
+
+export function extractSelectionFromReplyText(input: string, totalPhotos: number, includedPhotos?: number): {
+  selected: number[];
+  invalid: string[];
+  extraPhotos: number;
+  totalValidSelected: number;
+} {
+  const cleaned = (input ?? '')
+    .replace(/https?:\/\/[^\s]+/gi, ' ')
+    .replace(/www\.[^\s]+/gi, ' ')
+    .replace(/[^0-9,\-\s]/g, ' ')
+    .trim();
+
+  if (!cleaned) {
+    return { selected: [], invalid: [], extraPhotos: 0, totalValidSelected: 0 };
+  }
+
+  const tokens = cleaned
+    .split(/[\s,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .filter((value) => /^\d+(?:-\d+)?$/.test(value));
+
+  return parseSelectionNumbers(tokens.join(', '), totalPhotos, includedPhotos);
+}
+
+function dataUrlToBase64(dataUrl: string): string {
+  const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  if (!match) return dataUrl;
+  return match[2];
+}
+
+export interface SelectionEmailPhoto {
+  number: number;
+  filename: string;
+  contentType?: string;
+  dataUrl?: string;
+  base64Content?: string;
+}
+
+export async function sendSelectionEmailWithInlinePhotos(params: {
+  to: string;
+  clientName: string;
+  businessName: string;
+  includedPhotos: number;
+  extraPhotoPrice: number;
+  photos: SelectionEmailPhoto[];
+  dueDate: string;
+  replyTo?: string;
+}): Promise<SendResult> {
+  const htmlPhotos = params.photos
+    .map((photo) => {
+      const cid = `photo-${photo.number}`;
+      return `<div style="text-align:center; margin: 0 0 12px;">
+        <img src="cid:${cid}" alt="תמונה ${photo.number}" style="display:block; width:100%; max-width:180px; border-radius:8px; margin:0 auto 8px; border:1px solid #e9dfd5;" />
+        <div style="font-size:18px; font-weight:700; color:#2e2e2e;">${escapeHtml(String(photo.number))}</div>
+      </div>`;
+    })
+    .join('');
+
+  const extraPhotos = Math.max(0, params.photos.length - params.includedPhotos);
+  const totalText = params.photos.length > 0 ? `נבחרו ${params.photos.length} תמונות` : 'לא נבחרו תמונות עדיין';
+  const html = wrapEmailHtml({
+    headerText: params.businessName,
+    bodyHtml: `
+      <p style="margin: 0 0 8px;">שלום ${escapeHtml(params.clientName)},</p>
+      <p style="margin: 0 0 8px;">התמונות מהצילום מוכנות לבחירה! 🌸</p>
+      <div style="background:#faf4f2;border:1px solid #efd7d3;border-radius:8px;padding:10px 12px;line-height:1.8;margin:12px 0 14px;">
+        <div>✔ כלולות בחבילה: <b>${escapeHtml(String(params.includedPhotos))} תמונות</b></div>
+        <div>➕ כל תמונה נוספת: <b>${escapeHtml(String(params.extraPhotoPrice))} ₪</b></div>
+        <div>📅 נשמח לתשובה עד: <b>${escapeHtml(params.dueDate)}</b></div>
+      </div>
+      <div style="background:#fff8e6;border:1px solid #ebd7a0;border-radius:8px;padding:10px 12px;line-height:1.7;margin-bottom:14px;">
+        <b>איך בוחרים?</b><br>
+        פשוט משיבים למייל הזה עם המספרים של התמונות שאהבת.<br>
+        לדוגמה: <b dir="ltr">3, 7, 12-15</b>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;">${htmlPhotos}</div>
+      <div style="text-align:center; color:#6c6c6c; font-size:12px; margin-top:12px;">${escapeHtml(totalText)}</div>
+      <div style="margin-top:10px; font-size:13px; color:#4a4238;">תשלום נוסף: <b>${escapeHtml(String(extraPhotos * params.extraPhotoPrice))} ₪</b></div>
+    `,
+  });
+
+  const attachments = params.photos.map((photo) => {
+    const content = photo.base64Content ?? (photo.dataUrl ? dataUrlToBase64(photo.dataUrl) : '');
+    const cid = `photo-${photo.number}`;
+    return {
+      filename: photo.filename,
+      content,
+      contentType: photo.contentType || 'image/jpeg',
+      cid,
+    };
+  });
+
+  return sendEmail(
+    params.to,
+    `התמונות שלך מהצילום 📸`,
+    html,
+    {
+      fromName: params.businessName,
+      replyTo: params.replyTo,
+      attachments,
+    }
+  );
 }
 
 // כמה לחכות לפני ניסיון חוזר יחיד אחרי 429 (rate limit של Resend) - לפי
@@ -146,6 +305,14 @@ async function sendEmail(to: string, subject: string, html: string, options: Sen
 
     const body: Record<string, unknown> = { from, to, subject, html };
     if (options.replyTo) body.reply_to = options.replyTo;
+    if (options.attachments && options.attachments.length > 0) {
+      body.attachments = options.attachments.map((attachment) => ({
+        filename: attachment.filename,
+        content: attachment.content,
+        ...(attachment.contentType ? { content_type: attachment.contentType } : {}),
+        ...(attachment.cid ? { cid: attachment.cid } : {}),
+      }));
+    }
     const payload = JSON.stringify(body);
 
     let res = await postToResend(payload);

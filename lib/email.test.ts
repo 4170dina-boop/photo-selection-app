@@ -13,6 +13,56 @@ describe('lib/email', () => {
     vi.resetModules();
   });
 
+  it('parses mixed selection ranges and invalid values for the owner selection email flow', async () => {
+    const { parseSelectionNumbers } = await import('./email');
+    const result = parseSelectionNumbers('3, 7, 12-15, 40, 99, hello, 2-2', 24, 20);
+
+    expect(result.selected).toEqual([2, 3, 7, 12, 13, 14, 15]);
+    expect(result.invalid).toEqual(['40', '99', 'hello']);
+    expect(result.extraPhotos).toBe(0);
+    expect(result.totalValidSelected).toBe(7);
+  });
+
+  it('extracts valid photo numbers from a client reply email and ignores website text', async () => {
+    const { extractSelectionFromReplyText } = await import('./email');
+    const result = extractSelectionFromReplyText('היי!\nמספרים: 3, 7, 12-15, 44, 999\nhttps://example.com/abc', 24, 20);
+
+    expect(result.selected).toEqual([3, 7, 12, 13, 14, 15]);
+    expect(result.invalid).toEqual(['44', '999']);
+    expect(result.extraPhotos).toBe(0);
+    expect(result.totalValidSelected).toBe(6);
+  });
+
+  it('sends inline selection emails with cid image attachments and no website links in the HTML', async () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    const { sendSelectionEmailWithInlinePhotos } = await import('./email');
+    const result = await sendSelectionEmailWithInlinePhotos({
+      to: 'client@example.com',
+      clientName: 'משפחת כהן',
+      businessName: 'דינה שוורץ',
+      includedPhotos: 20,
+      extraPhotoPrice: 40,
+      photos: [
+        { number: 3, filename: '3.jpg', contentType: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,AAA=' },
+        { number: 7, filename: '7.jpg', contentType: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,BBB=' },
+      ],
+      dueDate: 'כ"ה בתשרי',
+    });
+
+    expect(result.sent).toBe(true);
+    const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string);
+    expect(body.html).toContain('cid:photo-3');
+    expect(body.html).toContain('cid:photo-7');
+    expect(body.html).not.toContain('http://');
+    expect(body.attachments).toHaveLength(2);
+    expect(body.attachments[0].cid).toBe('photo-3');
+  });
+
   it('skips sending (no crash) when RESEND_API_KEY is not configured - matches how app/api/cron/tick keeps working without email set up', async () => {
     delete process.env.RESEND_API_KEY;
     vi.resetModules();

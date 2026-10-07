@@ -11,6 +11,7 @@ import ClientPayButton from '@/components/ClientPayButton';
 import { resolveClientPriceDisplay, type ClientPackageInfo } from '@/lib/clientPricing';
 import GalleryNavBar, { BurstBadge, BurstChooser } from '@/components/GalleryNavBar';
 import { applyNavFilters, burstMembers } from '@/lib/galleryNav';
+import { makeInitialVisiblePhotoIds, mergeVisiblePhotoIds, syncVisiblePhotoIds } from '@/lib/galleryLazyLoad';
 import type { Chapter } from '@/lib/chapters';
 import LanguagePicker from '@/components/LanguagePicker';
 import GalleryMoreMenu, { type MoreMenuItem } from '@/components/GalleryMoreMenu';
@@ -82,6 +83,7 @@ import {
   viewedProgress,
 } from '@/lib/galleryReview';
 import { normalizeGender, type Gender, type ViewerGender } from '@/lib/gender';
+import { clampComparePan, clampCompareScale } from '@/lib/compareZoom';
 
 interface GalleryPageProps {
   params: { id: string };
@@ -502,6 +504,14 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [pendingCount, setPendingCount] = useState(0);
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [compareZoomState, setCompareZoomState] = useState<Record<string, { scale: number; x: number; y: number }>>({});
+  const compareDragStartRef = useRef<Record<string, { pointerId: number; startX: number; startY: number; originX: number; originY: number }>>({});
+  function resetCompareZoom(id: string) {
+    setCompareZoomState((prev) => ({
+      ...prev,
+      [id]: { scale: 1, x: 0, y: 0 },
+    }));
+  }
   // האם תצוגת ההשוואה במסך מלא פתוחה כרגע - נפרד בכוונה מ"האם נבחרו >= 2
   // תמונות": בלי ההפרדה הזו, ברגע שנבחרת תמונה שנייה התצוגה (fixed, inset:0)
   // הייתה נפתחת אוטומטית ומכסה את כל הגריד, ולא הייתה שום דרך לחזור אליו
@@ -1608,6 +1618,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 })}
               </div>
               <button
+                type="button"
                 onClick={() => {
                   if (guestGender) confirmIdentity({ displayName: guestNameInput, gender: guestGender });
                 }}
@@ -1616,7 +1627,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               >
                 {identifying ? trG(guestGender, 'id.joining') : tr('id.join')}
               </button>
-              <button onClick={() => setJoiningAsGuest(false)} style={{ ...outlineButtonStyle, width: '100%' }}>
+              <button type="button" onClick={() => setJoiningAsGuest(false)} style={{ ...outlineButtonStyle, width: '100%' }}>
                 {tr('common.back')}
               </button>
             </>
@@ -2317,6 +2328,30 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       : photos;
   const isMySelected = (id: string) => myStatuses[id] === 'selected';
   const visiblePhotos = applyNavFilters(filteredPhotos, { chapterFilter, hideSimilar, isSelected: isMySelected });
+  const [visiblePhotoIds, setVisiblePhotoIds] = useState<Set<string>>(() => makeInitialVisiblePhotoIds(visiblePhotos.map((p) => p.id), 18));
+  useEffect(() => {
+    const allowed = new Set(visiblePhotos.map((p) => p.id));
+    setVisiblePhotoIds((current) => syncVisiblePhotoIds(current, allowed, visiblePhotos.slice(0, 18).map((p) => p.id)));
+  }, [visiblePhotos]);
+  useEffect(() => {
+    if (typeof window === 'undefined' || visiblePhotos.length === 0) return;
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-gallery-photo-id]'));
+    if (cards.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const ids = entries
+          .filter((entry) => entry.isIntersecting)
+          .map((entry) => entry.target.getAttribute('data-gallery-photo-id'))
+          .filter((id): id is string => !!id);
+        if (ids.length === 0) return;
+        const allowed = new Set(visiblePhotos.map((p) => p.id));
+        setVisiblePhotoIds((current) => syncVisiblePhotoIds(current, allowed, ids));
+      },
+      { rootMargin: '180px 0px 180px 0px', threshold: 0.01 }
+    );
+    cards.forEach((card) => observer.observe(card));
+    return () => observer.disconnect();
+  }, [visiblePhotos]);
   const burstsById = burstMembers(photos);
   const owner = participants.find((p) => p.isOwner);
   // מספר רץ קבוע לכל תמונה (מקום ברשימה המלאה, לא ברשימה המסוננת) - מוצג
@@ -2436,7 +2471,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               {tr('welcome.gifts', { count: giftPhotos.length })}
             </p>
           )}
-          <button onClick={dismissWelcome} style={{ ...primaryButtonStyle, width: '100%' }}>
+          <button type="button" onClick={dismissWelcome} style={{ ...primaryButtonStyle, width: '100%' }}>
             {tr('welcome.start')}
           </button>
         </div>
@@ -2497,6 +2532,19 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         /* תמונות הגריד נכנסות בהדרגה כשהן נטענות (data-loaded מ-onLoad/onError) */
         .gimg { opacity: 0; transition: opacity 0.35s ease; }
         .gimg[data-loaded="true"] { opacity: 1; }
+        button:focus-visible,
+        input:focus-visible,
+        textarea:focus-visible,
+        select:focus-visible,
+        [role="button"]:focus-visible,
+        [tabindex]:focus-visible {
+          outline: 2px solid ${accent};
+          outline-offset: 2px;
+          box-shadow: 0 0 0 3px ${accent}44;
+        }
+        button, input, textarea, select {
+          min-height: 44px;
+        }
         @media (prefers-reduced-motion: reduce) {
           .gh, .gh-ring, .gh-ring-inner, .gimg { transition: none; }
         }
@@ -2792,7 +2840,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             <p style={{ color: theme.textMuted, fontSize: 14, margin: '0 0 1.25rem' }}>
               {tr('reveal.sub', { count: deliveredPhotos.length })}
             </p>
-            <button onClick={closeReveal} autoFocus style={{ ...primaryButtonStyle, minHeight: 44, padding: '0.7rem 1.6rem', fontSize: 15 }}>
+            <button
+              type="button"
+              onClick={closeReveal}
+              aria-label={tr('reveal.cta')}
+              autoFocus
+              style={{ ...primaryButtonStyle, minHeight: 44, padding: '0.7rem 1.6rem', fontSize: 15 }}
+            >
               {tr('reveal.cta')}
             </button>
           </div>
@@ -2817,8 +2871,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               </p>
             </div>
             <button
+              type="button"
               onClick={handleDownloadAllDelivered}
               disabled={downloadingZip}
+              aria-label={tr('dl.zipAll')}
               style={{ ...primaryButtonStyle, opacity: downloadingZip ? 0.6 : 1 }}
             >
               {downloadingZip ? tr('dl.preparingZip') : tr('dl.zipAll')}
@@ -2927,6 +2983,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           {compareIds.map((id) => {
             const photo = photos.find((p) => p.id === id);
             if (!photo || !photo.fullUrl) return null;
+            const compareZoom = compareZoomState[id] ?? { scale: 1, x: 0, y: 0 };
+            const intensity = compareZoom.scale > 1 ? 'zoom-out' : 'zoom-in';
+
             return (
               <div
                 key={id}
@@ -2936,20 +2995,105 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   maxWidth: `${Math.min(45, Math.floor(88 / compareIds.length))}%`,
                 }}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={photo.fullUrl}
-                  alt=""
-                  draggable={false}
-                  decoding="async"
-                  onError={() => handleImageError(photo.id)}
-                  onContextMenu={(e) => e.preventDefault()}
-                  className={compareIds.length > 2 ? 'vh-45' : 'vh-80'}
+                <div
                   style={{
-                    maxWidth: '100%', objectFit: 'contain', borderRadius: 6,
-                    WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
+                    position: 'relative', width: '100%', minWidth: 0,
+                    height: compareIds.length > 2 ? '38vh' : '70vh',
+                    overflow: compareZoom.scale > 1 ? 'visible' : 'hidden',
+                    borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: 'rgba(255,255,255,0.03)', touchAction: 'none',
                   }}
-                />
+                  onWheel={(e) => {
+                    e.preventDefault();
+                    const nextScale = clampCompareScale(compareZoom.scale + (e.deltaY > 0 ? -0.18 : 0.18));
+                    setCompareZoomState((prev) => ({
+                      ...prev,
+                      [id]: {
+                        scale: nextScale,
+                        x: clampComparePan(prev[id]?.x ?? 0, nextScale),
+                        y: clampComparePan(prev[id]?.y ?? 0, nextScale),
+                      },
+                    }));
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={photo.fullUrl}
+                    alt=""
+                    draggable={false}
+                    decoding="async"
+                    onError={() => handleImageError(photo.id)}
+                    onContextMenu={(e) => e.preventDefault()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const current = compareZoomState[id] ?? { scale: 1, x: 0, y: 0 };
+                      const nextScale = current.scale > 1 ? 1 : 2.1;
+                      setCompareZoomState((prev) => ({
+                        ...prev,
+                        [id]: { scale: clampCompareScale(nextScale), x: 0, y: 0 },
+                      }));
+                    }}
+                    onPointerDown={(e) => {
+                      if (compareZoom.scale <= 1) return;
+                      e.preventDefault();
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                      compareDragStartRef.current[id] = {
+                        pointerId: e.pointerId,
+                        startX: e.clientX,
+                        startY: e.clientY,
+                        originX: compareZoom.x,
+                        originY: compareZoom.y,
+                      };
+                    }}
+                    onPointerMove={(e) => {
+                      const dragState = compareDragStartRef.current[id];
+                      if (!dragState || compareZoom.scale <= 1 || dragState.pointerId !== e.pointerId) return;
+                      const dx = e.clientX - dragState.startX;
+                      const dy = e.clientY - dragState.startY;
+                      setCompareZoomState((prev) => ({
+                        ...prev,
+                        [id]: {
+                          scale: clampCompareScale(prev[id]?.scale ?? compareZoom.scale),
+                          x: clampComparePan(dragState.originX + dx, clampCompareScale(prev[id]?.scale ?? compareZoom.scale)),
+                          y: clampComparePan(dragState.originY + dy, clampCompareScale(prev[id]?.scale ?? compareZoom.scale)),
+                        },
+                      }));
+                    }}
+                    onPointerUp={(e) => {
+                      delete compareDragStartRef.current[id];
+                      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+                    }}
+                    onPointerLeave={() => {
+                      delete compareDragStartRef.current[id];
+                    }}
+                    className={compareIds.length > 2 ? 'vh-45' : 'vh-80'}
+                    style={{
+                      width: '100%', height: '100%', objectFit: 'contain', borderRadius: 6,
+                      transform: `translate(${compareZoom.x}px, ${compareZoom.y}px) scale(${compareZoom.scale})`,
+                      transformOrigin: 'center center',
+                      transition: compareZoom.scale === 1 ? 'transform 0.18s ease-out' : 'none',
+                      cursor: intensity,
+                      boxShadow: compareZoom.scale > 1 ? '0 0 0 1px rgba(255,255,255,0.2), 0 16px 32px rgba(0,0,0,0.35)' : 'none',
+                      WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
+                    }}
+                  />
+                  {compareZoom.scale > 1 && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        resetCompareZoom(id);
+                      }}
+                      style={{
+                        position: 'absolute', bottom: 10, left: 10, zIndex: 2,
+                        background: 'rgba(0,0,0,0.55)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)',
+                        borderRadius: 999, padding: '0.4rem 0.7rem', fontSize: 12, cursor: 'pointer',
+                      }}
+                    >
+                      רענן
+                    </button>
+                  )}
+                </div>
                 {!isLocked && myParticipant && !isGiftPhoto(id) && (
                   <button
                     onClick={async () => {
@@ -3088,19 +3232,19 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
             <div style={{ display: 'flex', justifyContent: 'center', gap: '1.5rem', paddingTop: '1rem' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <button onClick={() => handleSwipeAction('skip')} aria-label={tr('sw.skipAria')} style={swipeActionBtn('rgba(255,255,255,0.08)', 'rgba(255,255,255,0.3)')}>
+                <button type="button" onClick={() => handleSwipeAction('skip')} aria-label={tr('sw.skipAria')} style={swipeActionBtn('rgba(255,255,255,0.08)', 'rgba(255,255,255,0.3)')}>
                   👎
                 </button>
                 <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>{tr('sw.skip')}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <button onClick={() => handleSwipeAction('maybe')} aria-label={tr('sw.maybeAria')} style={swipeActionBtn(`${theme.green}33`, theme.green)}>
+                <button type="button" onClick={() => handleSwipeAction('maybe')} aria-label={tr('sw.maybeAria')} style={swipeActionBtn(`${theme.green}33`, theme.green)}>
                   🤔
                 </button>
                 <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>{tr('sw.maybe')}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <button onClick={() => handleSwipeAction('selected')} aria-label={tr('sw.pickAria')} style={swipeActionBtn(`${accent}33`, accent)}>
+                <button type="button" onClick={() => handleSwipeAction('selected')} aria-label={tr('sw.pickAria')} style={swipeActionBtn(`${accent}33`, accent)}>
                   👍
                 </button>
                 <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>{tr('sw.picked')}</span>
@@ -3165,14 +3309,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               {canMark ? tr('en.kbdMark') : ''}
             </span>
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 setEnlargedId(null);
               }}
               title={tr('common.close')}
+              aria-label={tr('common.close')}
               style={{
                 position: 'absolute', top: 16, insetInlineEnd: 16, zIndex: 51,
-                width: 40, height: 40, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                width: 44, height: 44, minWidth: 44, minHeight: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
                 background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 18, cursor: 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}
@@ -3181,14 +3327,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             </button>
             {hasPrev && (
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   navigateEnlarged(-1);
                 }}
                 title={tr('common.prev')}
+                aria-label={tr('common.prev')}
                 style={{
                   position: 'absolute', top: '50%', insetInlineStart: 16, transform: 'translateY(-50%)', zIndex: 51,
-                  width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                  width: 44, height: 44, minWidth: 44, minHeight: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
                   background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 20, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
@@ -3198,14 +3346,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             )}
             {hasNext && (
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   navigateEnlarged(1);
                 }}
                 title={tr('common.next')}
+                aria-label={tr('common.next')}
                 style={{
                   position: 'absolute', top: '50%', insetInlineEnd: 16, transform: 'translateY(-50%)', zIndex: 51,
-                  width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                  width: 44, height: 44, minWidth: 44, minHeight: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
                   background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 20, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
@@ -3392,16 +3542,19 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             {/* יציאה זמינה תמיד מכל תמונה בסליידשואו - זו לא אמורה להיות
                 חוויה כפויה, הלקוחה יכולה לצאת באמצע בלי לעבור על הכל. */}
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 setSlideshowActive(false);
               }}
               title={tr('ss.exitTitle')}
+              aria-label={tr('ss.exitTitle')}
               style={{
                 position: 'absolute', top: 16, insetInlineEnd: 16, zIndex: 57,
                 display: 'flex', alignItems: 'center', gap: '0.4rem',
                 padding: '0.5rem 1rem', borderRadius: 20, border: '1px solid rgba(255,255,255,0.4)',
                 background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 14, cursor: 'pointer',
+                minHeight: 44, minWidth: 44,
               }}
             >
               {tr('ss.exit')}
@@ -3419,14 +3572,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
             {hasPrev && (
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   navigateSlideshow(-1);
                 }}
                 title={tr('common.prev')}
+                aria-label={tr('common.prev')}
                 style={{
                   position: 'absolute', top: '50%', insetInlineStart: 16, transform: 'translateY(-50%)', zIndex: 56,
-                  width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                  width: 44, height: 44, minWidth: 44, minHeight: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
                   background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 20, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
@@ -3436,14 +3591,16 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             )}
             {hasNext && (
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   navigateSlideshow(1);
                 }}
                 title={tr('common.next')}
+                aria-label={tr('common.next')}
                 style={{
                   position: 'absolute', top: '50%', insetInlineEnd: 16, transform: 'translateY(-50%)', zIndex: 56,
-                  width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                  width: 44, height: 44, minWidth: 44, minHeight: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
                   background: 'rgba(255,255,255,0.12)', color: '#fff', fontSize: 20, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
@@ -3586,8 +3743,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               <bdi dir="ltr">{noteDraft.length}/{NOTE_MAX_LENGTH}</bdi>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
-              <button onClick={saveNote} style={{ ...goldButtonStyle, padding: '0.5rem 1rem' }}>{tr('common.save')}</button>
-              <button onClick={() => setNoteEditingId(null)} style={{ ...outlineButtonStyle, padding: '0.5rem 1rem' }}>{tr('common.cancel')}</button>
+              <button type="button" onClick={saveNote} style={{ ...goldButtonStyle, padding: '0.5rem 1rem' }}>{tr('common.save')}</button>
+              <button type="button" onClick={() => setNoteEditingId(null)} style={{ ...outlineButtonStyle, padding: '0.5rem 1rem' }}>{tr('common.cancel')}</button>
             </div>
           </div>
         </div>
@@ -3753,6 +3910,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             <div
               key={photo.id}
               id={`photo-card-${photo.id}`}
+              data-gallery-photo-id={photo.id}
               role="group"
               aria-label={`${photoLabel}, ${statusLabel}${hasNote ? tr('card.hasNote') : ''}`}
               onContextMenu={(e) => e.preventDefault()} // חסימת קליק ימני - הרתעה בלבד, לא הגנה אמיתית
@@ -3921,12 +4079,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     // thumbnailUrl = תמונת הגריד הקטנה (480px) מה-API, או התצוגה הגדולה
                     // לתמונות ישנות. בלי srcset לתצוגה הגדולה: 480px כבר מכסה אריח של
                     // ~200px ב-x2, ו-2x היה מוריד את ה-2000px כמעט בכל טלפון.
-                    src={photo.thumbnailUrl}
+                    src={visiblePhotoIds.has(photo.id) ? photo.thumbnailUrl : undefined}
                     alt=""
                     draggable={false}
                     loading="lazy"
                     decoding="async"
                     className="gimg"
+                    data-loaded={visiblePhotoIds.has(photo.id) ? 'true' : 'false'}
                     onLoad={markImageLoaded}
                     onError={(e) => {
                       markImageLoaded(e);
@@ -3987,7 +4146,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 <span role="status" aria-live="polite" style={{ color: theme.successText, fontSize: 14 }}>
                   {rich('bar.countdown', { n: <bdi dir="ltr">{finishCountdown}</bdi> })}
                 </span>
-                <button onClick={cancelFinish} style={{ ...outlineButtonStyle, minHeight: 40, padding: '0.3rem 1rem' }}>
+                <button type="button" onClick={cancelFinish} aria-label={tr('bar.undo')} style={{ ...outlineButtonStyle, minHeight: 40, padding: '0.3rem 1rem' }}>
                   {tr('bar.undo')}
                 </button>
               </>
@@ -3996,13 +4155,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 <span role="alert" style={{ color: theme.errorText, fontSize: 14 }}>{tr('bar.notSent')}</span>
                 <span style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
+                    type="button"
                     onClick={() => submitFinish()}
                     disabled={finishing}
+                    aria-label={finishing ? tr('bar.sending') : tr('bar.retry')}
                     style={{ ...primaryButtonStyle, minHeight: 40, padding: '0.3rem 1rem', opacity: finishing ? 0.6 : 1 }}
                   >
                     {finishing ? tr('bar.sending') : tr('bar.retry')}
                   </button>
-                  <button onClick={cancelFinish} disabled={finishing} style={{ ...outlineButtonStyle, minHeight: 40, padding: '0.3rem 0.9rem' }}>
+                  <button type="button" onClick={cancelFinish} disabled={finishing} aria-label={tr('common.cancel')} style={{ ...outlineButtonStyle, minHeight: 40, padding: '0.3rem 0.9rem' }}>
                     {tr('common.cancel')}
                   </button>
                 </span>

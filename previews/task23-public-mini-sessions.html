@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>הזמנה למיני-סשן</title>
+    <style>
+      :root {
+        --bg: #0f1626;
+        --panel: #161c2d;
+        --panel-input: #1b2236;
+        --border: rgba(232,224,210,0.11);
+        --text: #efe8db;
+        --muted: rgba(239,232,219,0.62);
+        --gold: #c98f89;
+        --gold-bright: #e3b3ac;
+        --gold-text: #20120f;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(180deg, #0f1626 0%, #1a1320 100%);
+        color: var(--text);
+        font-family: Arial, sans-serif;
+        padding: 24px;
+      }
+      .phone {
+        width: min(100%, 400px);
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        overflow: hidden;
+        box-shadow: 0 25px 60px rgba(0,0,0,0.35);
+      }
+      .header {
+        padding: 18px 20px 14px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(201,143,137,0.08);
+      }
+      .brand { margin: 0; font-size: 22px; }
+      .body { padding: 18px; }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 16px;
+        margin-bottom: 14px;
+      }
+      .label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      .field, select, textarea, button {
+        width: 100%;
+        font: inherit;
+      }
+      .field, select, textarea {
+        background: var(--panel-input);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 10px;
+      }
+      textarea { min-height: 70px; resize: vertical; }
+      button {
+        background: linear-gradient(135deg, var(--gold-bright), var(--gold));
+        color: var(--gold-text);
+        border: none;
+        border-radius: 10px;
+        padding: 12px;
+        font-weight: 700;
+      }
+      .slot-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .slot {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 8px 10px;
+        background: rgba(201,143,137,0.08);
+        border: 1px solid rgba(201,143,137,0.4);
+        border-radius: 10px;
+        font-size: 12px;
+        color: #f8d9d3;
+      }
+      .small { font-size: 12px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div class="phone">
+      <div class="header">
+        <h1 class="brand">מיני-סשן</h1>
+      </div>
+      <div class="body">
+        <div class="card">
+          <div class="small" style="margin-bottom: 10px;">יום ראשון · 11 באוקטובר</div>
+          <div class="slot-grid">
+            <span class="slot">09:00</span>
+            <span class="slot">09:20</span>
+            <span class="slot">09:40</span>
+            <span class="slot">10:00</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <label class="label">שם</label>
+          <input class="field" value="שרה כהן" />
+
+          <label class="label">טלפון</label>
+          <input class="field" value="050-1234567" />
+
+          <label class="label">אימייל</label>
+          <input class="field" value="sara@example.com" />
+
+          <label class="label">הזמן שנבחר</label>
+          <select>
+            <option>09:20</option>
+            <option>09:40</option>
+          </select>
+
+          <label class="label">הערות</label>
+          <textarea>רוצה את השעה הכי מוקדמת</textarea>
+
+          <button>שמור הזמנה</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

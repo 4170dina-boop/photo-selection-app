@@ -395,6 +395,58 @@ create policy "photographers see own shoots" on shoots
     ))
   );
 
+-- מיני-סשנים: משבצות זמנים ליום צילום קצר, עם הגבלות שבת/חג והשבתה ידנית.
+-- נראה במערך של "מיני-סשנים" בדשבורד הצלם, ודורש שוב שימוש ב-validateMiniSessionInput
+-- ב-app/api/mini-sessions/route.ts כדי למנוע קלט פגום. שדה date הוא תאריך לוח אזרחי
+-- בישראל (באותו פורמט כמו shoots) ולא שעת זיכרון, כיוון שמסגרת המיני-סשן לא תלויה
+-- באזור זמן, רק בימים אסורים לפי lib/jewishCalendar.ts.
+create table mini_sessions (
+  id uuid primary key default uuid_generate_v4(),
+  photographer_id uuid references photographers(id) on delete cascade not null,
+  date date not null,
+  start_time time not null,
+  end_time time not null,
+  duration_minutes int not null check (duration_minutes between 1 and 180),
+  price numeric(10,2),
+  deposit numeric(10,2),
+  notes text,
+  is_active boolean default true not null,
+  created_at timestamptz default now()
+);
+create index idx_mini_sessions_photographer_date on mini_sessions(photographer_id, date);
+create index idx_mini_sessions_date on mini_sessions(date);
+alter table mini_sessions enable row level security;
+create policy "photographers see own mini sessions" on mini_sessions
+  for all using (photographer_id in (select id from photographers where auth_user_id = auth.uid()))
+  with check (
+    photographer_id in (select id from photographers where auth_user_id = auth.uid())
+  );
+
+-- הזמנות ציבוריות למיני-סשנים: לקוחה בוחרת שעה מתוך משבצת פתוחה, והצלמת
+-- רואה את כל ההזמנות שלה ליום/סשן. כל שורה עונה ל-slot יחיד בתוך המיני-סשן,
+-- כדי למנוע הזמנות כפולות לאותה שעה. set null על mini_session_id אם המיני-סשן נמחק.
+create table mini_session_bookings (
+  id uuid primary key default uuid_generate_v4(),
+  mini_session_id uuid references mini_sessions(id) on delete cascade not null,
+  client_name text not null,
+  phone text not null,
+  email text not null,
+  selected_slot time not null,
+  notes text,
+  status text default 'pending' not null check (status in ('pending', 'confirmed', 'cancelled')),
+  created_at timestamptz default now()
+);
+create unique index mini_session_bookings_unique_slot on mini_session_bookings(mini_session_id, selected_slot)
+  where status <> 'cancelled';
+create index idx_mini_session_bookings_session on mini_session_bookings(mini_session_id, status);
+alter table mini_session_bookings enable row level security;
+create policy "photographers see own mini session bookings" on mini_session_bookings
+  for all using (mini_session_id in (
+    select id from mini_sessions where photographer_id in (
+      select id from photographers where auth_user_id = auth.uid()
+    )
+  ));
+
 -- תאריכים חשובים של לקוחות (יום הולדת, יום נישואין...) - ראו lib/clientDates.ts
 -- והבלוק בדף הלקוחות (app/dashboard/clients). חוזר כל שנה: לועזי (date_greg -
 -- היום והחודש, השנה רק לתיעוד) או עברי (hebrew_month 1-13 לפי
@@ -3258,3 +3310,21 @@ create policy "photographers read own logo" on storage.objects
 -- alter table photos add column if not exists photographer_pick boolean default false not null;
 -- notify pgrst, 'reload schema';
 -- ===== סוף מיגרציה: ⭐ המלצות הצלמת =====
+
+-- ===== מיגרציה: ארכיון גלריות =====
+-- archives a row without deleting it; the dashboard can keep old galleries out of
+-- the active list while preserving selection/payment records. This is a soft
+-- archive, not a data wipe, so the record remains searchable and exportable.
+-- alter table galleries add column if not exists archived_at timestamptz;
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: ארכיון גלריות =====
+
+-- ===== מיגרציה: מיני-סשנים =====
+-- טבלאות mini_sessions ו-mini_session_bookings מוגדרות למעלה בקובץ. להריץ את שתי
+-- ההגדרות (create table ... עד סוף ה-policies) ב-SQL Editor. אם כבר הורצו בגרסה
+-- הקודמת, שבה שעה שבוטלה נשארה חסומה, להריץ רק את זה:
+-- drop index if exists mini_session_bookings_unique_slot;
+-- create unique index mini_session_bookings_unique_slot on mini_session_bookings(mini_session_id, selected_slot)
+--   where status <> 'cancelled';
+-- notify pgrst, 'reload schema';
+-- ===== סוף מיגרציה: מיני-סשנים =====

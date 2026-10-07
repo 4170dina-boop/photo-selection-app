@@ -38,6 +38,12 @@ export const inputStyle: CSSProperties = {
   fontSize: 16,
 };
 
+export const focusVisibleRing = {
+  outline: `2px solid ${theme.goldBright}`,
+  outlineOffset: 2,
+  boxShadow: `0 0 0 3px ${theme.gold}44`,
+};
+
 export const goldButtonStyle: CSSProperties = {
   background: `linear-gradient(135deg, ${theme.goldBright}, ${theme.gold})`,
   color: theme.goldText,
@@ -48,6 +54,7 @@ export const goldButtonStyle: CSSProperties = {
   fontFamily: theme.fontSans,
   fontSize: 13.5,
   cursor: 'pointer',
+  minHeight: 44,
 };
 
 export const outlineButtonStyle: CSSProperties = {
@@ -60,6 +67,7 @@ export const outlineButtonStyle: CSSProperties = {
   fontSize: 13.5,
   fontWeight: 700,
   cursor: 'pointer',
+  minHeight: 44,
 };
 
 export const headingStyle: CSSProperties = {
