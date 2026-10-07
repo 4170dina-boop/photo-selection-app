@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>תצוגה מקדימה - בחירה במייל עם קבצים מצורפים</title>
+  <style>
+    :root {
+      --bg: #0f1626; --panel: #161c2d; --panel-2: #1b2236;
+      --border: rgba(232,224,210,0.11); --border-strong: rgba(232,224,210,0.22);
+      --text: #efe8db; --muted: rgba(239,232,219,0.64); --faint: rgba(239,232,219,0.42);
+      --gold: #c98f89; --gold-bright: #e3b3ac; --gold-text: #20120f; --green: #7fae86;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, "Segoe UI", Arial, sans-serif; padding: 24px 16px 60px; }
+    .wrap { max-width: 900px; margin: 0 auto; }
+    .label { display: inline-block; background: var(--gold); color: var(--gold-text); font-weight: 700; font-size: 13px; padding: 4px 12px; border-radius: 20px; margin: 28px 0 10px; }
+    h1 { font-size: 22px; margin: 0 0 6px; }
+    .note { color: var(--muted); font-size: 14px; line-height: 1.7; margin: 0 0 8px; }
+
+    /* חלק 1 - עמוד הגלריה */
+    .card { background: var(--panel); border: 1px solid var(--border-strong); border-radius: 14px; padding: 18px; }
+    .card h2 { margin: 0 0 6px; font-size: 18px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+    .field { flex: 1; min-width: 220px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; color: var(--text); font-size: 15px; }
+    .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 20px; padding: 6px 12px; font-size: 13px; color: var(--muted); }
+    .chip b { color: var(--text); }
+    .btn { min-height: 44px; border-radius: 6px; padding: 0 18px; font-weight: 700; font-size: 14px; cursor: pointer; border: 1px solid var(--border-strong); background: transparent; color: var(--text); }
+    .btn.gold { background: linear-gradient(135deg, var(--gold-bright), var(--gold)); color: var(--gold-text); border: none; }
+    .hint { font-size: 13px; color: var(--faint); margin-top: 10px; line-height: 1.6; }
+
+    /* חלק 2 - כך זה נראה בג'ימייל */
+    .gmail { background: #fff; color: #202124; border-radius: 14px; overflow: hidden; font-family: Arial, sans-serif; }
+    .gm-bar { background: #f6f8fc; padding: 10px 16px; font-size: 13px; color: #5f6368; border-bottom: 1px solid #e0e0e0; }
+    .gm-subject { font-size: 21px; padding: 16px 20px 6px; }
+    .gm-from { padding: 0 20px 14px; font-size: 13px; color: #5f6368; }
+    .gm-from b { color: #202124; }
+    .gm-body { padding: 0 20px 10px; font-size: 15px; line-height: 1.8; }
+    .how { background: #fff8e6; border: 1px solid #ebd7a0; border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+    .pkg { background: #faf4f2; border: 1px solid #efd7d3; border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+    .gm-att-title { padding: 12px 20px 8px; font-size: 13px; color: #5f6368; border-top: 1px solid #eee; margin-top: 8px; }
+    .atts { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; padding: 0 20px 20px; }
+    .att { border: 1px solid #dadce0; border-radius: 8px; overflow: hidden; }
+    .att .img { height: 84px; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.9); font-size: 26px; font-weight: 700; }
+    .att .name { font-size: 12px; padding: 6px 8px; color: #3c4043; direction: ltr; text-align: left; border-top: 1px solid #eee; }
+    .more { display: flex; align-items: center; justify-content: center; border: 1px dashed #dadce0; border-radius: 8px; color: #5f6368; font-size: 13px; min-height: 112px; text-align: center; padding: 6px; }
+
+    /* חלק 3 - רשימת המיילים */
+    .parts { display: grid; gap: 8px; }
+    .part { display: flex; justify-content: space-between; gap: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 14px; flex-wrap: wrap; }
+    .part .ok { color: var(--green); font-weight: 700; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>תצוגה מקדימה: בחירת תמונות במייל</h1>
+  <p class="note">זו רק תצוגה, עוד לא נכתב קוד. התמונות כאן הן ריבועים צבעוניים במקום תמונות אמיתיות.</p>
+
+  <span class="label">1 · בעמוד הגלריה שלך</span>
+  <div class="card">
+    <h2>📧 שליחת התמונות במייל</h2>
+    <p class="note" style="margin:0">ללקוחות עם סינון: התמונות נשלחות כקבצים מצורפים לג'ימייל שלה, והיא עונה עם המספרים של התמונות שבחרה.</p>
+    <div class="row">
+      <input class="field" value="michal.cohen@gmail.com" aria-label="מייל הלקוחה" />
+    </div>
+    <div class="stats">
+      <span class="chip"><b>156</b> תמונות</span>
+      <span class="chip">יישלחו ב-<b>4 מיילים</b></span>
+      <span class="chip">עד <b>45</b> תמונות בכל מייל</span>
+    </div>
+    <div class="row">
+      <button class="btn">✉️ שליחת ניסיון אליי</button>
+      <button class="btn gold">שליחה ללקוחה</button>
+    </div>
+    <p class="hint">💡 כדאי קודם לשלוח ניסיון לעצמך ולבדוק שהתמונות נפתחות. כל תמונה נשלחת עם המספר שלה, בדיוק כמו בגלריה.</p>
+  </div>
+
+  <span class="label">2 · כך הלקוחה רואה את המייל בג'ימייל</span>
+  <div class="gmail">
+    <div class="gm-bar">Gmail · דואר נכנס</div>
+    <div class="gm-subject">התמונות שלך מהצילום 📸 · מייל 1 מתוך 4 (תמונות 1–45)</div>
+    <div class="gm-from"><b>סטודיו דינה</b> · אלייך</div>
+    <div class="gm-body">
+      שלום מיכל,<br>
+      התמונות מהצילום מוכנות לבחירה! 🌸 הן מצורפות למטה, ובשם של כל תמונה מופיע המספר שלה.
+      <div class="pkg">
+        ✔ כלולות בחבילה: <b>30 תמונות</b><br>
+        ➕ כל תמונה נוספת: <b>15 ₪</b><br>
+        📅 נשמח לתשובה עד: <b>כ"ה תשרי</b>
+      </div>
+      <div class="how">
+        <b>איך בוחרים?</b><br>
+        משיבים למייל הזה עם המספרים של התמונות שאהבת.<br>
+        לדוגמה: <b dir="ltr">3, 7, 12-15</b><br>
+        <span style="color:#7a6a40;font-size:13px">יש עוד 3 מיילים עם שאר התמונות. אפשר לענות פעם אחת על כולן יחד.</span>
+      </div>
+    </div>
+    <div class="gm-att-title">📎 45 קבצים מצורפים</div>
+    <div class="atts" id="atts"></div>
+  </div>
+
+  <span class="label">3 · אחרי השליחה, אצלך</span>
+  <div class="parts">
+    <div class="part"><span>מייל 1 · תמונות 1–45</span><span class="ok">✓ נשלח</span></div>
+    <div class="part"><span>מייל 2 · תמונות 46–90</span><span class="ok">✓ נשלח</span></div>
+    <div class="part"><span>מייל 3 · תמונות 91–135</span><span class="ok">✓ נשלח</span></div>
+    <div class="part"><span>מייל 4 · תמונות 136–156</span><span class="ok">✓ נשלח</span></div>
+  </div>
+  <p class="note" style="margin-top:12px">בשלב הבא, אחרי שנדע שהתמונות נפתחות, נוסיף קליטה אוטומטית של התשובה שלה.</p>
+</div>
+<script>
+  const hues = [12, 28, 340, 200, 160, 45, 290, 0];
+  const box = document.getElementById('atts');
+  for (let i = 1; i <= 11; i++) {
+    const n = String(i).padStart(3, '0');
+    const h = hues[i % hues.length];
+    box.insertAdjacentHTML('beforeend',
+      `<div class="att"><div class="img" style="background:linear-gradient(135deg,hsl(${h} 35% 62%),hsl(${h + 25} 30% 45%))">${i}</div><div class="name">${n}.jpg</div></div>`);
+  }
+  box.insertAdjacentHTML('beforeend', '<div class="more">ועוד 34 תמונות<br>(012–045)</div>');
+</script>
+</body>
+</html>

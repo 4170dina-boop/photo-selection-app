@@ -95,6 +95,8 @@ interface SendOptions {
   // לכתובת השליחה הטכנית של Resend.
   replyTo?: string;
   attachments?: EmailAttachment[];
+  // מיילים עם הרבה קבצים מצורפים (בחירה במייל) לוקחים יותר זמן להעלות ל-Resend
+  timeoutMs?: number;
 }
 
 // שם התצוגה נכנס לכותרת From בתוך מרכאות - מרכאות/לוכסן הפוך/סוגריים
@@ -260,6 +262,58 @@ export async function sendSelectionEmailWithInlinePhotos(params: {
   );
 }
 
+// בחירה במייל עם קבצים מצורפים רגילים (לא cid בגוף ההודעה) - ראו
+// lib/emailSelectionBatches.ts למה: בנטפרי תמונות מצורפות בג'ימייל נפתחות בלי
+// סינון. גלריה גדולה נשלחת בכמה מיילים; כל קובץ נקרא לפי מספר התמונה בגלריה.
+export async function sendSelectionEmailWithAttachments(params: {
+  to: string;
+  clientName: string;
+  businessName: string;
+  includedPhotos: number;
+  extraPhotoPrice: number;
+  dueDate?: string | null;
+  totalPhotos: number;
+  rangeFrom: number;
+  rangeTo: number;
+  isTest?: boolean;
+  photos: { filename: string; base64Content: string }[];
+  replyTo?: string;
+}): Promise<SendResult> {
+  const range = params.rangeFrom === params.rangeTo ? `תמונה ${params.rangeFrom}` : `תמונות ${params.rangeFrom}–${params.rangeTo}`;
+  const isSplit = params.rangeFrom > 1 || params.rangeTo < params.totalPhotos;
+  const html = wrapEmailHtml({
+    headerText: params.businessName,
+    bodyHtml: `
+      ${params.isTest ? '<p style="margin:0 0 10px;padding:8px 12px;background:#eef6ef;border:1px solid #cfe3d2;border-radius:8px;">🧪 זה מייל ניסיון - רק את רואה אותו. בדקי שהתמונות המצורפות נפתחות.</p>' : ''}
+      <p style="margin: 0 0 8px;">שלום ${escapeHtml(params.clientName)},</p>
+      <p style="margin: 0 0 8px;">התמונות מהצילום מוכנות לבחירה! 🌸 הן מצורפות למטה, ובשם של כל תמונה מופיע המספר שלה.</p>
+      <div style="background:#faf4f2;border:1px solid #efd7d3;border-radius:8px;padding:10px 12px;line-height:1.8;margin:12px 0 14px;">
+        <div>✔ כלולות בחבילה: <b>${escapeHtml(String(params.includedPhotos))} תמונות</b></div>
+        <div>➕ כל תמונה נוספת: <b>${escapeHtml(String(params.extraPhotoPrice))} ₪</b></div>
+        ${params.dueDate ? `<div>📅 נשמח לתשובה עד: <b>${escapeHtml(params.dueDate)}</b></div>` : ''}
+      </div>
+      <div style="background:#fff8e6;border:1px solid #ebd7a0;border-radius:8px;padding:10px 12px;line-height:1.7;margin-bottom:14px;">
+        <b>איך בוחרים?</b><br>
+        משיבים למייל הזה עם המספרים של התמונות שאהבת.<br>
+        לדוגמה: <b dir="ltr">3, 7, 12-15</b>
+        ${isSplit ? `<br><span style="font-size:13px;color:#7a6a40;">במייל הזה: ${escapeHtml(range)} מתוך ${escapeHtml(String(params.totalPhotos))}. שאר התמונות נמצאות במיילים נפרדים - אפשר לענות פעם אחת על כולן יחד.</span>` : ''}
+      </div>
+    `,
+  });
+
+  return sendEmail(
+    params.to,
+    `${params.isTest ? '[ניסיון] ' : ''}התמונות שלך מהצילום 📸 · ${range}${isSplit ? ` (מתוך ${params.totalPhotos})` : ''}`,
+    html,
+    {
+      fromName: params.businessName,
+      replyTo: params.replyTo,
+      attachments: params.photos.map((p) => ({ filename: p.filename, content: p.base64Content, contentType: 'image/jpeg' })),
+      timeoutMs: 45_000,
+    }
+  );
+}
+
 // כמה לחכות לפני ניסיון חוזר יחיד אחרי 429 (rate limit של Resend) - לפי
 // Retry-After אם קיים, עם תקרה כדי לא לתקוע בקשה/ריצת cron.
 const MAX_RETRY_WAIT_MS = 5000;
@@ -278,7 +332,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // וחוזר כ-{ sent: false } כמו כל כישלון רשת.
 export const RESEND_TIMEOUT_MS = 10_000;
 
-async function postToResend(payload: string): Promise<Response> {
+async function postToResend(payload: string, timeoutMs = RESEND_TIMEOUT_MS): Promise<Response> {
   return fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -286,7 +340,7 @@ async function postToResend(payload: string): Promise<Response> {
       'Content-Type': 'application/json',
     },
     body: payload,
-    signal: AbortSignal.timeout(RESEND_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 }
 
@@ -315,10 +369,10 @@ async function sendEmail(to: string, subject: string, html: string, options: Sen
     }
     const payload = JSON.stringify(body);
 
-    let res = await postToResend(payload);
+    let res = await postToResend(payload, options.timeoutMs);
     if (res.status === 429) {
       await sleep(retryDelayMs(res.headers?.get?.('retry-after')));
-      res = await postToResend(payload);
+      res = await postToResend(payload, options.timeoutMs);
     }
 
     if (!res.ok) {

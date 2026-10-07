@@ -23,6 +23,7 @@ import GalleryLanguageField from '@/components/GalleryLanguageField';
 import { normalizeLang, type Lang } from '@/lib/i18n/types';
 import { normalizeGender, type Gender } from '@/lib/gender';
 import ExtensionRequestsPanel from '@/components/ExtensionRequestsPanel';
+import EmailSelectionPanel from '@/components/EmailSelectionPanel';
 import { MANUAL_EMAIL_COOLDOWN_SECONDS, formatCooldownLeft } from '@/lib/manualEmailCooldown';
 import { FREE_DELIVERED_PHOTO_LIMIT } from '@/lib/deliveredPhotoLimit';
 
@@ -610,6 +611,9 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           </div>
         </div>
       )}
+
+      {/* בחירה במייל ללקוחות עם סינון - components/EmailSelectionPanel.tsx */}
+      <EmailSelectionPanel galleryId={galleryId} />
 
       {/* בקשות הארכה מהלקוחה (אישור/דחייה) - components/ExtensionRequestsPanel.tsx */}
       <ExtensionRequestsPanel
