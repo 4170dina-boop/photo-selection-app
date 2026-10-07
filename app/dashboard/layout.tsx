@@ -46,29 +46,29 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             ✨ אזור צלמים
           </Link>
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-            <Link href="/dashboard/today" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+            <Link href="/dashboard/today" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
               היום
             </Link>
-            <Link href="/dashboard/galleries" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+            <Link href="/dashboard/galleries" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
               הגלריות שלי
             </Link>
-            <Link href="/dashboard/clients" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+            <Link href="/dashboard/clients" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
               לקוחות
             </Link>
-            <Link href="/dashboard/calendar" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+            <Link href="/dashboard/calendar" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
               יומן צילומים
             </Link>
-            <Link href="/dashboard/reports" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+            <Link href="/dashboard/reports" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
               דוח הכנסות
             </Link>
-            <Link href="/dashboard/analytics" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+            <Link href="/dashboard/analytics" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
               אנליטיקס
             </Link>
-            <Link href="/dashboard/settings" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block' }}>
+            <Link href="/dashboard/settings" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
               הגדרות
             </Link>
             {isAdmin && (
-              <Link href="/dashboard/admin" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-block', color: theme.gold, borderColor: theme.gold }}>
+              <Link href="/dashboard/admin" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: theme.gold, borderColor: theme.gold }}>
                 ניהול צלמות
               </Link>
             )}

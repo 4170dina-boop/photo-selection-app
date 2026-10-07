@@ -54,7 +54,10 @@ export const goldButtonStyle: CSSProperties = {
   fontFamily: theme.fontSans,
   fontSize: 13.5,
   cursor: 'pointer',
+  // border-box: בלי זה minHeight נספר בלי ה-padding, וקישורים (inline-block)
+  // בתפריט נמתחו לגובה ~65px עם הטקסט צמוד למעלה.
   minHeight: 44,
+  boxSizing: 'border-box',
 };
 
 export const outlineButtonStyle: CSSProperties = {
@@ -67,7 +70,10 @@ export const outlineButtonStyle: CSSProperties = {
   fontSize: 13.5,
   fontWeight: 700,
   cursor: 'pointer',
+  // border-box: בלי זה minHeight נספר בלי ה-padding, וקישורים (inline-block)
+  // בתפריט נמתחו לגובה ~65px עם הטקסט צמוד למעלה.
   minHeight: 44,
+  boxSizing: 'border-box',
 };
 
 export const headingStyle: CSSProperties = {
