@@ -6,7 +6,8 @@ import { getPresignedDownloadUrl } from '@/lib/r2';
 import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { fetchPickedPhotoIds } from '@/lib/pickQueries';
 import { countBillableSelected } from '@/lib/gifts';
-import { gridThumbKey, hasWatermarkedThumbnail, isKeyInGallery } from '@/lib/uploadPolicy';
+import { hasWatermarkedThumbnail } from '@/lib/uploadPolicy';
+import { stablePhotoUrl } from '@/lib/stablePhotoUrl';
 import { resolveGalleryViewAccess } from '@/lib/galleryAccess';
 import { fetchClientGender, fetchParticipantGenders, resolveViewerGender } from '@/lib/gender';
 import { fetchChapters, fetchPhotoNavFields } from '@/lib/chapterQueries';
@@ -227,16 +228,13 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       // gridThumbKey) נופלות חזרה לתצוגה הגדולה. בשני המקרים file_path (המקור
       // הנקי) לא נחשף ללקוחה בשום מקום; הוא משמש רק בצד שרת לצורך המסירה
       // הסופית (app/api/galleries/[id]/selected-photos).
-      const gridKey = gridThumbKey(photo.thumbnail_path);
-      const [fullUrl, gridUrl] = await Promise.all([
-        getPresignedDownloadUrl(photo.thumbnail_path as string, SIGNED_URL_TTL_SECONDS),
-        gridKey && isKeyInGallery(galleryId, gridKey) ? getPresignedDownloadUrl(gridKey, SIGNED_URL_TTL_SECONDS) : null,
-      ]);
-
+      // כתובות קבועות (lib/stablePhotoUrl.ts) ולא URL חתום שמשתנה בכל טעינה -
+      // כדי שסינון האינטרנט יבדוק כל תמונה פעם אחת בלבד. הנפילה מגריד לתצוגה
+      // הגדולה קורית עכשיו בתוך ה-route של התמונה.
       return {
         id: photo.id,
-        thumbnailUrl: gridUrl ?? fullUrl,
-        fullUrl,
+        thumbnailUrl: stablePhotoUrl(galleryId, photo.id, 'grid'),
+        fullUrl: stablePhotoUrl(galleryId, photo.id, 'full'),
         original_filename: photo.original_filename,
         possiblyBlurry: possiblyBlurryIds.has(photo.id),
         isGift: giftById.has(photo.id),

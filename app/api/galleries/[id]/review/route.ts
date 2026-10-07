@@ -6,6 +6,7 @@ import { fetchGiftPhotos } from '@/lib/giftQueries';
 import { fetchPickedPhotoIds } from '@/lib/pickQueries';
 import { gridThumbKey, hasWatermarkedThumbnail, needsGridThumbBackfill } from '@/lib/uploadPolicy';
 import { fetchPhotoNavFields } from '@/lib/chapterQueries';
+import { stablePhotoUrl } from '@/lib/stablePhotoUrl';
 
 // מחזירה לצלמת המחוברת תצוגה לקריאה בלבד של התמונות בגלריה: thumbnail + הסטטוס
 // הרשמי (של הבעלים בלבד - שיתוף גלריה משפחתי, בדיוק כמו app/dashboard/galleries/page.tsx
@@ -80,8 +81,11 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       // אז התמונה מוסתרת מהלקוחה (ראו app/api/gallery/[id]/route.ts).
       const needsProcessing = !hasWatermarkedThumbnail(photo);
       // אריח בגריד - תמונת הגריד הקטנה אם כבר קיימת (ראו gridThumbKey), אחרת התצוגה הגדולה.
-      const thumbPath = needsProcessing ? photo.file_path : (gridThumbKey(photo.thumbnail_path) ?? (photo.thumbnail_path as string));
-      const thumbnailUrl = await getPresignedDownloadUrl(thumbPath, SIGNED_URL_TTL_SECONDS);
+      // תמונה מעובדת -> אותה כתובת קבועה שהלקוחה מקבלת (lib/stablePhotoUrl.ts),
+      // כך שכל צפייה של הצלמת כאן כבר "מכינה" את התמונה מול סינון האינטרנט.
+      const thumbnailUrl = needsProcessing
+        ? await getPresignedDownloadUrl(photo.file_path, SIGNED_URL_TTL_SECONDS)
+        : stablePhotoUrl(params.id, photo.id, 'grid');
 
       const selection = selectionByPhotoId.get(photo.id);
       return {
