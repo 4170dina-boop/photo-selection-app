@@ -11,6 +11,17 @@ interface PhotographerRow {
   email: string | null;
   isUnlimited: boolean;
   createdAt: string;
+  lastSignInAt?: string | null;
+  // null = הספירה נכשלה (לא ידוע)
+  galleryCount?: number | null;
+  photoCount?: number | null;
+  lastGalleryAt?: string | null;
+}
+
+function formatDate(value: string | null | undefined): string {
+  if (!value) return '—';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: '2-digit' });
 }
 
 // פאנל ניהול פנימי - נגיש רק דרך URL ישיר (אין קישור בתפריט, כדי לא לבלבל
@@ -241,6 +252,13 @@ export default function AdminPage() {
             <div>
               <div style={{ fontWeight: 'bold' }}>{row.businessName}</div>
               <div style={{ fontSize: 13, color: theme.textMuted }}>{row.email ?? 'ללא אימייל'}</div>
+              <div style={{ fontSize: 12, color: theme.textFaint, marginTop: '0.3rem', display: 'flex', gap: '0.9rem', flexWrap: 'wrap' }}>
+                <span>הצטרפה: {formatDate(row.createdAt)}</span>
+                <span>📁 {row.galleryCount ?? '?'} גלריות</span>
+                <span>🖼 {row.photoCount ?? '?'} תמונות</span>
+                <span>גלריה אחרונה: {formatDate(row.lastGalleryAt)}</span>
+                <span>כניסה אחרונה: {formatDate(row.lastSignInAt)}</span>
+              </div>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>

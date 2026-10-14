@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { requireAdmin } from '@/lib/requireAdmin';
+import { mapWithConcurrency } from '@/lib/uploadPolicy';
 
 const supabaseAdmin = createAdminClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -28,7 +29,7 @@ export async function GET() {
   // listUsers() מחזיר עמוד אחד בלבד (ברירת מחדל page:1, perPage:50) - עם יותר מ-50
   // משתמשי auth בפרויקט (לא רק צלמות) צריך לדפדף על כל העמודים, בדיוק כמו
   // listAllFiles ב-app/api/galleries/[id]/route.ts עבור Storage .list().
-  const allUsers: { id: string; email?: string }[] = [];
+  const allUsers: { id: string; email?: string; last_sign_in_at?: string | null }[] = [];
   let page = 1;
   const perPage = 1000; // המקסימום הנתמך ב-SDK (auth.admin.listUsers)
   while (true) {
@@ -41,14 +42,41 @@ export async function GET() {
     if (usersPage.users.length < perPage) break; // עמוד לא מלא = העמוד האחרון
     page += 1;
   }
-  const emailByUserId = new Map(allUsers.map((u) => [u.id, u.email]));
+  const userById = new Map(allUsers.map((u) => [u.id, u]));
 
-  const rows = (photographers ?? []).map((p) => ({
+  // שימוש לכל צלמת: כמה גלריות ותמונות, ומתי נוצרה הגלריה האחרונה. שאילתות
+  // ספירה (head) לכל צלמת בנפרד - בלי לשלוף את השורות עצמן (מגבלת 1000 שורות
+  // של PostgREST). כשל בספירה מחזיר null ("לא ידוע") ולא מפיל את הרשימה.
+  const usage = await mapWithConcurrency(photographers ?? [], 5, async (p) => {
+    const [galleriesRes, photosRes, lastGalleryRes] = await Promise.all([
+      supabaseAdmin.from('galleries').select('id', { count: 'exact', head: true }).eq('photographer_id', p.id),
+      supabaseAdmin
+        .from('photos')
+        .select('id, galleries!inner(photographer_id)', { count: 'exact', head: true })
+        .eq('galleries.photographer_id', p.id),
+      supabaseAdmin
+        .from('galleries')
+        .select('created_at')
+        .eq('photographer_id', p.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+    return {
+      galleryCount: galleriesRes.error ? null : galleriesRes.count ?? 0,
+      photoCount: photosRes.error ? null : photosRes.count ?? 0,
+      lastGalleryAt: (lastGalleryRes.data as { created_at?: string } | null)?.created_at ?? null,
+    };
+  });
+
+  const rows = (photographers ?? []).map((p, i) => ({
     id: p.id,
     businessName: p.business_name,
-    email: emailByUserId.get(p.auth_user_id) ?? null,
+    email: userById.get(p.auth_user_id)?.email ?? null,
     isUnlimited: p.is_unlimited,
     createdAt: p.created_at,
+    lastSignInAt: userById.get(p.auth_user_id)?.last_sign_in_at ?? null,
+    ...usage[i],
   }));
 
   return NextResponse.json({ photographers: rows });
