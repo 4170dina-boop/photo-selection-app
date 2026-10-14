@@ -11,7 +11,6 @@ import ClientPayButton from '@/components/ClientPayButton';
 import { resolveClientPriceDisplay, type ClientPackageInfo } from '@/lib/clientPricing';
 import GalleryNavBar, { BurstBadge, BurstChooser } from '@/components/GalleryNavBar';
 import { applyNavFilters, burstMembers } from '@/lib/galleryNav';
-import { makeInitialVisiblePhotoIds, mergeVisiblePhotoIds, syncVisiblePhotoIds } from '@/lib/galleryLazyLoad';
 import type { Chapter } from '@/lib/chapters';
 import LanguagePicker from '@/components/LanguagePicker';
 import GalleryMoreMenu, { type MoreMenuItem } from '@/components/GalleryMoreMenu';
@@ -2328,30 +2327,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       : photos;
   const isMySelected = (id: string) => myStatuses[id] === 'selected';
   const visiblePhotos = applyNavFilters(filteredPhotos, { chapterFilter, hideSimilar, isSelected: isMySelected });
-  const [visiblePhotoIds, setVisiblePhotoIds] = useState<Set<string>>(() => makeInitialVisiblePhotoIds(visiblePhotos.map((p) => p.id), 18));
-  useEffect(() => {
-    const allowed = new Set(visiblePhotos.map((p) => p.id));
-    setVisiblePhotoIds((current) => syncVisiblePhotoIds(current, allowed, visiblePhotos.slice(0, 18).map((p) => p.id)));
-  }, [visiblePhotos]);
-  useEffect(() => {
-    if (typeof window === 'undefined' || visiblePhotos.length === 0) return;
-    const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-gallery-photo-id]'));
-    if (cards.length === 0) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const ids = entries
-          .filter((entry) => entry.isIntersecting)
-          .map((entry) => entry.target.getAttribute('data-gallery-photo-id'))
-          .filter((id): id is string => !!id);
-        if (ids.length === 0) return;
-        const allowed = new Set(visiblePhotos.map((p) => p.id));
-        setVisiblePhotoIds((current) => syncVisiblePhotoIds(current, allowed, ids));
-      },
-      { rootMargin: '180px 0px 180px 0px', threshold: 0.01 }
-    );
-    cards.forEach((card) => observer.observe(card));
-    return () => observer.disconnect();
-  }, [visiblePhotos]);
   const burstsById = burstMembers(photos);
   const owner = participants.find((p) => p.isOwner);
   // מספר רץ קבוע לכל תמונה (מקום ברשימה המלאה, לא ברשימה המסוננת) - מוצג
@@ -4079,13 +4054,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     // thumbnailUrl = תמונת הגריד הקטנה (480px) מה-API, או התצוגה הגדולה
                     // לתמונות ישנות. בלי srcset לתצוגה הגדולה: 480px כבר מכסה אריח של
                     // ~200px ב-x2, ו-2x היה מוריד את ה-2000px כמעט בכל טלפון.
-                    src={visiblePhotoIds.has(photo.id) ? photo.thumbnailUrl : undefined}
+                    src={photo.thumbnailUrl}
                     alt=""
                     draggable={false}
                     loading="lazy"
                     decoding="async"
                     className="gimg"
-                    data-loaded={visiblePhotoIds.has(photo.id) ? 'true' : 'false'}
                     onLoad={markImageLoaded}
                     onError={(e) => {
                       markImageLoaded(e);
