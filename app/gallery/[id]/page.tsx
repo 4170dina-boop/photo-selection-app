@@ -2358,16 +2358,12 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const aiPicksAvailable = !isLocked && isOwner && photos.length > 0;
   // תפריט "⋯ עוד" (components/GalleryMoreMenu.tsx) - פעולות משניות במקום
   // שורת כפתורים; השפה נוספת בתוך התפריט עצמו
+  function toggleCompareMode() {
+    setCompareMode((prev) => !prev);
+    setCompareIds([]);
+    setCompareViewOpen(false);
+  }
   const moreMenuItems: MoreMenuItem[] = [
-    {
-      key: 'compare',
-      label: compareMode ? tr('hdr.exitCompare') : tr('hdr.compare'),
-      onSelect: () => {
-        setCompareMode((prev) => !prev);
-        setCompareIds([]);
-        setCompareViewOpen(false);
-      },
-    },
     ...(photos.length > 0 ? [{ key: 'slideshow', label: tr('act.slideshow'), onSelect: openSlideshow }] : []),
     ...(aiPicksAvailable && ownerSelectedCount > 0
       ? [{ key: 'ai', label: aiPicksRunning ? tr('act.aiRunning') : tr('act.aiHelp'), onSelect: handleAiPicks, disabled: aiPicksRunning }]
@@ -2531,8 +2527,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               {tr('hdr.connectedAs', { name: myParticipant.displayName })}{isOwner ? '' : tr('hdr.family')}
             </span>
           )}
-          {/* "⚡ בחירה מהירה" נשארת גלויה; כל השאר (השוואה, סקירה ברצף, ביטול
-              הכל, שפה) בתפריט "⋯ עוד" אחד - components/GalleryMoreMenu.tsx */}
+          {/* "⚡ בחירה מהירה" ו"⇄ השוואה" נשארות גלויות; כל השאר (סקירה ברצף,
+              ביטול הכל, שפה) בתפריט "⋯ עוד" אחד - components/GalleryMoreMenu.tsx */}
           {!readOnly && (
           <button
             className="gh-btn"
@@ -2546,6 +2542,20 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           >
             {swipeMode ? tr('hdr.exitSwipe') : tr('hdr.swipe')}
           </button>
+          )}
+          {photos.length > 1 && (
+            <button
+              type="button"
+              className="gh-btn"
+              onClick={toggleCompareMode}
+              aria-pressed={compareMode}
+              style={{
+                ...outlineButtonStyle,
+                borderColor: compareMode ? accent : theme.border, color: compareMode ? accent : theme.textMuted,
+              }}
+            >
+              {compareMode ? tr('hdr.exitCompare') : tr('hdr.compare')}
+            </button>
           )}
           <GalleryMoreMenu
             label={tr('hdr.more')}

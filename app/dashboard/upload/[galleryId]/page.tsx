@@ -191,6 +191,53 @@ export default function UploadPage({ params }: UploadPageProps) {
     setReplyEditingId(null);
   }
 
+  // מחיקת תמונה שכבר הועלתה (app/api/galleries/[id]/photos/[photoId]) - למשל
+  // תמונה שהועלתה בטעות או פעמיים. אם הלקוחה כבר סימנה אותה, הסימון נמחק איתה.
+  const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
+  async function deletePhoto(photo: ExistingPhoto) {
+    const warning = photo.status || photo.note
+      ? `הלקוחה כבר סימנה את התמונה ${photo.original_filename} או כתבה עליה הערה - הסימון וההערה יימחקו איתה. למחוק בכל זאת?`
+      : `למחוק את התמונה ${photo.original_filename} מהגלריה? אי אפשר לבטל.`;
+    if (!window.confirm(warning)) return;
+    setDeletingPhotoId(photo.id);
+    try {
+      const res = await fetch(`/api/galleries/${galleryId}/photos/${photo.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        window.alert(data.error ?? 'מחיקת התמונה נכשלה');
+        return;
+      }
+      setExistingPhotos((prev) => (prev ?? []).filter((p) => p.id !== photo.id));
+    } catch {
+      window.alert('מחיקת התמונה נכשלה - בדקי את החיבור לאינטרנט');
+    } finally {
+      setDeletingPhotoId(null);
+    }
+  }
+
+  // הוצאת קבצים מרשימת ההעלאה לפני שהועלו (למשל כפולים שלא רוצים להעלות)
+  function removeItems(shouldRemove: (item: UploadItem, index: number) => boolean) {
+    const kept: UploadItem[] = [];
+    items.forEach((item, i) => {
+      if (shouldRemove(item, i)) URL.revokeObjectURL(item.previewUrl);
+      else kept.push(item);
+    });
+    // הסימון "כבר נבחר" מחושב מחדש על מה שנשאר
+    const counts = new Map<string, number>();
+    kept.forEach((item) => counts.set(item.file.name, (counts.get(item.file.name) ?? 0) + 1));
+    setItems(kept.map((item) => ({ ...item, isDuplicateInSelection: (counts.get(item.file.name) ?? 0) > 1 })));
+  }
+  function removeDuplicateItems() {
+    const seen = new Set<string>();
+    removeItems((item) => {
+      if (item.status !== 'pending' && item.status !== 'error') return false;
+      if (item.isDuplicateExisting) return true;
+      if (seen.has(item.file.name)) return true;
+      seen.add(item.file.name);
+      return false;
+    });
+  }
+
   function openGiftEditor(photo: ExistingPhoto) {
     if (originalsCleanedUp) return;
     setGiftError('');
@@ -495,6 +542,22 @@ export default function UploadPage({ params }: UploadPageProps) {
                   >
                     {photo.isPick ? '★' : '☆'}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => deletePhoto(photo)}
+                    disabled={deletingPhotoId === photo.id}
+                    title="מחיקת התמונה מהגלריה"
+                    aria-label={`מחיקת התמונה ${photo.original_filename}`}
+                    style={{
+                      position: 'absolute', top: 70, right: 6, cursor: 'pointer',
+                      width: 26, height: 26, borderRadius: '50%', fontSize: 12,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.55)',
+                      opacity: deletingPhotoId === photo.id ? 0.4 : 0.85,
+                    }}
+                  >
+                    🗑
+                  </button>
                   {photo.note && (
                     <button
                       onClick={() => openReplyEditor(photo)}
@@ -607,7 +670,17 @@ export default function UploadPage({ params }: UploadPageProps) {
 
       {duplicateCount > 0 && (
         <p style={{ background: theme.warningBg, color: theme.warningText, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem', fontSize: 13 }}>
-          ⚠️ {duplicateCount} מהקבצים שנבחרו כבר קיימים בגלריה או נבחרו יותר מפעם אחת - אפשר להעלות בכל זאת אם זה מכוון
+          ⚠️ {duplicateCount} מהקבצים שנבחרו כבר קיימים בגלריה או נבחרו יותר מפעם אחת - אפשר להעלות בכל זאת אם זה מכוון,
+          או להוציא אותם מההעלאה (✕ על תמונה בודדת).
+          {!uploading && (
+            <button
+              type="button"
+              onClick={removeDuplicateItems}
+              style={{ ...outlineButtonStyle, display: 'block', marginTop: '0.5rem', padding: '0.3rem 0.9rem', fontSize: 13 }}
+            >
+              לא להעלות את הכפולים
+            </button>
+          )}
         </p>
       )}
 
@@ -663,7 +736,18 @@ export default function UploadPage({ params }: UploadPageProps) {
                   }}
                 >
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file.name}</span>
-                  <span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {!uploading && (item.status === 'pending' || item.status === 'error') && (
+                      <button
+                        type="button"
+                        onClick={() => removeItems((_, j) => j === i)}
+                        title="לא להעלות את הקובץ הזה"
+                        aria-label={`הוצאת ${item.file.name} מההעלאה`}
+                        style={{ background: 'none', border: 'none', color: theme.text, cursor: 'pointer', fontSize: 13, padding: 0 }}
+                      >
+                        ✕
+                      </button>
+                    )}
                     {item.status === 'pending' && '⋯'}
                     {item.status === 'uploading' && '↑'}
                     {item.status === 'done' && <span title="הועלה - סימן המים מתווסף ברקע" style={{ color: theme.green }}>✓</span>}
