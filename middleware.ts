@@ -38,9 +38,14 @@ export async function middleware(request: NextRequest) {
     }
   );
 
+  // getSession ולא getUser: getUser שולח בקשת רשת לשרת ה-Auth בכל מעבר דף בדשבורד
+  // (השהיה מורגשת בכל לחיצה). כאן זה רק החלטת הפניה ל-/login - דפי הדשבורד הם
+  // client components, וכל הנתונים מגיעים מ-API routes שמאמתים בעצמם עם getUser.
+  // getSession עדיין מרענן טוקן שפג (ונכתב לעוגיות למטה).
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
+  const user = session?.user ?? null;
 
   // הפניה שנושאת איתה את העוגיות שה-supabase client כתב ל-response (למשל
   // טוקנים שרועננו ב-getUser). בלי זה, הפניה "זורקת" את הרענון והדפדפן נשאר

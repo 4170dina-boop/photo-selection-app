@@ -1,6 +1,6 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useEffect, useState, type ReactNode } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -10,6 +10,18 @@ import { useOnboardingRedirect } from './useOnboardingRedirect';
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname() ?? '';
+  // הכפתור של הדף הנוכחי מודגש (כולל תתי-דפים, למשל עריכת גלריה תחת "הגלריות שלי")
+  const navStyle = (href: string) => {
+    const active = pathname === href || pathname.startsWith(`${href}/`);
+    return {
+      ...outlineButtonStyle,
+      textDecoration: 'none',
+      display: 'inline-flex',
+      alignItems: 'center',
+      ...(active ? { color: theme.gold, borderColor: theme.gold } : {}),
+    };
+  };
   const [isAdmin, setIsAdmin] = useState(false);
   useOnboardingRedirect(); // צלמת חדשה -> אשף הפתיחה (פעם אחת, ראו lib/onboarding.ts)
 
@@ -46,29 +58,29 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             ✨ אזור צלמים
           </Link>
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-            <Link href="/dashboard/today" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+            <Link href="/dashboard/today" style={navStyle('/dashboard/today')} aria-current={pathname.startsWith('/dashboard/today') ? 'page' : undefined}>
               היום
             </Link>
-            <Link href="/dashboard/galleries" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+            <Link href="/dashboard/galleries" style={navStyle('/dashboard/galleries')} aria-current={pathname.startsWith('/dashboard/galleries') ? 'page' : undefined}>
               הגלריות שלי
             </Link>
-            <Link href="/dashboard/clients" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+            <Link href="/dashboard/clients" style={navStyle('/dashboard/clients')} aria-current={pathname.startsWith('/dashboard/clients') ? 'page' : undefined}>
               לקוחות
             </Link>
-            <Link href="/dashboard/calendar" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+            <Link href="/dashboard/calendar" style={navStyle('/dashboard/calendar')} aria-current={pathname.startsWith('/dashboard/calendar') ? 'page' : undefined}>
               יומן צילומים
             </Link>
-            <Link href="/dashboard/reports" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+            <Link href="/dashboard/reports" style={navStyle('/dashboard/reports')} aria-current={pathname.startsWith('/dashboard/reports') ? 'page' : undefined}>
               דוח הכנסות
             </Link>
-            <Link href="/dashboard/analytics" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+            <Link href="/dashboard/analytics" style={navStyle('/dashboard/analytics')} aria-current={pathname.startsWith('/dashboard/analytics') ? 'page' : undefined}>
               אנליטיקס
             </Link>
-            <Link href="/dashboard/settings" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+            <Link href="/dashboard/settings" style={navStyle('/dashboard/settings')} aria-current={pathname.startsWith('/dashboard/settings') ? 'page' : undefined}>
               הגדרות
             </Link>
             {isAdmin && (
-              <Link href="/dashboard/admin" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', color: theme.gold, borderColor: theme.gold }}>
+              <Link href="/dashboard/admin" style={navStyle('/dashboard/admin')} aria-current={pathname.startsWith('/dashboard/admin') ? 'page' : undefined}>
                 ניהול צלמות
               </Link>
             )}
