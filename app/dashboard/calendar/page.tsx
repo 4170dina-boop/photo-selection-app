@@ -12,7 +12,9 @@ import {
   daysUntilLabel,
   compareShoots,
 } from '@/lib/shoots';
+import { buildMiniSessionSlots } from '@/lib/miniSessions';
 import EmailInput from '@/components/EmailInput';
+import { createClient } from '@/lib/supabase/client';
 import { googleMapsUrl, wazeUrl } from '@/lib/navLinks';
 
 // יומן צילומים - תצוגת חודש + רשימת הצילומים הקרובים, ויצירה/עריכה/מחיקה של
@@ -77,6 +79,7 @@ interface MiniSessionFormState {
   startTime: string;
   endTime: string;
   durationMinutes: string;
+  sessionCount: string;
   price: string;
   deposit: string;
   notes: string;
@@ -129,6 +132,29 @@ export default function CalendarPage() {
   const today = israelDateString(new Date());
   const [year, setYear] = useState(() => Number(today.slice(0, 4)));
   const [month, setMonth] = useState(() => Number(today.slice(5, 7)));
+  // קישור ההרשמה למרתונים של הצלמת הזו בלבד (/mini-sessions?p=<photographers.id>)
+  const [miniSessionsLink, setMiniSessionsLink] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  useEffect(() => {
+    createClient()
+      .from('photographers')
+      .select('id')
+      .maybeSingle()
+      .then(({ data }) => {
+        const id = (data as { id?: string } | null)?.id;
+        if (id) setMiniSessionsLink(`${window.location.origin}/mini-sessions?p=${id}`);
+      });
+  }, []);
+  async function copyMiniSessionsLink() {
+    if (!miniSessionsLink) return;
+    try {
+      await navigator.clipboard.writeText(miniSessionsLink);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      window.prompt('העתיקי את הקישור:', miniSessionsLink);
+    }
+  }
 
   const [monthShoots, setMonthShoots] = useState<Shoot[]>([]);
   const [upcoming, setUpcoming] = useState<Shoot[]>([]);
@@ -148,10 +174,13 @@ export default function CalendarPage() {
     startTime: '09:00',
     endTime: '10:00',
     durationMinutes: '20',
+    sessionCount: '3',
     price: '150',
     deposit: '50',
     notes: '',
   });
+  // מרתונים לא קורים כל הזמן - האזור סגור כברירת מחדל, מתחת ליומן
+  const [miniSessionsOpen, setMiniSessionsOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -268,15 +297,33 @@ export default function CalendarPage() {
     loadMiniSessionsRange();
   }
 
+  // שעת הסיום נגזרת ממספר המיני-סשנים ומהמשך של כל אחד (במקום להקליד שעת סיום)
+  const miniSessionEndTime = (() => {
+    const [hh, mm] = miniSessionForm.startTime.split(':').map(Number);
+    const duration = Number(miniSessionForm.durationMinutes);
+    const count = Number(miniSessionForm.sessionCount);
+    if (!Number.isFinite(hh) || !Number.isFinite(mm) || !(duration > 0) || !Number.isInteger(count) || count < 1) return null;
+    const end = hh * 60 + mm + duration * count;
+    if (end > 24 * 60 - 1) return null;
+    return `${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`;
+  })();
+  const miniSessionPreviewSlots = miniSessionEndTime
+    ? buildMiniSessionSlots(miniSessionForm.date, Number(miniSessionForm.durationMinutes), miniSessionForm.startTime, miniSessionEndTime)
+    : [];
+
   async function handleMiniSessionSubmit(e: React.FormEvent) {
     e.preventDefault();
     setMiniSessionError('');
     setMiniSessionNotice('');
 
+    if (!miniSessionEndTime) {
+      setMiniSessionError('בדקי את שעת ההתחלה, המשך ומספר המיני-סשנים - המרתון חייב להסתיים עד חצות');
+      return;
+    }
     const payload = {
       date: miniSessionForm.date,
       startTime: miniSessionForm.startTime,
-      endTime: miniSessionForm.endTime,
+      endTime: miniSessionEndTime,
       durationMinutes: Number(miniSessionForm.durationMinutes),
       price: miniSessionForm.price === '' ? null : Number(miniSessionForm.price),
       deposit: miniSessionForm.deposit === '' ? null : Number(miniSessionForm.deposit),
@@ -300,6 +347,7 @@ export default function CalendarPage() {
       startTime: '09:00',
       endTime: '10:00',
       durationMinutes: '20',
+      sessionCount: '3',
       price: '150',
       deposit: '50',
       notes: '',
@@ -460,134 +508,11 @@ export default function CalendarPage() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <a href="/mini-sessions" target="_blank" rel="noreferrer" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-            עמוד מיני-סשנים ציבורי
-          </a>
           <button onClick={() => openNew(today)} style={goldButtonStyle}>
             + צילום חדש
           </button>
         </div>
       </div>
-
-      <form onSubmit={handleMiniSessionSubmit} style={{ ...panelStyle, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, margin: 0 }}>מיני-סשנים</h2>
-          <span style={{ fontSize: 12, color: theme.textMuted }}>שבת/חג חסומים אוטומטית</span>
-        </div>
-
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <label style={{ ...labelStyle, flex: 1, minWidth: 140 }}>
-            תאריך
-            <input type="date" value={miniSessionForm.date} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, date: e.target.value }))} style={inputStyle} required />
-          </label>
-          <label style={{ ...labelStyle, flex: 1, minWidth: 120 }}>
-            משך בדקות
-            <input type="number" min={10} max={180} step={10} value={miniSessionForm.durationMinutes} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, durationMinutes: e.target.value }))} style={inputStyle} required />
-          </label>
-        </div>
-
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <label style={{ ...labelStyle, flex: 1, minWidth: 120 }}>
-            התחלה
-            <input type="time" value={miniSessionForm.startTime} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, startTime: e.target.value }))} style={inputStyle} required />
-          </label>
-          <label style={{ ...labelStyle, flex: 1, minWidth: 120 }}>
-            סיום
-            <input type="time" value={miniSessionForm.endTime} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, endTime: e.target.value }))} style={inputStyle} required />
-          </label>
-        </div>
-
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <label style={{ ...labelStyle, flex: 1, minWidth: 120 }}>
-            מחיר
-            <input type="number" min={0} step={10} value={miniSessionForm.price} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, price: e.target.value }))} style={inputStyle} />
-          </label>
-          <label style={{ ...labelStyle, flex: 1, minWidth: 120 }}>
-            מקדמה
-            <input type="number" min={0} step={10} value={miniSessionForm.deposit} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, deposit: e.target.value }))} style={inputStyle} />
-          </label>
-        </div>
-
-        <label style={labelStyle}>
-          הערות
-          <textarea rows={2} value={miniSessionForm.notes} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, notes: e.target.value }))} style={{ ...inputStyle, resize: 'vertical' }} />
-        </label>
-
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-          <button type="submit" style={goldButtonStyle}>שמור מיני-סשן</button>
-        </div>
-
-        {miniSessionError && (
-          <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.6rem 0.9rem', borderRadius: 8, fontSize: 13, margin: 0 }}>
-            {miniSessionError}
-          </p>
-        )}
-        {miniSessionNotice && (
-          <p style={{ background: theme.successBg, color: theme.successText, padding: '0.6rem 0.9rem', borderRadius: 8, fontSize: 13, margin: 0 }}>
-            {miniSessionNotice}
-          </p>
-        )}
-      </form>
-
-      {miniSessions.length > 0 && (
-        <div style={{ ...panelStyle, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          <h3 style={{ margin: 0, fontFamily: theme.fontSerif, fontSize: 17 }}>מיני-סשנים בחודש</h3>
-          {miniSessions.map((miniSession) => {
-            const bookings = miniSessionBookings[miniSession.id] ?? [];
-            return (
-              <div key={miniSession.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: '0.75rem 0.9rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <strong>{formatShootDateLabel(miniSession.date)}</strong>
-                  <span style={{ fontSize: 12, color: miniSession.is_active ? theme.successText : theme.textMuted }}>
-                    {miniSession.is_active ? 'פעיל' : 'לא פעיל'}
-                  </span>
-                </div>
-                <span style={{ fontSize: 13, color: theme.textMuted }}>
-                  <span dir="ltr">{miniSession.start_time}</span> - <span dir="ltr">{miniSession.end_time}</span>
-                  {' · '} {miniSession.duration_minutes} דק'
-                </span>
-                {(miniSession.price !== null || miniSession.deposit !== null) && (
-                  <span style={{ fontSize: 12, color: theme.textMuted }}>
-                    {miniSession.price !== null && `מחיר: ${miniSession.price}₪`}
-                    {miniSession.price !== null && miniSession.deposit !== null && ' · '}
-                    {miniSession.deposit !== null && `מקדמה: ${miniSession.deposit}₪`}
-                  </span>
-                )}
-                {miniSession.notes && <span style={{ fontSize: 12, color: theme.textMuted }}>{miniSession.notes}</span>}
-
-                {bookings.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginTop: '0.2rem' }}>
-                    {bookings.map((booking) => (
-                      <div key={booking.id} style={{ border: `1px solid ${theme.borderLight}`, borderRadius: 8, padding: '0.45rem 0.6rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                          <strong style={{ fontSize: 13 }}>{booking.client_name}</strong>
-                          <span style={{ fontSize: 11, color: booking.status === 'confirmed' ? theme.successText : booking.status === 'cancelled' ? theme.errorText : theme.warningText }}>
-                            {booking.status === 'confirmed' ? 'אושרה' : booking.status === 'cancelled' ? 'בוטלה' : 'ממתינה'}
-                          </span>
-                        </div>
-                        <span style={{ fontSize: 12, color: theme.textMuted }}>
-                          {booking.selected_slot} · {booking.phone} · {booking.email}
-                        </span>
-                        {booking.notes && <span style={{ fontSize: 12, color: theme.textMuted }}>{booking.notes}</span>}
-                        {booking.status === 'pending' && (
-                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.15rem' }}>
-                            <button type="button" onClick={() => updateBookingStatus(booking.id, 'confirmed')} style={{ ...outlineButtonStyle, padding: '0.35rem 0.7rem', fontSize: 12 }}>
-                              אישור
-                            </button>
-                            <button type="button" onClick={() => updateBookingStatus(booking.id, 'cancelled')} style={{ ...outlineButtonStyle, padding: '0.35rem 0.7rem', fontSize: 12, color: theme.errorText, borderColor: theme.errorText }}>
-                              ביטול
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {form && (
         <form onSubmit={handleSubmit} style={{ ...panelStyle, display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
@@ -877,6 +802,199 @@ export default function CalendarPage() {
             </div>
           );
         })}
+      </div>
+
+      <div style={{ ...panelStyle, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        <button
+          type="button"
+          onClick={() => setMiniSessionsOpen((open) => !open)}
+          aria-expanded={miniSessionsOpen}
+          style={{ background: 'none', border: 'none', color: theme.text, cursor: 'pointer', padding: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', width: '100%', textAlign: 'start' }}
+        >
+          <span style={{ fontFamily: theme.fontSerif, fontSize: 17 }}>
+            🏃‍♀️ מרתוני צילום (מיני-סשנים)
+            {miniSessions.length > 0 && <span style={{ fontSize: 13, color: theme.textMuted }}> · {miniSessions.length} החודש</span>}
+          </span>
+          <span aria-hidden="true" style={{ fontSize: 14, color: theme.textMuted }}>{miniSessionsOpen ? '▲' : '▼'}</span>
+        </button>
+
+        {miniSessionsOpen && (
+          <>
+            {miniSessionsLink && (
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <a href={miniSessionsLink} target="_blank" rel="noreferrer" style={{ ...outlineButtonStyle, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                  דף ההרשמה שלי למרתון
+                </a>
+                <button type="button" onClick={copyMiniSessionsLink} style={outlineButtonStyle}>
+                  {linkCopied ? 'הועתק ✓' : '🔗 העתקת קישור ללקוחות'}
+                </button>
+              </div>
+            )}
+          <form onSubmit={handleMiniSessionSubmit} style={{ ...panelStyle, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <h3 style={{ fontFamily: theme.fontSerif, fontSize: 16, margin: 0 }}>
+              מרתון חדש <span style={{ fontSize: 12, color: theme.textMuted }}>· שבת/חג חסומים אוטומטית</span>
+            </h3>
+
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <label style={{ ...labelStyle, flex: 1, minWidth: 140 }}>
+                תאריך
+                <input type="date" value={miniSessionForm.date} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, date: e.target.value }))} style={inputStyle} required />
+              </label>
+              <label style={{ ...labelStyle, flex: 1, minWidth: 120 }}>
+                שעת התחלה
+                <input type="time" value={miniSessionForm.startTime} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, startTime: e.target.value }))} style={inputStyle} required />
+              </label>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <label style={{ ...labelStyle, flex: 1, minWidth: 120 }}>
+                כמה מיני-סשנים ביום
+                <input type="number" min={1} max={60} step={1} value={miniSessionForm.sessionCount} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, sessionCount: e.target.value }))} style={inputStyle} required />
+              </label>
+              <label style={{ ...labelStyle, flex: 1, minWidth: 120 }}>
+                כמה דקות כל מיני-סשן
+                <input type="number" min={5} max={180} step={5} value={miniSessionForm.durationMinutes} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, durationMinutes: e.target.value }))} style={inputStyle} required />
+              </label>
+            </div>
+
+            <div style={{ fontSize: 13, color: theme.textMuted, background: theme.bg, borderRadius: 8, padding: '0.6rem 0.8rem' }}>
+              {miniSessionEndTime ? (
+                miniSessionPreviewSlots.length > 0 ? (
+                  <>
+                    המרתון יסתיים ב-<b dir="ltr">{miniSessionEndTime}</b>. השעות שהלקוחות יוכלו לבחור:
+                    <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.4rem' }} dir="ltr">
+                      {miniSessionPreviewSlots.map((slot) => (
+                        <span key={slot} style={{ border: `1px solid ${theme.border}`, borderRadius: 999, padding: '0.1rem 0.55rem', fontSize: 12 }}>{slot}</span>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  'בתאריך הזה אי אפשר לקבוע מרתון (שבת/חג)'
+                )
+              ) : (
+                'המרתון חייב להסתיים עד חצות - בדקי את שעת ההתחלה, המשך ומספר המיני-סשנים'
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <label style={{ ...labelStyle, flex: 1, minWidth: 120 }}>
+                מחיר
+                <input type="number" min={0} step={10} value={miniSessionForm.price} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, price: e.target.value }))} style={inputStyle} />
+              </label>
+              <label style={{ ...labelStyle, flex: 1, minWidth: 120 }}>
+                מקדמה
+                <input type="number" min={0} step={10} value={miniSessionForm.deposit} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, deposit: e.target.value }))} style={inputStyle} />
+              </label>
+            </div>
+
+            <label style={labelStyle}>
+              הערות
+              <textarea rows={2} value={miniSessionForm.notes} onChange={(e) => setMiniSessionForm((prev) => ({ ...prev, notes: e.target.value }))} style={{ ...inputStyle, resize: 'vertical' }} />
+            </label>
+
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button type="submit" style={goldButtonStyle}>שמירת המרתון</button>
+            </div>
+
+            {miniSessionError && (
+              <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.6rem 0.9rem', borderRadius: 8, fontSize: 13, margin: 0 }}>
+                {miniSessionError}
+              </p>
+            )}
+            {miniSessionNotice && (
+              <p style={{ background: theme.successBg, color: theme.successText, padding: '0.6rem 0.9rem', borderRadius: 8, fontSize: 13, margin: 0 }}>
+                {miniSessionNotice}
+              </p>
+            )}
+          </form>
+
+          {miniSessions.length > 0 && (
+            <div style={{ ...panelStyle, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <h3 style={{ margin: 0, fontFamily: theme.fontSerif, fontSize: 17 }}>מרתונים החודש</h3>
+              {miniSessions.map((miniSession) => {
+                const bookings = miniSessionBookings[miniSession.id] ?? [];
+                return (
+                  <div key={miniSession.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: '0.75rem 0.9rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <strong>{formatShootDateLabel(miniSession.date)}</strong>
+                      <span style={{ fontSize: 12, color: miniSession.is_active ? theme.successText : theme.textMuted }}>
+                        {miniSession.is_active ? 'פעיל' : 'לא פעיל'}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: 13, color: theme.textMuted }}>
+                      <span dir="ltr">{miniSession.start_time}</span> - <span dir="ltr">{miniSession.end_time}</span>
+                      {' · '} {miniSession.duration_minutes} דק' כל אחד
+                      {' · '} {bookings.filter((b) => b.status !== 'cancelled').length} נרשמו
+                    </span>
+                    {(miniSession.price !== null || miniSession.deposit !== null) && (
+                      <span style={{ fontSize: 12, color: theme.textMuted }}>
+                        {miniSession.price !== null && `מחיר: ${miniSession.price}₪`}
+                        {miniSession.price !== null && miniSession.deposit !== null && ' · '}
+                        {miniSession.deposit !== null && `מקדמה: ${miniSession.deposit}₪`}
+                      </span>
+                    )}
+                    {miniSession.notes && <span style={{ fontSize: 12, color: theme.textMuted }}>{miniSession.notes}</span>}
+
+                    {(() => {
+                      // לוח שעות מסודר: כל שעה במרתון, ומי נרשמה אליה (או "פנוי")
+                      const slots = buildMiniSessionSlots(miniSession.date, miniSession.duration_minutes, miniSession.start_time, miniSession.end_time);
+                      const activeBySlot = new Map(bookings.filter((b) => b.status !== 'cancelled').map((b) => [b.selected_slot, b]));
+                      const cancelled = bookings.filter((b) => b.status === 'cancelled').sort((x, y) => x.selected_slot.localeCompare(y.selected_slot));
+                      const extra = bookings
+                        .filter((b) => b.status !== 'cancelled' && !slots.includes(b.selected_slot))
+                        .sort((x, y) => x.selected_slot.localeCompare(y.selected_slot));
+                      const rows = [
+                        ...slots.map((slot) => ({ slot, booking: activeBySlot.get(slot) ?? null })),
+                        ...extra.map((b) => ({ slot: b.selected_slot, booking: b })),
+                      ];
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.2rem' }}>
+                          {rows.map(({ slot, booking }) => (
+                            <div key={slot} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', border: `1px solid ${theme.borderLight}`, borderRadius: 8, padding: '0.4rem 0.6rem', opacity: booking ? 1 : 0.6 }}>
+                              <b dir="ltr" style={{ minWidth: 44, fontSize: 14 }}>{slot}</b>
+                              {booking ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', flex: 1, minWidth: 0 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <strong style={{ fontSize: 13 }}>{booking.client_name}</strong>
+                                    <span style={{ fontSize: 11, color: booking.status === 'confirmed' ? theme.successText : theme.warningText }}>
+                                      {booking.status === 'confirmed' ? 'אושרה' : 'ממתינה'}
+                                    </span>
+                                  </div>
+                                  <span style={{ fontSize: 12, color: theme.textMuted }}>
+                                    <span dir="ltr">{booking.phone}</span> · {booking.email}
+                                  </span>
+                                  {booking.notes && <span style={{ fontSize: 12, color: theme.textMuted }}>{booking.notes}</span>}
+                                  {booking.status === 'pending' && (
+                                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.15rem' }}>
+                                      <button type="button" onClick={() => updateBookingStatus(booking.id, 'confirmed')} style={{ ...outlineButtonStyle, padding: '0.35rem 0.7rem', fontSize: 12 }}>
+                                        אישור
+                                      </button>
+                                      <button type="button" onClick={() => updateBookingStatus(booking.id, 'cancelled')} style={{ ...outlineButtonStyle, padding: '0.35rem 0.7rem', fontSize: 12, color: theme.errorText, borderColor: theme.errorText }}>
+                                        ביטול
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: 13, color: theme.textMuted }}>פנוי</span>
+                              )}
+                            </div>
+                          ))}
+                          {cancelled.length > 0 && (
+                            <span style={{ fontSize: 12, color: theme.textFaint }}>
+                              בוטלו: {cancelled.map((b) => `${b.selected_slot} ${b.client_name}`).join(' · ')}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          </>
+        )}
       </div>
     </div>
   );

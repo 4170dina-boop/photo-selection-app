@@ -5,7 +5,6 @@ import { theme, inputStyle, goldButtonStyle, outlineButtonStyle } from '@/lib/th
 
 interface MiniSessionPublicItem {
   id: string;
-  photographer_id: string;
   date: string;
   start_time: string;
   end_time: string;
@@ -34,6 +33,10 @@ export default function MiniSessionsPage() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState('');
+  // הצלמת מהקישור (/mini-sessions?p=...) - null עד שנקרא מה-URL, '' = אין בקישור
+  const [photographerId, setPhotographerId] = useState<string | null>(null);
+  const [businessName, setBusinessName] = useState<string | null>(null);
+  const [upcomingDates, setUpcomingDates] = useState<string[]>([]);
 
   const selectedMiniSession = useMemo(
     () => miniSessions.find((session) => session.id === selectedMiniSessionId) ?? null,
@@ -41,10 +44,22 @@ export default function MiniSessionsPage() {
   );
 
   useEffect(() => {
+    setPhotographerId(new URLSearchParams(window.location.search).get('p') ?? '');
+  }, []);
+
+  useEffect(() => {
+    if (photographerId === null) return;
+    if (!photographerId) {
+      setLoading(false);
+      setError('קישור ההרשמה לא מלא - בקשו מהצלמת את הקישור שלה');
+      return;
+    }
     loadMiniSessions(selectedDate);
-  }, [selectedDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate, photographerId]);
 
   async function loadMiniSessions(date: string) {
+    if (!photographerId) return;
     setLoading(true);
     setError('');
     setSelectedMiniSessionId('');
@@ -52,7 +67,7 @@ export default function MiniSessionsPage() {
     setSuccess('');
 
     try {
-      const res = await fetch(`/api/mini-sessions/public?date=${encodeURIComponent(date)}`);
+      const res = await fetch(`/api/mini-sessions/public?p=${encodeURIComponent(photographerId)}&date=${encodeURIComponent(date)}`);
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
@@ -61,6 +76,8 @@ export default function MiniSessionsPage() {
         return;
       }
 
+      setBusinessName(typeof data.businessName === 'string' ? data.businessName : null);
+      setUpcomingDates(Array.isArray(data.upcomingDates) ? data.upcomingDates : []);
       const items = Array.isArray(data.miniSessions) ? data.miniSessions : [];
       setMiniSessions(items);
       if (items.length > 0) {
@@ -102,6 +119,7 @@ export default function MiniSessionsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          photographerId,
           miniSessionId: selectedMiniSession.id,
           clientName: form.clientName,
           phone: form.phone,
@@ -145,6 +163,7 @@ export default function MiniSessionsPage() {
         <div style={{ marginBottom: 16, textAlign: 'center' }}>
           <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 6 }}>תזמון צילום</div>
           <h1 style={{ margin: 0, fontSize: 28, color: theme.gold }}>מיני-סשן</h1>
+          {businessName && <div style={{ marginTop: 6, fontSize: 15 }}>{businessName}</div>}
         </div>
 
         <div style={{ background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 16 }}>
@@ -157,6 +176,29 @@ export default function MiniSessionsPage() {
               style={{ ...inputStyle, width: '100%' }}
             />
           </label>
+
+          {upcomingDates.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 6 }}>תאריכים פנויים:</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {upcomingDates.map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setSelectedDate(d)}
+                    aria-pressed={d === selectedDate}
+                    style={{
+                      ...outlineButtonStyle, padding: '0.3rem 0.8rem', fontSize: 13,
+                      borderColor: d === selectedDate ? theme.gold : theme.border,
+                      color: d === selectedDate ? theme.gold : theme.textMuted,
+                    }}
+                  >
+                    {new Date(`${d}T12:00:00`).toLocaleDateString('he-IL', { weekday: 'short', day: 'numeric', month: 'numeric' })}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {loading && <div style={{ marginTop: 16, color: theme.textMuted }}>טוען זמינות...</div>}
 

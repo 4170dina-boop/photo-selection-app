@@ -7,15 +7,45 @@ const supabaseAdmin = createAdminClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY as string
 );
 
+// כל צלמת מקבלת קישור הרשמה משלה: /mini-sessions?p=<photographers.id>. בלי
+// p הדף הציג את המרתונים של כל הצלמות במערכת ביחד.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(req: NextRequest) {
+  const photographerId = req.nextUrl.searchParams.get('p') ?? '';
   const date = req.nextUrl.searchParams.get('date');
+  if (!UUID_RE.test(photographerId)) {
+    return NextResponse.json({ error: 'קישור ההרשמה לא תקין - בקשו מהצלמת את הקישור המלא' }, { status: 400 });
+  }
   if (!date) {
     return NextResponse.json({ error: 'חסר תאריך' }, { status: 400 });
   }
 
+  const { data: photographer } = await supabaseAdmin
+    .from('photographers')
+    .select('id, business_name')
+    .eq('id', photographerId)
+    .maybeSingle();
+  if (!photographer) {
+    return NextResponse.json({ error: 'קישור ההרשמה לא תקין - בקשו מהצלמת את הקישור המלא' }, { status: 404 });
+  }
+
+  // התאריכים הקרובים שיש בהם מרתון - כדי שהלקוחה לא תצטרך לנחש תאריך
+  const todayIsrael = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem' }).format(new Date());
+  const { data: upcoming } = await supabaseAdmin
+    .from('mini_sessions')
+    .select('date')
+    .eq('photographer_id', photographerId)
+    .eq('is_active', true)
+    .gte('date', todayIsrael)
+    .order('date', { ascending: true })
+    .limit(60);
+  const upcomingDates = Array.from(new Set((upcoming ?? []).map((row) => row.date as string)));
+
   const { data: miniSessions, error } = await supabaseAdmin
     .from('mini_sessions')
     .select('*')
+    .eq('photographer_id', photographerId)
     .eq('date', date)
     .eq('is_active', true)
     .order('start_time', { ascending: true });
@@ -34,7 +64,6 @@ export async function GET(req: NextRequest) {
 
       return {
         id: miniSession.id,
-        photographer_id: miniSession.photographer_id,
         date: miniSession.date,
         start_time: miniSession.start_time,
         end_time: miniSession.end_time,
@@ -53,7 +82,7 @@ export async function GET(req: NextRequest) {
     })
   );
 
-  return NextResponse.json({ miniSessions: result });
+  return NextResponse.json({ businessName: photographer.business_name ?? null, upcomingDates, miniSessions: result });
 }
 
 export async function POST(req: NextRequest) {
@@ -69,6 +98,7 @@ export async function POST(req: NextRequest) {
   }
 
   const typedBody = body as {
+    photographerId?: unknown;
     miniSessionId?: unknown;
     clientName?: unknown;
     phone?: unknown;
@@ -90,12 +120,13 @@ export async function POST(req: NextRequest) {
 
   const { data: miniSession } = await supabaseAdmin
     .from('mini_sessions')
-    .select('id, date, start_time, end_time, duration_minutes, is_active')
+    .select('id, photographer_id, date, start_time, end_time, duration_minutes, is_active')
     .eq('id', miniSessionId)
     .eq('is_active', true)
     .single();
 
-  if (!miniSession) {
+  // ההזמנה חייבת להיות למרתון של הצלמת שהקישור שלה פתוח
+  if (!miniSession || miniSession.photographer_id !== typedBody.photographerId) {
     return NextResponse.json({ error: 'המיני-סשן לא קיים או לא פעיל' }, { status: 404 });
   }
 
