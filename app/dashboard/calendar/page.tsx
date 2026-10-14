@@ -181,6 +181,10 @@ export default function CalendarPage() {
   });
   // מרתונים לא קורים כל הזמן - האזור סגור כברירת מחדל, מתחת ליומן
   const [miniSessionsOpen, setMiniSessionsOpen] = useState(false);
+  // עריכת מרתון קיים - אותו טופס, ושמירה ב-PATCH במקום יצירה חדשה
+  const [editingMiniSessionId, setEditingMiniSessionId] = useState<string | null>(null);
+  const [miniSessionBusyId, setMiniSessionBusyId] = useState<string | null>(null);
+  const miniSessionFormRef = useRef<HTMLFormElement | null>(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -330,8 +334,8 @@ export default function CalendarPage() {
       notes: miniSessionForm.notes.trim() || null,
     };
 
-    const res = await fetch('/api/mini-sessions', {
-      method: 'POST',
+    const res = await fetch(editingMiniSessionId ? `/api/mini-sessions/${editingMiniSessionId}` : '/api/mini-sessions', {
+      method: editingMiniSessionId ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
@@ -341,7 +345,8 @@ export default function CalendarPage() {
       return;
     }
 
-    setMiniSessionNotice('המיני-סשן נשמר');
+    setMiniSessionNotice(editingMiniSessionId ? 'השינויים נשמרו' : 'המרתון נשמר');
+    setEditingMiniSessionId(null);
     setMiniSessionForm({
       date: miniSessionForm.date,
       startTime: '09:00',
@@ -353,6 +358,75 @@ export default function CalendarPage() {
       notes: '',
     });
     loadMiniSessionsRange();
+  }
+
+  function startEditMiniSession(miniSession: MiniSession) {
+    const start = miniSession.start_time.slice(0, 5);
+    const end = miniSession.end_time.slice(0, 5);
+    const toMinutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+    const count = Math.max(1, Math.floor((toMinutes(end) - toMinutes(start)) / miniSession.duration_minutes));
+    setMiniSessionError('');
+    setMiniSessionNotice('');
+    setEditingMiniSessionId(miniSession.id);
+    setMiniSessionForm({
+      date: miniSession.date,
+      startTime: start,
+      endTime: end,
+      durationMinutes: String(miniSession.duration_minutes),
+      sessionCount: String(count),
+      price: miniSession.price === null ? '' : String(miniSession.price),
+      deposit: miniSession.deposit === null ? '' : String(miniSession.deposit),
+      notes: miniSession.notes ?? '',
+    });
+    miniSessionFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function cancelEditMiniSession() {
+    setEditingMiniSessionId(null);
+    setMiniSessionError('');
+    setMiniSessionForm((prev) => ({ ...prev, startTime: '09:00', endTime: '10:00', durationMinutes: '20', sessionCount: '3', price: '150', deposit: '50', notes: '' }));
+  }
+
+  async function toggleMiniSessionActive(miniSession: MiniSession) {
+    setMiniSessionBusyId(miniSession.id);
+    setMiniSessionError('');
+    try {
+      const res = await fetch(`/api/mini-sessions/${miniSession.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: !miniSession.is_active }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setMiniSessionError(data.error ?? 'העדכון נכשל');
+        return;
+      }
+      await loadMiniSessionsRange();
+    } finally {
+      setMiniSessionBusyId(null);
+    }
+  }
+
+  async function deleteMiniSession(miniSession: MiniSession) {
+    const booked = (miniSessionBookings[miniSession.id] ?? []).filter((b) => b.status !== 'cancelled').length;
+    const question = booked > 0
+      ? `יש ${booked} לקוחות שנרשמו למרתון הזה. למחוק אותו יחד עם ההרשמות? (הן לא יקבלו הודעה)`
+      : 'למחוק את המרתון?';
+    if (!window.confirm(question)) return;
+    setMiniSessionBusyId(miniSession.id);
+    setMiniSessionError('');
+    try {
+      const res = await fetch(`/api/mini-sessions/${miniSession.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setMiniSessionError(data.error ?? 'המחיקה נכשלה');
+        return;
+      }
+      if (editingMiniSessionId === miniSession.id) cancelEditMiniSession();
+      await loadMiniSessionsRange();
+    } finally {
+      setMiniSessionBusyId(null);
+    }
   }
 
   function shiftMonth(delta: number) {
@@ -830,9 +904,9 @@ export default function CalendarPage() {
                 </button>
               </div>
             )}
-          <form onSubmit={handleMiniSessionSubmit} style={{ ...panelStyle, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <form ref={miniSessionFormRef} onSubmit={handleMiniSessionSubmit} style={{ ...panelStyle, display: 'flex', flexDirection: 'column', gap: '0.75rem', borderColor: editingMiniSessionId ? theme.gold : undefined }}>
             <h3 style={{ fontFamily: theme.fontSerif, fontSize: 16, margin: 0 }}>
-              מרתון חדש <span style={{ fontSize: 12, color: theme.textMuted }}>· שבת/חג חסומים אוטומטית</span>
+              {editingMiniSessionId ? 'עריכת מרתון' : 'מרתון חדש'} <span style={{ fontSize: 12, color: theme.textMuted }}>· שבת/חג חסומים אוטומטית</span>
             </h3>
 
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -893,7 +967,12 @@ export default function CalendarPage() {
             </label>
 
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-              <button type="submit" style={goldButtonStyle}>שמירת המרתון</button>
+              <button type="submit" style={goldButtonStyle}>{editingMiniSessionId ? 'שמירת השינויים' : 'שמירת המרתון'}</button>
+              {editingMiniSessionId && (
+                <button type="button" onClick={cancelEditMiniSession} style={outlineButtonStyle}>
+                  ביטול עריכה
+                </button>
+              )}
             </div>
 
             {miniSessionError && (
@@ -918,11 +997,22 @@ export default function CalendarPage() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
                       <strong>{formatShootDateLabel(miniSession.date)}</strong>
                       <span style={{ fontSize: 12, color: miniSession.is_active ? theme.successText : theme.textMuted }}>
-                        {miniSession.is_active ? 'פעיל' : 'לא פעיל'}
+                        {miniSession.is_active ? 'פתוח להרשמה' : 'ההרשמה סגורה'}
                       </span>
                     </div>
+                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                      <button type="button" onClick={() => startEditMiniSession(miniSession)} disabled={miniSessionBusyId === miniSession.id} style={{ ...outlineButtonStyle, padding: '0.3rem 0.7rem', fontSize: 12 }}>
+                        ✎ עריכה
+                      </button>
+                      <button type="button" onClick={() => toggleMiniSessionActive(miniSession)} disabled={miniSessionBusyId === miniSession.id} style={{ ...outlineButtonStyle, padding: '0.3rem 0.7rem', fontSize: 12 }}>
+                        {miniSession.is_active ? 'סגירת ההרשמה' : 'פתיחת ההרשמה'}
+                      </button>
+                      <button type="button" onClick={() => deleteMiniSession(miniSession)} disabled={miniSessionBusyId === miniSession.id} style={{ ...outlineButtonStyle, padding: '0.3rem 0.7rem', fontSize: 12, color: theme.errorText, borderColor: theme.errorText }}>
+                        🗑 מחיקה
+                      </button>
+                    </div>
                     <span style={{ fontSize: 13, color: theme.textMuted }}>
-                      <span dir="ltr">{miniSession.start_time}</span> - <span dir="ltr">{miniSession.end_time}</span>
+                      <span dir="ltr">{miniSession.start_time.slice(0, 5)}</span> - <span dir="ltr">{miniSession.end_time.slice(0, 5)}</span>
                       {' · '} {miniSession.duration_minutes} דק' כל אחד
                       {' · '} {bookings.filter((b) => b.status !== 'cancelled').length} נרשמו
                     </span>
