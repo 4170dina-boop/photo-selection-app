@@ -2,15 +2,20 @@ import type { CSSProperties } from 'react';
 
 // פלטת "דינה שוורץ" - נייבי כהה + ורוד-פודרה אל אפרסק, serif אלגנטי לכותרות.
 // מבוססת על עיצוב רפרנס שהתקבל מהמשתמשת (לא סגנון ה-gold/dark-gold המקורי).
+//
+// צבעי הבסיס הם CSS variables עם ברירת מחדל: בדשבורד לא מוגדר שום משתנה ונשארת
+// הפלטה הזו; בגלריית הלקוחה המשתנים נקבעים לפי העיצוב שהצלמת בחרה
+// (photographers.custom_theme, ראו lib/galleryTheme.ts). לכן אסור לחבר לערכים
+// האלה סיומת שקיפות (`${theme.bg}44`) - רק להשתמש בהם כמו שהם ב-CSS.
 export const theme = {
-  bg: '#0f1626',
-  panel: '#161c2d',
-  panelInput: '#1b2236',
-  border: 'rgba(232,224,210,0.11)',
-  borderLight: 'rgba(232,224,210,0.22)',
-  text: '#efe8db',
-  textMuted: 'rgba(239,232,219,0.62)',
-  textFaint: 'rgba(239,232,219,0.38)',
+  bg: 'var(--t-bg, #0f1626)',
+  panel: 'var(--t-panel, #161c2d)',
+  panelInput: 'var(--t-panel-input, #1b2236)',
+  border: 'var(--t-border, rgba(232,224,210,0.11))',
+  borderLight: 'var(--t-border-light, rgba(232,224,210,0.22))',
+  text: 'var(--t-text, #efe8db)',
+  textMuted: 'var(--t-text-muted, rgba(239,232,219,0.62))',
+  textFaint: 'var(--t-text-faint, rgba(239,232,219,0.38))',
   gold: '#c98f89',
   goldBright: '#e3b3ac',
   goldText: '#20120f',

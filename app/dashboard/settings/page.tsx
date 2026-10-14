@@ -9,16 +9,13 @@ import { classifySignInError, isRateLimitError, RATE_LIMIT_MESSAGE } from '@/lib
 import PaymentMethodsSettings from '@/components/PaymentMethodsSettings';
 import { numberOrNull, missingNumberFields } from '@/lib/settingsForm';
 import GalleryTemplatesManager from '@/components/GalleryTemplatesManager';
+import GalleryDesignEditor from '@/components/GalleryDesignEditor';
+import type { GalleryColors } from '@/lib/galleryTheme';
 
 const DEFAULT_BRAND_COLOR = '#c98f89'; // theme.gold - הגוון הקבוע, מוצג כברירת מחדל בבורר הצבע
 const LOGO_BUCKET = 'photographer-logos';
 
-interface CustomTheme {
-  bg: string;
-  panel: string;
-  text: string;
-  accent: string;
-}
+type CustomTheme = GalleryColors;
 
 // מגבלת הגלריות הפעילות בחשבון חינמי - כמו freeGalleryLimit ב-app/dashboard/galleries/page.tsx
 const FREE_GALLERY_LIMIT = 1;
@@ -45,12 +42,6 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
 
   const [customTheme, setCustomTheme] = useState<CustomTheme | null>(null);
-  const [themeDescription, setThemeDescription] = useState('');
-  const [previewTheme, setPreviewTheme] = useState<CustomTheme | null>(null);
-  const [designingTheme, setDesigningTheme] = useState(false);
-  const [savingTheme, setSavingTheme] = useState(false);
-  const [themeError, setThemeError] = useState('');
-  const [themeSaved, setThemeSaved] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -104,72 +95,6 @@ export default function SettingsPage() {
       setLoading(false);
     })();
   }, []);
-
-  async function handleDesignTheme(e: React.FormEvent) {
-    e.preventDefault();
-    setThemeError('');
-    setThemeSaved(false);
-    setDesigningTheme(true);
-
-    const res = await fetch('/api/photographer/design-theme', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ description: themeDescription }),
-    });
-    const data = await res.json().catch(() => ({}));
-    setDesigningTheme(false);
-
-    if (!res.ok) {
-      setThemeError(data.error ?? 'עיצוב הגלריה נכשל, נסי שוב');
-      return;
-    }
-
-    setPreviewTheme(data.theme);
-  }
-
-  async function handleSaveTheme() {
-    if (!previewTheme) return;
-    setThemeError('');
-    setSavingTheme(true);
-
-    const res = await fetch('/api/photographer', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customTheme: previewTheme }),
-    });
-
-    setSavingTheme(false);
-
-    if (!res.ok) {
-      setThemeError('שמירת העיצוב נכשלה, נסי שוב');
-      return;
-    }
-
-    setCustomTheme(previewTheme);
-    setPreviewTheme(null);
-    setThemeSaved(true);
-  }
-
-  async function handleResetTheme() {
-    setThemeError('');
-    setSavingTheme(true);
-
-    const res = await fetch('/api/photographer', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customTheme: null }),
-    });
-
-    setSavingTheme(false);
-
-    if (!res.ok) {
-      setThemeError('איפוס העיצוב נכשל, נסי שוב');
-      return;
-    }
-
-    setCustomTheme(null);
-    setPreviewTheme(null);
-  }
 
   async function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -415,22 +340,6 @@ export default function SettingsPage() {
           </span>
         </label>
 
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-          צבע מותג
-          <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
-            <input
-              type="color"
-              value={brandColor}
-              onChange={(e) => setBrandColor(e.target.value)}
-              style={{ width: 44, height: 36, padding: 2, background: theme.panelInput, border: `1px solid ${theme.border}`, borderRadius: 4, cursor: 'pointer' }}
-            />
-            <span style={{ color: theme.textFaint, fontSize: 12 }}>{brandColor}</span>
-          </div>
-          <span style={{ color: theme.textFaint, fontSize: 12 }}>
-            צבע ההדגשה (לב הבחירה, פס ההתקדמות, הכפתורים) שהלקוחה רואה בדף הגלריה שלה.
-          </span>
-        </label>
-
         <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '1rem', marginTop: '0.25rem' }}>
           <p style={{ fontSize: 14, marginBottom: '0.75rem' }}>חבילת ברירת מחדל לגלריה חדשה</p>
 
@@ -551,72 +460,16 @@ export default function SettingsPage() {
 
       <AutomationSettings />
 
-      <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
-        <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.5rem' }}>עיצוב הגלריה עם AI</h2>
-        <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '1rem' }}>
-          תארי במילים שלך איך תרצי שגלריית הלקוחה שלך תיראה - הצבעים בלבד (רקע, כרטיסים, טקסט, הדגשה) משתנים,
-          שאר ההגדרות (מחירים, לוגו, תזכורות וכו') נשארות אותו דבר.
-          {customTheme && ' יש לך כרגע עיצוב מותאם אישית שמורה.'}
-        </p>
-
-        <form onSubmit={handleDesignTheme} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          <textarea
-            value={themeDescription}
-            onChange={(e) => setThemeDescription(e.target.value)}
-            placeholder="למשל: רומנטי ופסטלי, בהיר וחמים · או: כהה ודרמטי כמו מגזין יוקרה"
-            rows={2}
-            maxLength={300}
-            style={{ ...inputStyle, resize: 'vertical' }}
-          />
-          <div>
-            <button type="submit" disabled={designingTheme || !themeDescription.trim()} style={{ ...outlineButtonStyle, opacity: designingTheme || !themeDescription.trim() ? 0.6 : 1 }}>
-              {designingTheme ? 'מעצבת...' : '✨ עצבי לי'}
-            </button>
-          </div>
-        </form>
-
-        {themeError && (
-          <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.6rem 0.9rem', borderRadius: 8, fontSize: 13, marginTop: '0.75rem' }}>
-            {themeError}
-          </p>
-        )}
-
-        {previewTheme && (
-          <div
-            style={{
-              marginTop: '1rem', padding: '1.25rem', borderRadius: 10, border: `1px solid ${theme.border}`,
-              background: previewTheme.bg, color: previewTheme.text,
-            }}
-          >
-            <p style={{ fontSize: 12, marginBottom: '0.5rem', opacity: 0.7 }}>תצוגה מקדימה</p>
-            <div style={{ padding: '0.85rem 1rem', borderRadius: 8, background: previewTheme.panel, marginBottom: '0.75rem' }}>
-              כך ייראו כרטיסים וטקסט בגלריה שלך.
-            </div>
-            <button
-              type="button"
-              style={{ background: previewTheme.accent, color: '#fff', border: 'none', borderRadius: 4, padding: '0.5rem 1.1rem', fontWeight: 700, cursor: 'default' }}
-            >
-              כפתור לדוגמה
-            </button>
-            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-              <button type="button" onClick={handleSaveTheme} disabled={savingTheme} style={{ ...goldButtonStyle, opacity: savingTheme ? 0.6 : 1, padding: '0.5rem 1rem' }}>
-                {savingTheme ? 'שומרת...' : 'שמירת העיצוב הזה'}
-              </button>
-              <button type="button" onClick={() => setPreviewTheme(null)} style={{ ...outlineButtonStyle, padding: '0.5rem 1rem', borderColor: previewTheme.text, color: previewTheme.text }}>
-                ביטול
-              </button>
-            </div>
-          </div>
-        )}
-
-        {customTheme && !previewTheme && (
-          <button type="button" onClick={handleResetTheme} disabled={savingTheme} style={{ background: 'none', border: 'none', color: theme.textFaint, fontSize: 12, cursor: 'pointer', textAlign: 'right', padding: 0, marginTop: '0.75rem' }}>
-            איפוס לעיצוב המקורי
-          </button>
-        )}
-
-        {themeSaved && <p style={{ color: theme.successText, fontSize: 13, marginTop: '0.5rem' }}>העיצוב נשמר!</p>}
-      </div>
+      <GalleryDesignEditor
+        key={customTheme ? 'saved' : 'default'}
+        savedTheme={customTheme}
+        brandColor={brandColor}
+        logoUrl={logoUrl}
+        onSaved={(saved) => {
+          setCustomTheme(saved);
+          if (saved) setBrandColor(saved.accent);
+        }}
+      />
 
       {galleryCounts && (
         <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>

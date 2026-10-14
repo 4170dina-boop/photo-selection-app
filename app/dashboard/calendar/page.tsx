@@ -886,7 +886,7 @@ export default function CalendarPage() {
           style={{ background: 'none', border: 'none', color: theme.text, cursor: 'pointer', padding: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', width: '100%', textAlign: 'start' }}
         >
           <span style={{ fontFamily: theme.fontSerif, fontSize: 17 }}>
-            🏃‍♀️ מרתוני צילום (מיני-סשנים)
+            מרתוני צילום (מיני-סשנים)
             {miniSessions.length > 0 && <span style={{ fontSize: 13, color: theme.textMuted }}> · {miniSessions.length} החודש</span>}
           </span>
           <span aria-hidden="true" style={{ fontSize: 14, color: theme.textMuted }}>{miniSessionsOpen ? '▲' : '▼'}</span>

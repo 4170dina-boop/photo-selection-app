@@ -83,6 +83,7 @@ import {
 } from '@/lib/galleryReview';
 import { normalizeGender, type Gender, type ViewerGender } from '@/lib/gender';
 import { clampComparePan, clampCompareScale } from '@/lib/compareZoom';
+import { galleryCssVars, isGalleryColors, type GalleryColors } from '@/lib/galleryTheme';
 
 interface GalleryPageProps {
   params: { id: string };
@@ -391,6 +392,24 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [brandColor, setBrandColor] = useState<string | null>(null);
   const [photographerName, setPhotographerName] = useState<string | null>(null);
   const [photographerLogo, setPhotographerLogo] = useState<string | null>(null);
+  // צבעי הגלריה שהצלמת בחרה (הגדרות -> עיצוב הגלריה) - נכנסים כ-CSS variables
+  // על כל הדף, ראו lib/galleryTheme.ts. null = הפלטה הרגילה.
+  const [customColors, setCustomColors] = useState<GalleryColors | null>(null);
+  useEffect(() => {
+    if (!customColors) return;
+    const root = document.documentElement;
+    const vars = galleryCssVars(customColors);
+    Object.entries(vars).forEach(([name, value]) => root.style.setProperty(name, value));
+    const previousBodyBg = document.body.style.background;
+    const previousBodyColor = document.body.style.color;
+    document.body.style.background = customColors.bg;
+    document.body.style.color = customColors.text;
+    return () => {
+      Object.keys(vars).forEach((name) => root.style.removeProperty(name));
+      document.body.style.background = previousBodyBg;
+      document.body.style.color = previousBodyColor;
+    };
+  }, [customColors]);
   const [showWelcome, setShowWelcome] = useState(false);
 
   // לשון הפנייה לצופה (lib/gender.ts): בעלים -> galleries.client_gender,
@@ -1140,7 +1159,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     setGalleryStatus(data.status ?? 'sent');
     setReopenedForSelectionAt(data.reopenedForSelectionAt ?? null);
     setReadOnly(serverReadOnly);
-    setBrandColor(data.brandColor ?? null);
+    const colors = isGalleryColors(data.customTheme) ? data.customTheme : null;
+    setCustomColors(colors);
+    setBrandColor(data.brandColor ?? colors?.accent ?? null);
     setPhotographerName(data.photographerName ?? null);
     setPhotographerLogo(data.photographerLogo ?? null);
     setMyParticipant(data.myParticipant ?? null);
