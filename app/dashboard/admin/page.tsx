@@ -176,69 +176,11 @@ export default function AdminPage() {
         ב-`supabase/schema.sql`).
       </p>
 
-      <SystemSetupGuide />
-
-      {unlockedAdminUserId && (
-        <div style={{ background: theme.panel, border: `1px solid ${theme.gold}`, borderRadius: 10, padding: '1rem', marginBottom: '1.5rem' }}>
-          <div style={{ fontWeight: 'bold', marginBottom: '0.35rem' }}>
-            🔒 מומלץ לנעול את הניהול לחשבון שלך: הוסיפי ב-Vercel משתנה <span dir="ltr">ADMIN_USER_ID</span> = ה-user id שלמטה
-          </div>
-          <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '0.75rem' }}>
-            כרגע כל מי שנרשמת ומתחברת עם כתובת המנהלת מקבלת גישת ניהול. אחרי ההוספה (ו-Redeploy) רק החשבון הזה יוכל לנהל.
-          </p>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            <code
-              dir="ltr"
-              style={{
-                flex: '1 1 240px', padding: '0.5rem 0.75rem', borderRadius: 8, border: `1px solid ${theme.border}`,
-                background: theme.bg, color: theme.text, fontSize: 13, userSelect: 'all', wordBreak: 'break-all',
-              }}
-            >
-              {unlockedAdminUserId}
-            </code>
-            <button onClick={copyUserId} style={{ ...outlineButtonStyle, padding: '0.5rem 1.1rem', fontSize: 13 }}>
-              {copiedUserId ? 'הועתק ✓' : 'העתקה'}
-            </button>
-          </div>
-        </div>
-      )}
-
       {error && (
         <p style={{ background: theme.errorBg, color: theme.errorText, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem' }}>
           {error}
         </p>
       )}
-
-      <div style={{ background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10, padding: '1rem', marginBottom: '1.5rem' }}>
-        <div style={{ fontWeight: 'bold', marginBottom: '0.35rem' }}>כתובת שליחת מיילים</div>
-        <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '0.75rem' }}>
-          הכתובת שממנה נשלחים כל המיילים (תזכורות, הזמנות לגלריה וכו'). כרגע: <b>{fromEmail || 'טוען...'}</b>.
-          אחרי שיש דומיין מאומת ב-Resend, אפשר לעדכן כאן בלי לגעת בהגדרות ב-Vercel.
-        </p>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <EmailInput
-            value={fromEmailInput}
-            onValueChange={setFromEmailInput}
-            placeholder="hello@your-domain.co.il"
-            style={{
-              flex: '1 1 240px', padding: '0.5rem 0.75rem', borderRadius: 8,
-              border: `1px solid ${theme.border}`, background: theme.bg, color: theme.text, fontSize: 14,
-            }}
-          />
-          <button
-            onClick={saveFromEmail}
-            disabled={savingFromEmail || !fromEmailInput.trim() || fromEmailInput.trim() === fromEmail}
-            style={{ ...goldButtonStyle, padding: '0.5rem 1.1rem', fontSize: 13, opacity: savingFromEmail ? 0.6 : 1 }}
-          >
-            {savingFromEmail ? 'שומר...' : 'שמירה'}
-          </button>
-        </div>
-        {fromEmailMessage && (
-          <p style={{ marginTop: '0.5rem', fontSize: 13, color: fromEmailMessage.startsWith('נשמר') ? theme.successText : theme.errorText }}>
-            {fromEmailMessage}
-          </p>
-        )}
-      </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
         {rows.map((row) => (
@@ -282,6 +224,67 @@ export default function AdminPage() {
 
         {rows.length === 0 && <p style={{ color: theme.textMuted }}>אין עדיין צלמות רשומות.</p>}
       </div>
+
+      <h2 style={{ fontSize: 17, margin: '2.5rem 0 1rem' }}>הגדרות</h2>
+
+      <SystemSetupGuide />
+
+      {unlockedAdminUserId && (
+        <div style={{ background: theme.panel, border: `1px solid ${theme.gold}`, borderRadius: 10, padding: '1rem', marginBottom: '1.5rem' }}>
+          <div style={{ fontWeight: 'bold', marginBottom: '0.35rem' }}>
+            🔒 מומלץ לנעול את הניהול לחשבון שלך: הוסיפי ב-Vercel משתנה <span dir="ltr">ADMIN_USER_ID</span> = ה-user id שלמטה
+          </div>
+          <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '0.75rem' }}>
+            כרגע כל מי שנרשמת ומתחברת עם כתובת המנהלת מקבלת גישת ניהול. אחרי ההוספה (ו-Redeploy) רק החשבון הזה יוכל לנהל.
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            <code
+              dir="ltr"
+              style={{
+                flex: '1 1 240px', padding: '0.5rem 0.75rem', borderRadius: 8, border: `1px solid ${theme.border}`,
+                background: theme.bg, color: theme.text, fontSize: 13, userSelect: 'all', wordBreak: 'break-all',
+              }}
+            >
+              {unlockedAdminUserId}
+            </code>
+            <button onClick={copyUserId} style={{ ...outlineButtonStyle, padding: '0.5rem 1.1rem', fontSize: 13 }}>
+              {copiedUserId ? 'הועתק ✓' : 'העתקה'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10, padding: '1rem', marginBottom: '1.5rem' }}>
+        <div style={{ fontWeight: 'bold', marginBottom: '0.35rem' }}>כתובת שליחת מיילים</div>
+        <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: '0.75rem' }}>
+          הכתובת שממנה נשלחים כל המיילים (תזכורות, הזמנות לגלריה וכו'). כרגע: <b>{fromEmail || 'טוען...'}</b>.
+          אחרי שיש דומיין מאומת ב-Resend, אפשר לעדכן כאן בלי לגעת בהגדרות ב-Vercel.
+        </p>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <EmailInput
+            value={fromEmailInput}
+            onValueChange={setFromEmailInput}
+            placeholder="hello@your-domain.co.il"
+            style={{
+              flex: '1 1 240px', padding: '0.5rem 0.75rem', borderRadius: 8,
+              border: `1px solid ${theme.border}`, background: theme.bg, color: theme.text, fontSize: 14,
+            }}
+          />
+          <button
+            onClick={saveFromEmail}
+            disabled={savingFromEmail || !fromEmailInput.trim() || fromEmailInput.trim() === fromEmail}
+            style={{ ...goldButtonStyle, padding: '0.5rem 1.1rem', fontSize: 13, opacity: savingFromEmail ? 0.6 : 1 }}
+          >
+            {savingFromEmail ? 'שומר...' : 'שמירה'}
+          </button>
+        </div>
+        {fromEmailMessage && (
+          <p style={{ marginTop: '0.5rem', fontSize: 13, color: fromEmailMessage.startsWith('נשמר') ? theme.successText : theme.errorText }}>
+            {fromEmailMessage}
+          </p>
+        )}
+      </div>
+
     </div>
   );
 }
