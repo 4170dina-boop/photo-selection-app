@@ -543,7 +543,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // תמונות שבקשת סימון עליהן מ"בחירה מהירה" עדיין בדרך
   const swipeInFlightRef = useRef<Set<string>>(new Set());
   const [enlargedId, setEnlargedId] = useState<string | null>(null);
-  const [zoomScale, setZoomScale] = useState(1);
+  const [enlargedZoom, setEnlargedZoom] = useState({ scale: 1, x: 0, y: 0 });
+  const enlargedDragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
   const enlargedImgRef = useRef<HTMLImageElement | null>(null);
   // מעבר אוטומטי ממתין אחרי "אני רוצה את זו" - מתבטל בכל ניווט/סגירה
   const autoAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -601,7 +602,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
 
     function handleWheel(e: WheelEvent) {
       e.preventDefault();
-      setZoomScale((prev) => Math.min(4, Math.max(1, prev - e.deltaY * 0.0015)));
+      setEnlargedZoom((z) => {
+        const scale = clampCompareScale(z.scale + (e.deltaY > 0 ? -0.25 : 0.25));
+        return { scale, x: clampFocusX(z.x, scale), y: clampFocusY(z.y, scale) };
+      });
     }
 
     let pinchStartDistance = 0;
@@ -615,8 +619,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     function handleTouchStart(e: TouchEvent) {
       if (e.touches.length !== 2) return;
       pinchStartDistance = touchDistance(e.touches);
-      setZoomScale((current) => {
-        pinchStartScale = current;
+      setEnlargedZoom((current) => {
+        pinchStartScale = current.scale;
         return current;
       });
     }
@@ -625,7 +629,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
       if (e.touches.length !== 2 || pinchStartDistance === 0) return;
       e.preventDefault();
       const ratio = touchDistance(e.touches) / pinchStartDistance;
-      setZoomScale(Math.min(4, Math.max(1, pinchStartScale * ratio)));
+      setEnlargedZoom((z) => {
+        const scale = clampCompareScale(pinchStartScale * ratio);
+        return { scale, x: clampFocusX(z.x, scale), y: clampFocusY(z.y, scale) };
+      });
     }
 
     img.addEventListener('wheel', handleWheel, { passive: false });
@@ -1800,7 +1807,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     const nextId = photos[index + 1].id;
     autoAdvanceTimerRef.current = setTimeout(() => {
       autoAdvanceTimerRef.current = null;
-      setZoomScale(1);
+      setEnlargedZoom({ scale: 1, x: 0, y: 0 });
       // רק אם הלקוחה עדיין על אותה תמונה (לא דפדפה/סגרה בינתיים)
       setEnlargedId((cur) => (cur === photoId ? nextId : cur));
     }, AUTO_ADVANCE_MS);
@@ -2052,7 +2059,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     if (!photo) return;
     document.getElementById(`photo-card-${photo.id}`)?.scrollIntoView({ behavior: scrollBehavior(), block: 'center' });
     if (photo.thumbnailUrl && photo.fullUrl) {
-      setZoomScale(1);
+      setEnlargedZoom({ scale: 1, x: 0, y: 0 });
       setEnlargedId(photo.id);
     }
   }
@@ -2272,7 +2279,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
     const currentIndex = photos.findIndex((p) => p.id === enlargedId);
     const nextIndex = currentIndex + delta;
     if (currentIndex === -1 || nextIndex < 0 || nextIndex >= photos.length) return;
-    setZoomScale(1);
+    setEnlargedZoom({ scale: 1, x: 0, y: 0 });
     setEnlargedId(photos[nextIndex].id);
   }
 
@@ -2961,7 +2968,9 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           aria-label={tr('cmp.aria')}
           style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 50,
-            display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2rem',
+            display: 'grid',
+            gridTemplateColumns: compareIds.length > 2 ? 'repeat(2, 1fr)' : `repeat(${compareIds.length}, 1fr)`,
+            alignItems: 'center', justifyItems: 'center', gap: '1rem', padding: '2rem',
           }}
           onClick={() => setCompareViewOpen(false)}
         >
@@ -2993,9 +3002,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 onClick={(e) => e.stopPropagation()}
                 style={{
                   display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem',
-                  // עד 2 תמונות - זו לצד זו (רחבות); 3-4 - שתיים בשורה (גריד
-                  // 2x2), כך שכל תמונה גדולה הרבה יותר מטור צר אחד של 4.
-                  maxWidth: compareIds.length <= 2 ? '47%' : '46%',
+                  width: '100%',
                 }}
               >
                 {/* לחיצה פותחת את התמונה למסך מלא עם זום והזזה חופשית (openCompareFocus) */}
@@ -3370,7 +3377,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               if (!start || e.touches.length > 0 || e.changedTouches.length === 0) return;
               enlargedSwipeStartRef.current = null;
               const t = e.changedTouches[0];
-              const delta = swipeNavDeltaForLang(t.clientX - start.x, t.clientY - start.y, zoomScale > 1, lang);
+              const delta = swipeNavDeltaForLang(t.clientX - start.x, t.clientY - start.y, enlargedZoom.scale > 1, lang);
               if (delta === 0) return;
               enlargedLastSwipeAtRef.current = Date.now();
               navigateEnlarged(delta);
@@ -3438,7 +3445,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 ›
               </button>
             )}
-            {zoomScale > 1 && (
+            {enlargedZoom.scale > 1 && (
               <div
                 style={{
                   position: 'absolute', top: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 51,
@@ -3446,7 +3453,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   padding: '4px 10px', borderRadius: 12,
                 }}
               >
-                {Math.round(zoomScale * 100)}%
+                {Math.round(enlargedZoom.scale * 100)}%
               </div>
             )}
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -3459,24 +3466,69 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               onError={() => handleImageError(photo.id)}
               onClick={(e) => {
                 e.stopPropagation();
-                if (Date.now() - enlargedLastSwipeAtRef.current < 400) return; // סוף החלקה, לא הקשה לזום
-                setZoomScale((prev) => (prev > 1 ? 1 : 2));
+                if (Date.now() - enlargedLastSwipeAtRef.current < 400) return;
+              }}
+              onDoubleClick={() => setEnlargedZoom((z) => (z.scale > 1 ? { scale: 1, x: 0, y: 0 } : { scale: 2.4, x: 0, y: 0 }))}
+              onPointerDown={(e) => {
+                if (enlargedZoom.scale <= 1) return;
+                e.currentTarget.setPointerCapture(e.pointerId);
+                enlargedDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, originX: enlargedZoom.x, originY: enlargedZoom.y };
+              }}
+              onPointerMove={(e) => {
+                const drag = enlargedDragRef.current;
+                if (!drag || drag.pointerId !== e.pointerId) return;
+                setEnlargedZoom((z) => ({
+                  scale: z.scale,
+                  x: clampFocusX(drag.originX + (e.clientX - drag.startX), z.scale),
+                  y: clampFocusY(drag.originY + (e.clientY - drag.startY), z.scale),
+                }));
+              }}
+              onPointerUp={(e) => {
+                enlargedDragRef.current = null;
+                if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
               }}
               onContextMenu={(e) => e.preventDefault()}
               title={tr('en.zoomTitle')}
               className="enl-img"
               style={{
-                // מקום לפס הבחירה הקבוע למטה (max-height ב-.enl-img, לפי 100dvh), כדי
-                // שהכפתורים לא יכסו את התמונה
                 maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
-                transform: `scale(${zoomScale})`, transition: zoomScale === 1 ? 'transform 0.15s ease-out' : 'none',
-                cursor: zoomScale > 1 ? 'zoom-out' : 'zoom-in',
+                transform: `translate(${enlargedZoom.x}px, ${enlargedZoom.y}px) scale(${enlargedZoom.scale})`,
+                transition: enlargedDragRef.current ? 'none' : enlargedZoom.scale === 1 ? 'transform 0.15s ease-out' : 'none',
+                cursor: enlargedZoom.scale > 1 ? 'grab' : 'zoom-in',
                 WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
               }}
             />
 
-            {/* פס בחירה קבוע בתחתית, הרחק מהתמונה - כאן (ולא בהקשה על הכרטיס)
-                בוחרים. קליקים/מגע בתוכו לא מגיעים לרקע (סגירה) או להחלקה. */}
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ position: 'fixed', bottom: 160, insetInlineStart: '50%', transform: 'translateX(-50%)', zIndex: 52, display: 'flex', gap: '0.5rem', alignItems: 'center' }}
+            >
+              <button
+                type="button"
+                onClick={() => setEnlargedZoom((z) => { const scale = clampCompareScale(z.scale - 0.4); return { scale, x: clampFocusX(z.x, scale), y: clampFocusY(z.y, scale) }; })}
+                aria-label="הקטנה"
+                style={{ width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 22, cursor: 'pointer' }}
+              >
+                −
+              </button>
+              <button
+                type="button"
+                onClick={() => setEnlargedZoom({ scale: 1, x: 0, y: 0 })}
+                style={{ height: 44, borderRadius: 999, border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 13, cursor: 'pointer', padding: '0 1rem' }}
+              >
+                {enlargedZoom.scale > 1 ? `${Math.round(enlargedZoom.scale * 100)}%` : '100%'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEnlargedZoom((z) => { const scale = clampCompareScale(z.scale + 0.4); return { scale, x: clampFocusX(z.x, scale), y: clampFocusY(z.y, scale) }; })}
+                aria-label="הגדלה"
+                style={{ width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 22, cursor: 'pointer' }}
+              >
+                +
+              </button>
+            </div>
+
+            {/* פס בחירה קבוע בתחתית */}
             <div
               onClick={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
@@ -3977,7 +4029,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           function handleCardActivate(e: React.MouseEvent) {
             if (compareMode) return toggleCompareSelect(photo.id, e);
             if (!canOpen) return;
-            setZoomScale(1);
+            setEnlargedZoom({ scale: 1, x: 0, y: 0 });
             setEnlargedId(photo.id);
           }
 
