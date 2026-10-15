@@ -2970,7 +2970,8 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 50,
             display: 'grid',
             gridTemplateColumns: compareIds.length > 2 ? 'repeat(2, 1fr)' : `repeat(${compareIds.length}, 1fr)`,
-            alignItems: 'center', justifyItems: 'center', gap: '1rem', padding: '2rem',
+            alignContent: 'center', justifyItems: 'center', gap: '1rem', padding: '2rem',
+            overflowY: 'auto',
           }}
           onClick={() => setCompareViewOpen(false)}
         >
@@ -3015,7 +3016,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   title="להגדלה למסך מלא"
                   style={{
                     position: 'relative', width: '100%', minWidth: 0, padding: 0, border: 'none',
-                    height: compareIds.length > 2 ? '42vh' : '80vh',
+                    height: compareIds.length > 2 ? '35vh' : '80vh',
                     overflow: 'hidden', borderRadius: 6, cursor: 'zoom-in',
                     background: 'rgba(255,255,255,0.03)', display: 'block',
                   }}
@@ -3033,16 +3034,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                       WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
                     }}
                   />
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      position: 'absolute', bottom: 10, insetInlineStart: 10,
-                      background: 'rgba(0,0,0,0.55)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)',
-                      borderRadius: 999, padding: '0.3rem 0.65rem', fontSize: 12, pointerEvents: 'none',
-                    }}
-                  >
-                    🔍 להגדלה
-                  </span>
                 </button>
                 {!isLocked && myParticipant && !isGiftPhoto(id) && (
                   <button
