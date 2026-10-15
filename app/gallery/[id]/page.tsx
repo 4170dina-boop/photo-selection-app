@@ -2517,7 +2517,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         }
         /* גבהים לפי 100dvh (הגובה הנראה בפועל בנייד, בלי סרגל הכתובת) עם נפילה
            ל-vh בדפדפנים ישנים */
-        .enl-img { max-height: calc(100vh - 13rem); max-height: calc(100dvh - 13rem); }
+        .enl-img { max-height: calc(100vh - 9rem); max-height: calc(100dvh - 9rem); }
         .vh-45 { max-height: 45vh; max-height: 45dvh; }
         .vh-75 { max-height: 75vh; max-height: 75dvh; }
         .vh-80 { max-height: 80vh; max-height: 80dvh; }
@@ -3352,7 +3352,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
             aria-describedby="enlarged-keyboard-hint"
             style={{
               position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 50,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem 2rem 11rem',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem 2rem 8rem',
             }}
             // הקשה על הרקע רק סוגרת - אף פעם לא משנה בחירה. קליק שמגיע מיד
             // אחרי החלקה (דפדפנים מסוימים) לא נחשב הקשה.
@@ -3489,42 +3489,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
               title={tr('en.zoomTitle')}
               className="enl-img"
               style={{
-                maxWidth: '90vw', objectFit: 'contain', borderRadius: 6,
+                maxWidth: '96vw', objectFit: 'contain', borderRadius: 6,
                 transform: `translate(${enlargedZoom.x}px, ${enlargedZoom.y}px) scale(${enlargedZoom.scale})`,
                 transition: enlargedDragRef.current ? 'none' : enlargedZoom.scale === 1 ? 'transform 0.15s ease-out' : 'none',
                 cursor: enlargedZoom.scale > 1 ? 'grab' : 'zoom-in',
                 WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
               }}
             />
-
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{ position: 'fixed', bottom: 160, insetInlineStart: '50%', transform: 'translateX(-50%)', zIndex: 52, display: 'flex', gap: '0.5rem', alignItems: 'center' }}
-            >
-              <button
-                type="button"
-                onClick={() => setEnlargedZoom((z) => { const scale = clampCompareScale(z.scale - 0.4); return { scale, x: clampFocusX(z.x, scale), y: clampFocusY(z.y, scale) }; })}
-                aria-label="הקטנה"
-                style={{ width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 22, cursor: 'pointer' }}
-              >
-                −
-              </button>
-              <button
-                type="button"
-                onClick={() => setEnlargedZoom({ scale: 1, x: 0, y: 0 })}
-                style={{ height: 44, borderRadius: 999, border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 13, cursor: 'pointer', padding: '0 1rem' }}
-              >
-                {enlargedZoom.scale > 1 ? `${Math.round(enlargedZoom.scale * 100)}%` : '100%'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setEnlargedZoom((z) => { const scale = clampCompareScale(z.scale + 0.4); return { scale, x: clampFocusX(z.x, scale), y: clampFocusY(z.y, scale) }; })}
-                aria-label="הגדלה"
-                style={{ width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 22, cursor: 'pointer' }}
-              >
-                +
-              </button>
-            </div>
 
             {/* פס בחירה קבוע בתחתית */}
             <div
