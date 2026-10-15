@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { theme, goldButtonStyle, outlineButtonStyle } from '@/lib/theme';
+import { theme, goldButtonStyle, outlineButtonStyle, resolveColor } from '@/lib/theme';
 import { formatDateWithHebrew, langDir, t, type Lang } from '@/lib/i18n';
 import {
   COLLAGE_WIDTH,
@@ -130,8 +130,8 @@ function drawCollage(
 
   // רקע: הנייבי של הפלטה עם מעבר עדין, ומסגרת דקה בצבע המותג
   const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, theme.panel);
-  bg.addColorStop(1, theme.bg);
+  bg.addColorStop(0, resolveColor(theme.panel));
+  bg.addColorStop(1, resolveColor(theme.bg));
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
   ctx.save();
@@ -155,7 +155,7 @@ function drawCollage(
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = theme.panelInput;
+    ctx.fillStyle = resolveColor(theme.panelInput);
     ctx.fill();
     ctx.clip();
     // contain בתוך העיגול - לוגו לא אמור להיחתך
@@ -170,12 +170,12 @@ function drawCollage(
     ctx.lineWidth = 3;
     ctx.stroke();
     if (name) {
-      ctx.fillStyle = theme.text;
+      ctx.fillStyle = resolveColor(theme.text);
       fitFont(ctx, name, 500, 30, opts.serif, W - COLLAGE_PADDING * 4);
       ctx.fillText(name, cx, 148);
     }
   } else if (name) {
-    ctx.fillStyle = theme.text;
+    ctx.fillStyle = resolveColor(theme.text);
     fitFont(ctx, name, 500, 46, opts.serif, W - COLLAGE_PADDING * 4);
     ctx.fillText(name, cx, 100);
     ctx.fillStyle = opts.accent;
@@ -193,7 +193,7 @@ function drawCollage(
     const im = images[assignment[i]];
     ctx.save();
     roundedRectPath(ctx, cell, 16);
-    ctx.fillStyle = theme.panelInput;
+    ctx.fillStyle = resolveColor(theme.panelInput);
     ctx.fill();
     ctx.clip();
     const crop = coverCrop(im.width, im.height, cell.w, cell.h);
@@ -209,7 +209,7 @@ function drawCollage(
   ctx.fillStyle = opts.accent;
   ctx.font = `500 48px ${opts.serif}`;
   ctx.fillText(t(opts.lang, 'col.canvasTitle'), cx, footerTop + 70);
-  ctx.fillStyle = theme.textMuted;
+  ctx.fillStyle = resolveColor(theme.textMuted);
   const dateLine = formatDateWithHebrew(opts.lang, opts.date);
   fitFont(ctx, dateLine, 400, 26, opts.sans, W - COLLAGE_PADDING * 2);
   ctx.fillText(dateLine, cx, footerTop + 112);

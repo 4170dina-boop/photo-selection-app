@@ -16,9 +16,12 @@ export const theme = {
   text: 'var(--t-text, #efe8db)',
   textMuted: 'var(--t-text-muted, rgba(239,232,219,0.62))',
   textFaint: 'var(--t-text-faint, rgba(239,232,219,0.38))',
-  gold: '#c98f89',
-  goldBright: '#e3b3ac',
-  goldText: '#20120f',
+  gold: 'var(--t-gold, #c98f89)',
+  goldBright: 'var(--t-gold-bright, #e3b3ac)',
+  goldText: 'var(--t-gold-text, #20120f)',
+  // גוונים שקופים של צבע ההדגשה (במקום `${theme.gold}22`, שלא עובד עם var)
+  goldTint: 'var(--t-gold-tint, rgba(201,143,137,0.13))',
+  goldRing: 'var(--t-gold-ring, rgba(201,143,137,0.27))',
   green: '#7fae86',
   compare: '#8fa8c9',
   errorBg: 'rgba(181,96,108,0.14)',
@@ -46,7 +49,7 @@ export const inputStyle: CSSProperties = {
 export const focusVisibleRing = {
   outline: `2px solid ${theme.goldBright}`,
   outlineOffset: 2,
-  boxShadow: `0 0 0 3px ${theme.gold}44`,
+  boxShadow: `0 0 0 3px ${theme.goldRing}`,
 };
 
 export const goldButtonStyle: CSSProperties = {
@@ -85,3 +88,15 @@ export const headingStyle: CSSProperties = {
   fontFamily: theme.fontSerif,
   fontWeight: 500,
 };
+
+// canvas (ctx.fillStyle וכו') לא מבין var(...) - מחזיר את הצבע בפועל: הערך
+// הנוכחי של המשתנה על הדף, או ברירת המחדל שבתוך ה-var.
+export function resolveColor(value: string): string {
+  const m = /^var\((--[\w-]+),\s*(.+)\)$/.exec(value);
+  if (!m) return value;
+  if (typeof window !== 'undefined') {
+    const current = getComputedStyle(document.documentElement).getPropertyValue(m[1]).trim();
+    if (current) return current;
+  }
+  return m[2].trim();
+}

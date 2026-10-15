@@ -10,6 +10,7 @@ import {
   themesFromLogo,
   type GalleryColors,
 } from '@/lib/galleryTheme';
+import { THEME_CHANGED_EVENT } from '@/lib/applyTheme';
 
 // "עיצוב הגלריה" בהגדרות: הצלמת בוחרת את צבעי הגלריה שהלקוחות רואות - כל
 // אלמנט בנפרד, מתוך פלטות מוכנות, או מהצבעים של הלוגו שלה. נשמר ל-
@@ -119,6 +120,7 @@ export default function GalleryDesignEditor({ savedTheme, brandColor, logoUrl, o
         return;
       }
       onSaved(next);
+      window.dispatchEvent(new CustomEvent(THEME_CHANGED_EVENT, { detail: next }));
       if (!next) setDraft({ ...THEME_PRESETS[0].colors });
       setMessage({ ok: true, text: next ? 'העיצוב נשמר - הלקוחות יראו אותו בפעם הבאה שייכנסו לגלריה' : 'חזרת לעיצוב המקורי' });
     } catch {
@@ -147,7 +149,7 @@ export default function GalleryDesignEditor({ savedTheme, brandColor, logoUrl, o
     <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: `1px solid ${theme.border}` }}>
       <h2 style={{ fontFamily: theme.fontSerif, fontSize: 17, marginBottom: '0.35rem' }}>עיצוב הגלריה</h2>
       <p style={{ color: theme.textMuted, fontSize: 13, margin: '0 0 1rem' }}>
-        הצבעים שהלקוחות רואים בגלריה שלהן. אפשר לבחור פלטה מוכנה, לקחת את הצבעים מהלוגו, ולשנות כל חלק בנפרד.
+        הצבעים של הגלריה שהלקוחות רואים, וגם של אזור הצלמת שלך. אפשר לבחור פלטה מוכנה, לקחת את הצבעים מהלוגו, ולשנות כל חלק בנפרד.
       </p>
 
       {/* פלטות מוכנות */}

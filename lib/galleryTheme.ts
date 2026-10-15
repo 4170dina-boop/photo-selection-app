@@ -67,6 +67,11 @@ export function galleryCssVars(t: GalleryColors): Record<string, string> {
     '--t-text': t.text,
     '--t-text-muted': rgba(t.text, 0.66),
     '--t-text-faint': rgba(t.text, 0.42),
+    '--t-gold': mix(t.accent, '#000000', 0.12),
+    '--t-gold-bright': t.accent,
+    '--t-gold-text': textOn(t.accent),
+    '--t-gold-tint': rgba(t.accent, 0.13),
+    '--t-gold-ring': rgba(t.accent, 0.27),
   };
 }
 

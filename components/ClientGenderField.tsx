@@ -28,7 +28,7 @@ export default function ClientGenderField({ value, onChange }: { value: Gender; 
                 flex: 1, padding: '0.5rem 0.75rem', borderRadius: 8, cursor: 'pointer', fontSize: 14,
                 fontFamily: theme.fontSans,
                 border: `1px solid ${active ? theme.gold : theme.border}`,
-                background: active ? `${theme.gold}22` : 'transparent',
+                background: active ? theme.goldTint : 'transparent',
                 color: active ? theme.gold : theme.textMuted,
               }}
             >

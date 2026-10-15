@@ -7,6 +7,8 @@ import { createClient } from '@/lib/supabase/client';
 import { theme, outlineButtonStyle } from '@/lib/theme';
 import { UploadProvider } from './UploadProvider';
 import { useOnboardingRedirect } from './useOnboardingRedirect';
+import { isGalleryColors, type GalleryColors } from '@/lib/galleryTheme';
+import { THEME_CHANGED_EVENT, applyThemeVars } from '@/lib/applyTheme';
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -24,6 +26,22 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   };
   const [isAdmin, setIsAdmin] = useState(false);
   useOnboardingRedirect(); // צלמת חדשה -> אשף הפתיחה (פעם אחת, ראו lib/onboarding.ts)
+
+  // העיצוב שהצלמת בחרה (הגדרות -> עיצוב) חל גם על אזור הצלמת, לא רק על הגלריה
+  const [colors, setColors] = useState<GalleryColors | null>(null);
+  useEffect(() => {
+    fetch('/api/photographer')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setColors(isGalleryColors(data?.custom_theme) ? data.custom_theme : null))
+      .catch(() => {});
+    const onChange = (e: Event) => {
+      const next = (e as CustomEvent).detail;
+      setColors(isGalleryColors(next) ? next : null);
+    };
+    window.addEventListener(THEME_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(THEME_CHANGED_EVENT, onChange);
+  }, []);
+  useEffect(() => (colors ? applyThemeVars(colors) : undefined), [colors]);
 
   // כפתור "ניהול צלמות" מוצג רק למנהלת (ADMIN_EMAIL) - שאר הצלמות לא רואות אותו
   useEffect(() => {

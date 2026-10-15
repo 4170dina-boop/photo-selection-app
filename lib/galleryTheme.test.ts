@@ -21,7 +21,8 @@ describe('galleryTheme', () => {
     const vars = galleryCssVars({ bg: '#ffffff', panel: '#f0f0f0', text: '#222222', accent: '#c47a72' });
     expect(vars['--t-bg']).toBe('#ffffff');
     expect(vars['--t-text-muted']).toBe('rgba(34,34,34,0.66)');
-    expect(Object.keys(vars)).toHaveLength(8);
+    expect(Object.keys(vars)).toHaveLength(13);
+    expect(vars['--t-gold-bright']).toBe('#c47a72');
   });
 
   it('picks readable text on buttons', () => {

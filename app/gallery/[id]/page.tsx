@@ -83,7 +83,8 @@ import {
 } from '@/lib/galleryReview';
 import { normalizeGender, type Gender, type ViewerGender } from '@/lib/gender';
 import { clampComparePan, clampCompareScale } from '@/lib/compareZoom';
-import { galleryCssVars, isGalleryColors, type GalleryColors } from '@/lib/galleryTheme';
+import { isGalleryColors, type GalleryColors } from '@/lib/galleryTheme';
+import { applyThemeVars } from '@/lib/applyTheme';
 
 interface GalleryPageProps {
   params: { id: string };
@@ -395,21 +396,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   // צבעי הגלריה שהצלמת בחרה (הגדרות -> עיצוב הגלריה) - נכנסים כ-CSS variables
   // על כל הדף, ראו lib/galleryTheme.ts. null = הפלטה הרגילה.
   const [customColors, setCustomColors] = useState<GalleryColors | null>(null);
-  useEffect(() => {
-    if (!customColors) return;
-    const root = document.documentElement;
-    const vars = galleryCssVars(customColors);
-    Object.entries(vars).forEach(([name, value]) => root.style.setProperty(name, value));
-    const previousBodyBg = document.body.style.background;
-    const previousBodyColor = document.body.style.color;
-    document.body.style.background = customColors.bg;
-    document.body.style.color = customColors.text;
-    return () => {
-      Object.keys(vars).forEach((name) => root.style.removeProperty(name));
-      document.body.style.background = previousBodyBg;
-      document.body.style.color = previousBodyColor;
-    };
-  }, [customColors]);
+  useEffect(() => (customColors ? applyThemeVars(customColors) : undefined), [customColors]);
   const [showWelcome, setShowWelcome] = useState(false);
 
   // לשון הפנייה לצופה (lib/gender.ts): בעלים -> galleries.client_gender,
@@ -1629,7 +1616,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                         ...outlineButtonStyle, flex: 1, minHeight: 44, padding: '0.4rem 0.5rem',
                         borderColor: active ? theme.gold : theme.border,
                         color: active ? theme.gold : theme.textMuted,
-                        background: active ? `${theme.gold}22` : 'transparent',
+                        background: active ? theme.goldTint : 'transparent',
                       }}
                     >
                       {option.label}
