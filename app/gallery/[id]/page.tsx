@@ -82,7 +82,7 @@ import {
   viewedProgress,
 } from '@/lib/galleryReview';
 import { normalizeGender, type Gender, type ViewerGender } from '@/lib/gender';
-import { clampComparePan, clampCompareScale } from '@/lib/compareZoom';
+import { clampCompareScale } from '@/lib/compareZoom';
 import { isGalleryColors, type GalleryColors } from '@/lib/galleryTheme';
 import { applyThemeVars } from '@/lib/applyTheme';
 
@@ -509,13 +509,23 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   const [pendingCount, setPendingCount] = useState(0);
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
-  const [compareZoomState, setCompareZoomState] = useState<Record<string, { scale: number; x: number; y: number }>>({});
-  const compareDragStartRef = useRef<Record<string, { pointerId: number; startX: number; startY: number; originX: number; originY: number }>>({});
-  function resetCompareZoom(id: string) {
-    setCompareZoomState((prev) => ({
-      ...prev,
-      [id]: { scale: 1, x: 0, y: 0 },
-    }));
+  // הגדלת תמונה אחת מההשוואה למסך מלא עם זום והזזה חופשית. רק אחת מוגדלת
+  // בכל רגע - פתיחת אחרת מחזירה את הקודמת לגודל הרגיל (ראו openCompareFocus).
+  const [compareFocusId, setCompareFocusId] = useState<string | null>(null);
+  const [focusZoom, setFocusZoom] = useState({ scale: 1, x: 0, y: 0 });
+  const focusDragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
+  function openCompareFocus(id: string) {
+    setCompareFocusId(id);
+    setFocusZoom({ scale: 1, x: 0, y: 0 });
+  }
+  // גבול ההזזה לפי הזום וגודל המסך - מאפשר לגרור עד הקצוות בלי לאבד את התמונה
+  function clampFocusX(value: number, scale: number): number {
+    const max = ((scale - 1) * (typeof window !== 'undefined' ? window.innerWidth : 0)) / 2;
+    return Math.max(-max, Math.min(max, value));
+  }
+  function clampFocusY(value: number, scale: number): number {
+    const max = ((scale - 1) * (typeof window !== 'undefined' ? window.innerHeight : 0)) / 2;
+    return Math.max(-max, Math.min(max, value));
   }
   // האם תצוגת ההשוואה במסך מלא פתוחה כרגע - נפרד בכוונה מ"האם נבחרו >= 2
   // תמונות": בלי ההפרדה הזו, ברגע שנבחרת תמונה שנייה התצוגה (fixed, inset:0)
@@ -2976,8 +2986,6 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           {compareIds.map((id) => {
             const photo = photos.find((p) => p.id === id);
             if (!photo || !photo.fullUrl) return null;
-            const compareZoom = compareZoomState[id] ?? { scale: 1, x: 0, y: 0 };
-            const intensity = compareZoom.scale > 1 ? 'zoom-out' : 'zoom-in';
 
             return (
               <div
@@ -2990,28 +2998,19 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   maxWidth: compareIds.length <= 2 ? '47%' : '46%',
                 }}
               >
-                <div
-                  style={{
-                    position: 'relative', width: '100%', minWidth: 0,
-                    height: compareIds.length > 2 ? '42vh' : '80vh',
-                    // תמיד hidden: בזום גדול מ-1 התמונה גדלה בתוך המסגרת שלה
-                    // (אפשר לגרור בתוכה), ולא גולשת מעבר למסגרת ומכסה את התמונות
-                    // שלידה בתצוגת ההשוואה.
-                    overflow: 'hidden',
-                    borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: 'rgba(255,255,255,0.03)', touchAction: 'none',
+                {/* לחיצה פותחת את התמונה למסך מלא עם זום והזזה חופשית (openCompareFocus) */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openCompareFocus(id);
                   }}
-                  onWheel={(e) => {
-                    e.preventDefault();
-                    const nextScale = clampCompareScale(compareZoom.scale + (e.deltaY > 0 ? -0.18 : 0.18));
-                    setCompareZoomState((prev) => ({
-                      ...prev,
-                      [id]: {
-                        scale: nextScale,
-                        x: clampComparePan(prev[id]?.x ?? 0, nextScale),
-                        y: clampComparePan(prev[id]?.y ?? 0, nextScale),
-                      },
-                    }));
+                  title="להגדלה למסך מלא"
+                  style={{
+                    position: 'relative', width: '100%', minWidth: 0, padding: 0, border: 'none',
+                    height: compareIds.length > 2 ? '42vh' : '80vh',
+                    overflow: 'hidden', borderRadius: 6, cursor: 'zoom-in',
+                    background: 'rgba(255,255,255,0.03)', display: 'block',
                   }}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -3022,76 +3021,22 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                     decoding="async"
                     onError={() => handleImageError(photo.id)}
                     onContextMenu={(e) => e.preventDefault()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const current = compareZoomState[id] ?? { scale: 1, x: 0, y: 0 };
-                      const nextScale = current.scale > 1 ? 1 : 2.1;
-                      setCompareZoomState((prev) => ({
-                        ...prev,
-                        [id]: { scale: clampCompareScale(nextScale), x: 0, y: 0 },
-                      }));
-                    }}
-                    onPointerDown={(e) => {
-                      if (compareZoom.scale <= 1) return;
-                      e.preventDefault();
-                      e.currentTarget.setPointerCapture(e.pointerId);
-                      compareDragStartRef.current[id] = {
-                        pointerId: e.pointerId,
-                        startX: e.clientX,
-                        startY: e.clientY,
-                        originX: compareZoom.x,
-                        originY: compareZoom.y,
-                      };
-                    }}
-                    onPointerMove={(e) => {
-                      const dragState = compareDragStartRef.current[id];
-                      if (!dragState || compareZoom.scale <= 1 || dragState.pointerId !== e.pointerId) return;
-                      const dx = e.clientX - dragState.startX;
-                      const dy = e.clientY - dragState.startY;
-                      setCompareZoomState((prev) => ({
-                        ...prev,
-                        [id]: {
-                          scale: clampCompareScale(prev[id]?.scale ?? compareZoom.scale),
-                          x: clampComparePan(dragState.originX + dx, clampCompareScale(prev[id]?.scale ?? compareZoom.scale)),
-                          y: clampComparePan(dragState.originY + dy, clampCompareScale(prev[id]?.scale ?? compareZoom.scale)),
-                        },
-                      }));
-                    }}
-                    onPointerUp={(e) => {
-                      delete compareDragStartRef.current[id];
-                      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-                    }}
-                    onPointerLeave={() => {
-                      delete compareDragStartRef.current[id];
-                    }}
-                    className={compareIds.length > 2 ? 'vh-45' : 'vh-80'}
                     style={{
                       width: '100%', height: '100%', objectFit: 'contain', borderRadius: 6,
-                      transform: `translate(${compareZoom.x}px, ${compareZoom.y}px) scale(${compareZoom.scale})`,
-                      transformOrigin: 'center center',
-                      transition: compareZoom.scale === 1 ? 'transform 0.18s ease-out' : 'none',
-                      cursor: intensity,
-                      boxShadow: compareZoom.scale > 1 ? '0 0 0 1px rgba(255,255,255,0.2), 0 16px 32px rgba(0,0,0,0.35)' : 'none',
                       WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
                     }}
                   />
-                  {compareZoom.scale > 1 && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        resetCompareZoom(id);
-                      }}
-                      style={{
-                        position: 'absolute', bottom: 10, left: 10, zIndex: 2,
-                        background: 'rgba(0,0,0,0.55)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)',
-                        borderRadius: 999, padding: '0.4rem 0.7rem', fontSize: 12, cursor: 'pointer',
-                      }}
-                    >
-                      רענן
-                    </button>
-                  )}
-                </div>
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute', bottom: 10, insetInlineStart: 10,
+                      background: 'rgba(0,0,0,0.55)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)',
+                      borderRadius: 999, padding: '0.3rem 0.65rem', fontSize: 12, pointerEvents: 'none',
+                    }}
+                  >
+                    🔍 להגדלה
+                  </span>
+                </button>
                 {!isLocked && myParticipant && !isGiftPhoto(id) && (
                   <button
                     onClick={async () => {
@@ -3110,6 +3055,138 @@ export default function GalleryPage({ params }: GalleryPageProps) {
           })}
         </div>
       )}
+
+      {/* הגדלת תמונה אחת מההשוואה למסך מלא: זום (גלגלת / דאבל-קליק / כפתורים)
+          והזזה חופשית בגרירה. חיצים מחליפים לתמונה אחרת מההשוואה, והקודמת
+          חוזרת אוטומטית לגודל הרגיל (יש רק תצוגה מוגדלת אחת). */}
+      {compareFocusId && compareMode && compareViewOpen && (() => {
+        const photo = photos.find((p) => p.id === compareFocusId);
+        if (!photo || !photo.fullUrl) {
+          return null;
+        }
+        const idx = compareIds.indexOf(compareFocusId);
+        const goTo = (next: number) => {
+          const target = compareIds[(next + compareIds.length) % compareIds.length];
+          if (target) openCompareFocus(target);
+        };
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="תמונה מוגדלת"
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.96)', zIndex: 55,
+              overflow: 'hidden', touchAction: 'none',
+            }}
+            onWheel={(e) => {
+              e.preventDefault();
+              setFocusZoom((z) => {
+                const scale = clampCompareScale(z.scale + (e.deltaY > 0 ? -0.25 : 0.25));
+                return { scale, x: clampFocusX(z.x, scale), y: clampFocusY(z.y, scale) };
+              });
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={photo.fullUrl}
+              alt=""
+              draggable={false}
+              decoding="async"
+              onContextMenu={(e) => e.preventDefault()}
+              onDoubleClick={() => setFocusZoom((z) => (z.scale > 1 ? { scale: 1, x: 0, y: 0 } : { scale: 2.4, x: 0, y: 0 }))}
+              onPointerDown={(e) => {
+                if (focusZoom.scale <= 1) return;
+                e.currentTarget.setPointerCapture(e.pointerId);
+                focusDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, originX: focusZoom.x, originY: focusZoom.y };
+              }}
+              onPointerMove={(e) => {
+                const drag = focusDragRef.current;
+                if (!drag || drag.pointerId !== e.pointerId) return;
+                setFocusZoom((z) => ({
+                  scale: z.scale,
+                  x: clampFocusX(drag.originX + (e.clientX - drag.startX), z.scale),
+                  y: clampFocusY(drag.originY + (e.clientY - drag.startY), z.scale),
+                }));
+              }}
+              onPointerUp={(e) => {
+                focusDragRef.current = null;
+                if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+              }}
+              style={{
+                position: 'absolute', inset: 0, margin: 'auto', maxWidth: '100%', maxHeight: '100%',
+                width: '100%', height: '100%', objectFit: 'contain',
+                transform: `translate(${focusZoom.x}px, ${focusZoom.y}px) scale(${focusZoom.scale})`,
+                transition: focusDragRef.current ? 'none' : 'transform 0.15s ease-out',
+                cursor: focusZoom.scale > 1 ? 'grab' : 'zoom-in',
+                WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none',
+              }}
+            />
+
+            <button
+              type="button"
+              onClick={() => setCompareFocusId(null)}
+              title="חזרה להשוואה"
+              aria-label="חזרה להשוואה"
+              style={{
+                position: 'absolute', top: 16, insetInlineEnd: 16, zIndex: 2,
+                width: 44, height: 44, minWidth: 44, minHeight: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)',
+                background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 18, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              ✕
+            </button>
+
+            {/* זום בכפתורים - לנוחות במובייל, לצד הגלגלת/דאבל-קליק */}
+            <div style={{ position: 'absolute', bottom: 16, insetInlineStart: '50%', transform: 'translateX(-50%)', zIndex: 2, display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={() => setFocusZoom((z) => { const scale = clampCompareScale(z.scale - 0.4); return { scale, x: clampFocusX(z.x, scale), y: clampFocusY(z.y, scale) }; })}
+                aria-label="הקטנה"
+                style={{ width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 22, cursor: 'pointer' }}
+              >
+                −
+              </button>
+              <button
+                type="button"
+                onClick={() => setFocusZoom({ scale: 1, x: 0, y: 0 })}
+                style={{ height: 44, borderRadius: 999, border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 13, cursor: 'pointer', padding: '0 1rem' }}
+              >
+                רענן
+              </button>
+              <button
+                type="button"
+                onClick={() => setFocusZoom((z) => { const scale = clampCompareScale(z.scale + 0.4); return { scale, x: clampFocusX(z.x, scale), y: clampFocusY(z.y, scale) }; })}
+                aria-label="הגדלה"
+                style={{ width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 22, cursor: 'pointer' }}
+              >
+                +
+              </button>
+            </div>
+
+            {compareIds.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => goTo(idx - 1)}
+                  aria-label="התמונה הקודמת"
+                  style={{ position: 'absolute', top: '50%', insetInlineStart: 16, transform: 'translateY(-50%)', zIndex: 2, width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 20, cursor: 'pointer' }}
+                >
+                  ›
+                </button>
+                <button
+                  type="button"
+                  onClick={() => goTo(idx + 1)}
+                  aria-label="התמונה הבאה"
+                  style={{ position: 'absolute', top: '50%', insetInlineEnd: 16, transform: 'translateY(-50%)', zIndex: 2, width: 44, height: 44, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 20, cursor: 'pointer' }}
+                >
+                  ‹
+                </button>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {swipeMode && (() => {
         const idx = swipeCursor;
