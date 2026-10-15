@@ -2985,13 +2985,15 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                 onClick={(e) => e.stopPropagation()}
                 style={{
                   display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem',
-                  maxWidth: `${Math.min(45, Math.floor(88 / compareIds.length))}%`,
+                  // עד 2 תמונות - זו לצד זו (רחבות); 3-4 - שתיים בשורה (גריד
+                  // 2x2), כך שכל תמונה גדולה הרבה יותר מטור צר אחד של 4.
+                  maxWidth: compareIds.length <= 2 ? '47%' : '46%',
                 }}
               >
                 <div
                   style={{
                     position: 'relative', width: '100%', minWidth: 0,
-                    height: compareIds.length > 2 ? '38vh' : '70vh',
+                    height: compareIds.length > 2 ? '42vh' : '80vh',
                     // תמיד hidden: בזום גדול מ-1 התמונה גדלה בתוך המסגרת שלה
                     // (אפשר לגרור בתוכה), ולא גולשת מעבר למסגרת ומכסה את התמונות
                     // שלידה בתצוגת ההשוואה.
