@@ -721,6 +721,13 @@ export default function GalleryPage({ params }: GalleryPageProps) {
   useModalFocus(compareViewOpen, compareDialogRef);
   useModalFocus(!!noteEditingId, noteDialogRef);
 
+  const anyFullscreen = !!enlargedId || slideshowActive || swipeMode || compareViewOpen;
+  useEffect(() => {
+    if (!anyFullscreen) return;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, [anyFullscreen]);
+
   // חצים ל"בחירה מהירה" - מוסכמה מוכרת מאפליקציות סוויפ (ימינה=כן, שמאלה=לא):
   // ימינה=👍 בחרי, שמאלה=👎 דילוג, למטה/רווח=🤔 אולי. הכפתורים על המסך נשארים
   // הדרך העיקרית (המצב מיועד בעיקר לנייד), זו רק נוחות נוספת למי שבמחשב.
