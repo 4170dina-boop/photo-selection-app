@@ -2992,7 +2992,10 @@ export default function GalleryPage({ params }: GalleryPageProps) {
                   style={{
                     position: 'relative', width: '100%', minWidth: 0,
                     height: compareIds.length > 2 ? '38vh' : '70vh',
-                    overflow: compareZoom.scale > 1 ? 'visible' : 'hidden',
+                    // תמיד hidden: בזום גדול מ-1 התמונה גדלה בתוך המסגרת שלה
+                    // (אפשר לגרור בתוכה), ולא גולשת מעבר למסגרת ומכסה את התמונות
+                    // שלידה בתצוגת ההשוואה.
+                    overflow: 'hidden',
                     borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center',
                     background: 'rgba(255,255,255,0.03)', touchAction: 'none',
                   }}
