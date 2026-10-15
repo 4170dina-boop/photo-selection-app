@@ -7,8 +7,28 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY as string
 );
 
+// קליטת תשובת מייל מהלקוחה (ספק המיילים שולח לכאן webhook). הנתיב משתמש
+// ב-service_role וכותב בחירות בשם הבעלים - לכן הוא חייב להיות מוגן בסוד
+// משותף שרק ספק המיילים מכיר. בלי EMAIL_REPLY_WEBHOOK_SECRET מוגדר ב-Vercel
+// הנתיב מסרב לכל בקשה (fail closed) - בלי זה כל אחד שמכיר את מזהה הגלריה היה
+// יכול למחוק/לשנות את הבחירות של הלקוחה בלי קוד גישה ובלי התחברות.
+function webhookSecretOk(req: NextRequest): boolean {
+  const expected = process.env.EMAIL_REPLY_WEBHOOK_SECRET;
+  if (!expected) return false;
+  const provided = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? req.headers.get('x-webhook-secret') ?? '';
+  // השוואה בזמן קבוע כדי לא לדלוף את אורך/תוכן הסוד דרך תזמון
+  if (provided.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= provided.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const galleryId = params.id;
+
+  if (!webhookSecretOk(req)) {
+    return NextResponse.json({ error: 'לא מורשה' }, { status: 401 });
+  }
 
   let body: { text?: unknown; body?: unknown; from?: unknown; fromEmail?: unknown; sender?: unknown } = {};
   try {
@@ -41,8 +61,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'גלריה לא נמצאה' }, { status: 404 });
   }
 
+  // התאמת שולח: חובה שתגיע כתובת שולח, והיא חייבת להתאים למייל של הלקוחה.
+  // קודם הבדיקה דולגה כשלא הגיעה כתובת שולח - כך שאפשר היה פשוט להשמיט אותה
+  // כדי לכתוב בחירות בשם הבעלים. עכשיו היעדר שולח (או אי-התאמה) נדחה.
   const clientEmail = (gallery as any).clients?.email as string | undefined;
-  if (clientEmail && senderEmail && senderEmail.toLowerCase() !== clientEmail.toLowerCase()) {
+  if (!clientEmail) {
+    return NextResponse.json({ error: 'לגלריה אין מייל לקוחה לאימות מול השולח' }, { status: 400 });
+  }
+  if (!senderEmail || senderEmail.toLowerCase() !== clientEmail.toLowerCase()) {
     return NextResponse.json({ error: 'השולח אינו הלקוחה של הגלריה' }, { status: 403 });
   }
 
