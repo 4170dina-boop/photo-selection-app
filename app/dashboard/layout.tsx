@@ -70,6 +70,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem',
             padding: '1rem 1.5rem', borderBottom: `1px solid ${theme.border}`,
+            // סרגל דביק: נשאר למעלה בגלילה. רקע אטום + zIndex כדי שהתוכן לא
+            // ייראה מבעדו, ו-maxHeight+scroll ליתר ביטחון אם התפריט נשבר להרבה שורות בנייד.
+            position: 'sticky', top: 0, zIndex: 20, background: theme.bg,
+            maxHeight: '100vh', overflowY: 'auto',
           }}
         >
           <Link href="/dashboard/today" style={{ fontWeight: 'bold', color: theme.gold, textDecoration: 'none' }}>
