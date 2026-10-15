@@ -2516,7 +2516,7 @@ export default function GalleryPage({ params }: GalleryPageProps) {
         .vh-80 { max-height: 80vh; max-height: 80dvh; }
         .vh-90 { max-height: 90vh; max-height: 90dvh; }
         /* גריד: אוטומטי במסך רחב; בנייד 2/3/4 עמודות לפי בחירה (▦, נשמר במכשיר) */
-        .ggrid { display: grid; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(140px, 45vw), 1fr)); gap: 1rem; }
+        .ggrid { display: grid; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(280px, 45vw), 1fr)); gap: 1rem; }
         .gcols-row { display: none; }
         @media (max-width: 640px) {
           .ggrid { grid-template-columns: repeat(var(--gcols, 2), minmax(0, 1fr)); gap: 0.6rem; }
