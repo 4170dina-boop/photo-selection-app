@@ -49,7 +49,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error } = await supabase
     .from('galleries')
-    .select('id, status, expires_at, reminder_days, photographer_notes, additional_invite_emails, view_count, last_viewed_at, delivered_at, originals_cleaned_up_at, reopened_for_selection_at, clients(full_name, email, access_code), packages(included_photos, base_price, extra_photo_price)')
+    .select('id, status, expires_at, reminder_days, photographer_notes, personal_note, additional_invite_emails, view_count, last_viewed_at, delivered_at, originals_cleaned_up_at, reopened_for_selection_at, clients(full_name, email, access_code), packages(included_photos, base_price, extra_photo_price)')
     .eq('id', params.id)
     .single();
 
@@ -88,6 +88,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     extraPhotoPrice?: number;
     expiresAt?: string | null;
     photographerNotes?: string | null;
+    personalNote?: string | null;
     reminderDays?: number | null;
     additionalInviteEmails?: unknown;
     clientGender?: unknown;
@@ -101,7 +102,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'גוף בקשה לא תקין' }, { status: 400 });
   }
 
-  const { clientName, clientEmail, photographerNotes } = body;
+  const { clientName, clientEmail, photographerNotes, personalNote } = body;
 
   if (!clientName?.trim() || !clientEmail?.trim() || body.includedPhotos == null) {
     return NextResponse.json({ error: 'חסרים פרטים (שם לקוחה, אימייל ומספר תמונות בחבילה)' }, { status: 400 });
@@ -193,6 +194,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         .update({
           expires_at: expiresAt,
           photographer_notes: photographerNotes?.trim() || null,
+          personal_note: personalNote?.trim() || null,
           reminder_days: reminderDays,
           additional_invite_emails: additionalInviteEmails.length > 0 ? additionalInviteEmails : null,
           // תאריך תוקף חדש = תזכורת התפוגה החד-פעמית (cron/tick) צריכה לצאת שוב

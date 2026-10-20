@@ -29,7 +29,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id, additional_invite_emails, clients(full_name, email, access_code)')
+    .select('id, personal_note, additional_invite_emails, clients(full_name, email, access_code)')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
@@ -69,6 +69,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
       accessCode: client.access_code,
       replyTo: user.email,
+      personalNote: (gallery as any).personal_note,
     });
     results.push({ to, sent: result.sent, ...(result.error ? { error: result.error } : {}) });
   }

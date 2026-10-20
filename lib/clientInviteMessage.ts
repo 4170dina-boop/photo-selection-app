@@ -30,6 +30,7 @@ export interface InviteMessageParams {
   logoUrl?: string | null;
   // שפת הגלריה (galleries.language) - חסר = עברית
   language?: Lang | null;
+  personalNote?: string | null;
 }
 
 function waitingLine(lang: Lang, gender: Gender | null | undefined): string {
@@ -50,7 +51,8 @@ export function buildInviteMessageText(params: InviteMessageParams): string {
   const lang = params.language ?? DEFAULT_LANG;
   const expiry = expiryDateText(lang, params.expiresAt);
   const expiryLine = expiry ? `\n\n${t(lang, 'inv.expiry', { date: expiry })}` : '';
-  return `${t(lang, 'inv.hi', { name: params.clientName || '' })}\n\n${t(lang, 'inv.ready')}\n\n${t(lang, 'inv.link', { url: params.galleryUrl })}\n\n${t(lang, 'inv.codeLabel')}\n${params.accessCode}${expiryLine}\n\n${waitingLine(lang, params.clientGender)}`;
+  const noteLine = params.personalNote ? `\n\n${params.personalNote}` : '';
+  return `${t(lang, 'inv.hi', { name: params.clientName || '' })}\n\n${t(lang, 'inv.ready')}${noteLine}\n\n${t(lang, 'inv.link', { url: params.galleryUrl })}\n\n${t(lang, 'inv.codeLabel')}\n${params.accessCode}${expiryLine}\n\n${waitingLine(lang, params.clientGender)}`;
 }
 
 export function buildInviteMessageHtml(params: InviteMessageParams): string {
@@ -82,6 +84,7 @@ export function buildInviteMessageHtml(params: InviteMessageParams): string {
             <td style="padding: 28px; text-align: center; color: #2a2420; font-size: 15px; line-height: 1.7;">
               <p style="margin: 0 0 8px;">${t(lang, 'inv.hi', { name: clientName || '' })}</p>
               <p style="margin: 0 0 8px;">${t(lang, 'inv.ready')}${expiryLine}</p>
+              ${params.personalNote ? `<p style="margin: 8px 0; font-style: italic; color: #5a4f44;">${escapeHtml(params.personalNote)}</p>` : ''}
               <div style="margin: 18px 0; padding: 12px 20px; background: #f4f1ec; border: 1px dashed #c98f89; border-radius: 8px; display: inline-block;">
                 <span style="font-size: 12px; color: #9a8f7d;">${t(lang, 'mail.codeLabel')}</span><br />
                 <span dir="ltr" style="font-size: 22px; font-weight: 700; letter-spacing: 2px; color: #a06a63; font-family: monospace; user-select: all; -webkit-user-select: all;">${accessCode}</span><br />

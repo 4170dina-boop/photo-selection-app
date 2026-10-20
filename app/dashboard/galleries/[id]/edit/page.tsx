@@ -56,6 +56,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   // שטאב ישן לא ידרוס הארכה שאושרה בינתיים (השרת מחזיר 409)
   const [loadedExpiresAt, setLoadedExpiresAt] = useState<string | null>(null);
   const [photographerNotes, setPhotographerNotes] = useState('');
+  const [personalNote, setPersonalNote] = useState('');
   const [reminderDays, setReminderDays] = useState('');
   // כתובות מייל נוספות (למשל בני משפחה) שמקבלות את אותו מייל הזמנה/תזכורת -
   // ראו additional_invite_emails ב-supabase/schema.sql, בדיוק כמו ב"גלריה חדשה".
@@ -302,6 +303,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
     setExpiresAt(data.expires_at ? data.expires_at.slice(0, 10) : '');
     setLoadedExpiresAt(data.expires_at ?? null);
     setPhotographerNotes(data.photographer_notes ?? '');
+    setPersonalNote(data.personal_note ?? '');
     setReminderDays(data.reminder_days != null ? String(data.reminder_days) : '');
     setAdditionalEmails(data.additional_invite_emails ?? []);
     setClientGender(normalizeGender(data.client_gender) ?? 'f');
@@ -339,6 +341,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           expiresAt: expiresAt ? israelEndOfDayIso(expiresAt) : null,
           expectedExpiresAt: loadedExpiresAt,
           photographerNotes,
+          personalNote,
           reminderDays: reminderDays ? Number(reminderDays) : null,
           additionalInviteEmails: additionalEmails.map((email) => email.trim()).filter((email) => email.length > 0),
           clientGender,
@@ -409,6 +412,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
             <td style="padding: 28px; text-align: center; color: #2a2420; font-size: 15px; line-height: 1.7;">
               <p style="margin: 0 0 8px;">היי ${clientName || ''}! 💛</p>
               <p style="margin: 0 0 8px;">התמונות הסופיות שלך אצל <b>${businessName || 'הגלריה שלך'}</b> מוכנות - ${count} תמונות מחכות בגלריה.</p>
+              ${personalNote ? `<p style="margin: 8px 0; font-style: italic; color: #5a4f44;">${personalNote.replace(/</g, '&lt;')}</p>` : ''}
               <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 24px auto 0;">
                 <tr>
                   <td style="border-radius: 8px; background: linear-gradient(135deg, #e3b3ac, #c98f89);">
@@ -430,7 +434,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   // בלי לגרום לצלמת להקליד הודעה מאפס.
   async function handleCopyDeliveryMessage() {
     const galleryUrl = `${window.location.origin}/gallery/${galleryId}`;
-    const message = `היי ${clientName || ''}! 💛\n\nהתמונות הסופיות שלך אצל ${businessName || 'הגלריה שלך'} מוכנות - ${deliveredPhotos.length} תמונות מחכות בגלריה.\n\nקישור: ${galleryUrl}`;
+    const notePart = personalNote ? `\n\n${personalNote}` : '';
+    const message = `היי ${clientName || ''}! 💛\n\nהתמונות הסופיות שלך אצל ${businessName || 'הגלריה שלך'} מוכנות - ${deliveredPhotos.length} תמונות מחכות בגלריה.${notePart}\n\nקישור: ${galleryUrl}`;
 
     try {
       const html = buildDeliveryEmailHtml(galleryUrl, deliveredPhotos.length);
@@ -732,6 +737,17 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
             onChange={(e) => setReminderDays(e.target.value)}
             placeholder="ברירת המחדל שלך מ-ההגדרות"
             style={inputStyle}
+          />
+        </label>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          הקדשה / הערה ללקוחה (מופיעה במייל)
+          <textarea
+            value={personalNote}
+            onChange={(e) => setPersonalNote(e.target.value)}
+            placeholder="למשל: היה לי כיף גדול לצלם אתכם, מקווה שתהנו מהתמונות! 💕"
+            rows={2}
+            style={{ ...inputStyle, resize: 'vertical' }}
           />
         </label>
 
