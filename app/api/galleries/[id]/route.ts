@@ -49,7 +49,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const { data: gallery, error } = await supabase
     .from('galleries')
-    .select('id, status, expires_at, reminder_days, photographer_notes, additional_invite_emails, view_count, last_viewed_at, delivered_at, originals_cleaned_up_at, reopened_for_selection_at, clients(full_name, email, access_code), packages(included_photos, base_price, extra_photo_price)')
+    .select('id, status, expires_at, reminder_days, photographer_notes, personal_note, additional_invite_emails, view_count, last_viewed_at, delivered_at, originals_cleaned_up_at, reopened_for_selection_at, clients(full_name, email, access_code), packages(included_photos, base_price, extra_photo_price)')
     .eq('id', params.id)
     .single();
 
@@ -61,18 +61,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const clientGender = await fetchClientGender(supabase, gallery.id);
   // שפת הגלריה והמיילים ללקוח/ה - עמודה חסרה = 'he' (lib/i18n/galleryLanguage.ts)
   const language = await fetchGalleryLanguageOrDefault(supabase, gallery.id);
-  // הקדשה/הערה - עמודה חסרה (מיגרציה שלא רצה) = null
-  let personalNote: string | null = null;
-  try {
-    const { data: noteRow } = await supabase
-      .from('galleries')
-      .select('personal_note')
-      .eq('id', gallery.id)
-      .single();
-    personalNote = (noteRow as any)?.personal_note ?? null;
-  } catch {}
 
-  return NextResponse.json({ ...gallery, client_gender: clientGender, language, personal_note: personalNote });
+  return NextResponse.json({ ...gallery, client_gender: clientGender, language });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -204,6 +194,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         .update({
           expires_at: expiresAt,
           photographer_notes: photographerNotes?.trim() || null,
+          personal_note: personalNote?.trim() || null,
           reminder_days: reminderDays,
           additional_invite_emails: additionalInviteEmails.length > 0 ? additionalInviteEmails : null,
           // תאריך תוקף חדש = תזכורת התפוגה החד-פעמית (cron/tick) צריכה לצאת שוב
@@ -252,16 +243,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
   if (!galleryUpdated) {
     return NextResponse.json({ error: 'הגלריה השתנתה בזמן השמירה - רענני את הדף ונסי שוב' }, { status: 409 });
-  }
-
-  // הקדשה/הערה - עמודה חסרה (מיגרציה שלא רצה) = best-effort, לא מכשיל את השמירה
-  if (personalNote !== undefined) {
-    try {
-      await supabase
-        .from('galleries')
-        .update({ personal_note: personalNote?.trim() || null })
-        .eq('id', gallery.id);
-    } catch {}
   }
 
   const { error: clientError } = await supabase
