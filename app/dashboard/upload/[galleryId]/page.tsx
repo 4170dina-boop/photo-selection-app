@@ -307,6 +307,13 @@ export default function UploadPage({ params }: UploadPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uploading]);
 
+  useEffect(() => {
+    if (!uploading) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [uploading]);
+
   // עיבוד חוזר לתמונות בלי thumbnail (העיבוד ב-UploadProvider הוא fire-and-forget,
   // ואם הוא נכשל - למשל timeout - התמונה נשארת מוסתרת מהלקוחה). מנסים כל תמונה
   // פעם אחת לכל טעינת דף (attemptedProcessRef), כדי שתמונה פגומה לא תיכנס
