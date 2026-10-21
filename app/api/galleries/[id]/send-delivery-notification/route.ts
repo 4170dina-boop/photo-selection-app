@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id, personal_note, clients(full_name, email, access_code)')
+    .select('id, clients(full_name, email, access_code)')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
@@ -71,7 +71,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     count,
     galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
     replyTo: user.email,
-    personalNote: (gallery as any).personal_note ?? null,
+    personalNote: await (async () => {
+      const { data, error } = await supabase.from('galleries').select('personal_note').eq('id', gallery.id).single();
+      return error ? null : (data as any)?.personal_note ?? null;
+    })(),
   });
 
   if (!emailSent) {
