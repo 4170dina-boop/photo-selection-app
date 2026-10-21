@@ -410,6 +410,35 @@ export default function UploadPage({ params }: UploadPageProps) {
   const toUploadCount = indicesToUpload(items).length;
   const processingCount = (existingPhotos ?? []).filter((p) => p.needsProcessing).length;
   const duplicateCount = items.filter((it) => it.isDuplicateExisting || it.isDuplicateInSelection).length;
+
+  const existingDuplicateIds = (() => {
+    if (!existingPhotos || existingPhotos.length === 0) return [] as string[];
+    const seen = new Map<string, string>();
+    const dupes: string[] = [];
+    for (const p of existingPhotos) {
+      if (seen.has(p.original_filename)) {
+        dupes.push(p.id);
+      } else {
+        seen.set(p.original_filename, p.id);
+      }
+    }
+    return dupes;
+  })();
+
+  const [deletingDuplicates, setDeletingDuplicates] = useState(false);
+  async function deleteExistingDuplicates() {
+    if (existingDuplicateIds.length === 0) return;
+    if (!window.confirm(`נמצאו ${existingDuplicateIds.length} תמונות כפולות (לפי שם קובץ). למחוק את הכפילויות ולהשאיר עותק אחד מכל תמונה?`)) return;
+    setDeletingDuplicates(true);
+    let deleted = 0;
+    for (const photoId of existingDuplicateIds) {
+      const res = await fetch(`/api/galleries/${galleryId}/photos/${photoId}`, { method: 'DELETE' }).catch(() => null);
+      if (res?.ok) deleted++;
+    }
+    await loadExistingPhotos();
+    setDeletingDuplicates(false);
+    if (deleted > 0) window.alert(`${deleted} תמונות כפולות נמחקו בהצלחה`);
+  }
   const allProcessed = items.length > 0 && items.every((it) => it.status === 'done' || it.status === 'error');
   // בזמן העלאה: מוסיפים doneCount לספירה החיה. אחרי סיום: loadExistingPhotos
   // כבר רענן את existingPhotos לכלול את החדשות, אז לא מוסיפים doneCount שוב.
@@ -453,6 +482,21 @@ export default function UploadPage({ params }: UploadPageProps) {
             <p style={{ color: theme.warningText, fontSize: 12, marginBottom: '0.75rem' }}>
               {processingCount} תמונות עדיין בעיבוד (יצירת סימן מים) ולא מוצגות ללקוחה - העיבוד ינוסה שוב אוטומטית.
             </p>
+          )}
+          {existingDuplicateIds.length > 0 && (
+            <div style={{ marginBottom: '0.75rem' }}>
+              <p style={{ color: theme.warningText, fontSize: 12, marginBottom: '0.25rem' }}>
+                ⚠️ נמצאו {existingDuplicateIds.length} תמונות עם שם קובץ כפול בגלריה
+              </p>
+              <button
+                type="button"
+                disabled={deletingDuplicates}
+                onClick={deleteExistingDuplicates}
+                style={{ ...outlineButtonStyle, padding: '0.3rem 0.9rem', fontSize: 13, opacity: deletingDuplicates ? 0.6 : 1 }}
+              >
+                {deletingDuplicates ? 'מוחק כפולים...' : 'מחיקת כפולים מהגלריה'}
+              </button>
+            </div>
           )}
           <div
             style={{
