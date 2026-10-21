@@ -13,7 +13,7 @@ import {
 import { applyRowGuard } from '@/lib/rowGuard';
 import { fetchClientGender, parseGenderInput, saveClientGender } from '@/lib/gender';
 import { fetchGalleryLanguageOrDefault, parseLanguageInput, saveGalleryLanguage } from '@/lib/i18n/galleryLanguage';
-import { fetchPersonalNote, savePersonalNote } from '@/lib/personalNote';
+import { fetchPersonalNote, savePersonalNote, deletePersonalNote } from '@/lib/personalNote';
 
 // עריכה/מחיקה של גלריה קיימת, בדיוק כמו app/api/galleries/route.ts (יצירה) -
 // רץ עם session הצלם (לא service key), כך שה-RLS הקיים כבר דואג שאי אפשר
@@ -317,6 +317,8 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   // ל-S3/R2 אין "תיקיות" אמיתיות - listAllKeys עם prefix של ה-gallery id כולל
   // אוטומטית את כל תתי-התיקיות (thumbs/, final/). הבעלות כבר אומתה למעלה מול
   // ה-DB (loadOwnedGallery).
+  await deletePersonalNote(gallery.id);
+
   const { error: deleteError } = await supabase.from('galleries').delete().eq('id', gallery.id);
   if (deleteError) {
     return NextResponse.json({ error: 'מחיקת הגלריה נכשלה' }, { status: 500 });

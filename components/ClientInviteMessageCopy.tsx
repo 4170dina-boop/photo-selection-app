@@ -28,6 +28,7 @@ interface ClientInviteMessageCopyProps {
   // שפת הגלריה (galleries.language) - ההודעה נבנית בשפה הזו, ברירת מחדל עברית
   language?: Lang;
   expiresAt?: string | null;
+  personalNote?: string | null;
   // שניהם undefined = הקומפוננטה טוענת בעצמה מ-/api/photographer
   businessName?: string;
   logoUrl?: string;
@@ -52,6 +53,7 @@ export default function ClientInviteMessageCopy({
   emailFailed,
   prominent,
   warnings,
+  personalNote,
 }: ClientInviteMessageCopyProps) {
   const [showWarnings, setShowWarnings] = useState(false);
   const shouldLoadBrand = businessName === undefined && logoUrl === undefined;
@@ -107,6 +109,7 @@ export default function ClientInviteMessageCopy({
       expiresAt,
       businessName: shouldLoadBrand ? loadedBrand.businessName : businessName,
       logoUrl: shouldLoadBrand ? loadedBrand.logoUrl : logoUrl,
+      personalNote,
     };
     const message = buildInviteMessageText(params);
     setManualHint(false);

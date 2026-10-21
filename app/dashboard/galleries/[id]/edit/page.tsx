@@ -26,6 +26,7 @@ import ExtensionRequestsPanel from '@/components/ExtensionRequestsPanel';
 import EmailSelectionPanel from '@/components/EmailSelectionPanel';
 import { MANUAL_EMAIL_COOLDOWN_SECONDS, formatCooldownLeft } from '@/lib/manualEmailCooldown';
 import { FREE_DELIVERED_PHOTO_LIMIT } from '@/lib/deliveredPhotoLimit';
+import { escapeHtml } from '@/lib/htmlEscape';
 
 // סוגי המיילים הידניים בדף הזה - לכל אחד מגבלת קצב נפרדת בשרת (429)
 type ManualEmailKind = 'invite' | 'reminder' | 'review' | 'delivery';
@@ -411,7 +412,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           <tr>
             <td style="padding: 28px; text-align: center; color: #2a2420; font-size: 15px; line-height: 1.7;">
               <p style="margin: 0 0 8px;">היי ${clientName || ''}! 💛</p>
-              ${personalNote ? `<p style="margin: 4px 0 8px; font-style: italic; color: #5a4f44;">${personalNote.replace(/</g, '&lt;')}</p>` : ''}
+              ${personalNote ? `<p style="margin: 4px 0 8px; font-style: italic; color: #5a4f44;">${escapeHtml(personalNote)}</p>` : ''}
               <p style="margin: 0 0 8px;">התמונות הסופיות שלך אצל <b>${businessName || 'הגלריה שלך'}</b> מוכנות - ${count} תמונות מחכות בגלריה.</p>
               <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 24px auto 0;">
                 <tr>
@@ -591,6 +592,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
                 clientGender={savedInvite.clientGender}
                 language={savedInvite.language}
                 expiresAt={savedInvite.expiresAt || null}
+                personalNote={personalNote || null}
                 businessName={businessName}
                 logoUrl={logoUrl}
                 warnings={inviteWarnings}

@@ -18,6 +18,13 @@ export async function fetchPersonalNote(_supabase: unknown, galleryId: string): 
   return data?.value ?? null;
 }
 
+export async function deletePersonalNote(galleryId: string): Promise<void> {
+  await adminClient()
+    .from('app_settings')
+    .delete()
+    .eq('key', KEY_PREFIX + galleryId);
+}
+
 export async function savePersonalNote(_supabase: unknown, galleryId: string, note: string | null | undefined): Promise<void> {
   if (note === undefined) return;
   const trimmed = note?.trim() || null;
