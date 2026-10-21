@@ -585,29 +585,56 @@ export default function GalleriesDashboard() {
         </div>
       )}
 
-      {selectedIds.size > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10, padding: '0.75rem 1rem' }}>
-          <span style={{ fontSize: 13 }}>
-            {visibleSelectedRows.length} נבחרו
-            {hiddenSelectedCount > 0 && (
-              <span style={{ color: theme.textFaint }}> · {hiddenSelectedCount} נבחרות מוסתרות בסינון (לא ייכללו)</span>
-            )}
-          </span>
-          <button onClick={handleBulkReminder} disabled={bulkWorking || visibleSelectedRows.length === 0} style={{ ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12, opacity: bulkWorking || visibleSelectedRows.length === 0 ? 0.6 : 1 }}>
-            🔔 שליחת תזכורת לנבחרות
-          </button>
-          <button
-            onClick={handleBulkDelete}
-            disabled={bulkWorking || visibleSelectedRows.length === 0}
-            style={{ ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12, color: theme.errorText, borderColor: theme.errorText, opacity: bulkWorking || visibleSelectedRows.length === 0 ? 0.6 : 1 }}
-          >
-            {bulkWorking ? 'מבצעת...' : '🗑 מחיקת הנבחרות'}
-          </button>
-          <button onClick={() => setSelectedIds(new Set())} style={{ background: 'none', border: 'none', color: theme.textFaint, fontSize: 12, cursor: 'pointer', padding: 0 }}>
-            ביטול בחירה
-          </button>
-        </div>
-      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10, padding: '0.75rem 1rem' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={filteredRows.length > 0 && filteredRows.every((r) => selectedIds.has(r.id))}
+            onChange={() => {
+              const allVisible = filteredRows.every((r) => selectedIds.has(r.id));
+              if (allVisible) {
+                setSelectedIds((prev) => {
+                  const next = new Set(prev);
+                  for (const r of filteredRows) next.delete(r.id);
+                  return next;
+                });
+              } else {
+                setSelectedIds((prev) => {
+                  const next = new Set(prev);
+                  for (const r of filteredRows) next.add(r.id);
+                  return next;
+                });
+              }
+            }}
+            style={{ width: 18, height: 18, cursor: 'pointer' }}
+          />
+          בחירת הכל ({filteredRows.length})
+        </label>
+
+        {selectedIds.size > 0 && (
+          <>
+            <span style={{ fontSize: 13, borderRight: `1px solid ${theme.border}`, paddingRight: '0.75rem', marginRight: 0 }}>
+              {visibleSelectedRows.length} נבחרו
+              {hiddenSelectedCount > 0 && (
+                <span style={{ color: theme.textFaint }}> · {hiddenSelectedCount} נבחרות מוסתרות בסינון (לא ייכללו)</span>
+              )}
+            </span>
+            <button onClick={handleBulkReminder} disabled={bulkWorking || visibleSelectedRows.length === 0} style={{ ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12, opacity: bulkWorking || visibleSelectedRows.length === 0 ? 0.6 : 1 }}>
+              🔔 שליחת תזכורת לנבחרות
+            </button>
+            <button
+              onClick={handleBulkDelete}
+              disabled={bulkWorking || visibleSelectedRows.length === 0}
+              style={{ ...outlineButtonStyle, padding: '0.35rem 0.75rem', fontSize: 12, color: theme.errorText, borderColor: theme.errorText, opacity: bulkWorking || visibleSelectedRows.length === 0 ? 0.6 : 1 }}
+            >
+              {bulkWorking ? 'מבצעת...' : '🗑 מחיקת הנבחרות'}
+            </button>
+            <button onClick={() => setSelectedIds(new Set())} style={{ background: 'none', border: 'none', color: theme.textFaint, fontSize: 12, cursor: 'pointer', padding: 0 }}>
+              ביטול בחירה
+            </button>
+          </>
+        )}
+      </div>
 
       {bulkMessage && (
         <p
