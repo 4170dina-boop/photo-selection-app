@@ -672,15 +672,13 @@ export default function UploadPage({ params }: UploadPageProps) {
         <p style={{ background: theme.warningBg, color: theme.warningText, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem', fontSize: 13 }}>
           ⚠️ {duplicateCount} מהקבצים שנבחרו כבר קיימים בגלריה או נבחרו יותר מפעם אחת - אפשר להעלות בכל זאת אם זה מכוון,
           או להוציא אותם מההעלאה (✕ על תמונה בודדת).
-          {!uploading && (
-            <button
-              type="button"
-              onClick={removeDuplicateItems}
-              style={{ ...outlineButtonStyle, display: 'block', marginTop: '0.5rem', padding: '0.3rem 0.9rem', fontSize: 13 }}
-            >
-              לא להעלות את הכפולים
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={removeDuplicateItems}
+            style={{ ...outlineButtonStyle, display: 'block', marginTop: '0.5rem', padding: '0.3rem 0.9rem', fontSize: 13 }}
+          >
+            לא להעלות את הכפולים
+          </button>
         </p>
       )}
 
