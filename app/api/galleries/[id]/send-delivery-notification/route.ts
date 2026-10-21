@@ -4,6 +4,13 @@ import { sendFinalPhotosReadyEmail } from '@/lib/email';
 import { reserveManualEmailSend, releaseManualEmailReservations, cooldownResponse } from '@/lib/manualEmailLog';
 import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 
+async function fetchPersonalNote(supabase: ReturnType<typeof createServerClient>, galleryId: string): Promise<string | null> {
+  try {
+    const { data } = await supabase.from('galleries').select('personal_note').eq('id', galleryId).single();
+    return (data as any)?.personal_note ?? null;
+  } catch { return null; }
+}
+
 // שליחה ידנית של התראה ללקוחה שהתמונות הסופיות מוכנות - בדיוק כמו
 // send-reminder/route.ts (אימות בעלות עם session הצלם, שליחה עם lib/email.ts),
 // בלי "פעם אחת ביום" אוטומטי (בניגוד ל-last_reminder_sent_at) - הצלמת יכולה
@@ -31,7 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id, personal_note, clients(full_name, email, access_code)')
+    .select('id, clients(full_name, email, access_code)')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
@@ -71,7 +78,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     count,
     galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
     replyTo: user.email,
-    personalNote: (gallery as any).personal_note,
+    personalNote: await fetchPersonalNote(supabase, gallery.id),
   });
 
   if (!emailSent) {

@@ -4,6 +4,13 @@ import { sendGalleryInviteEmail } from '@/lib/email';
 import { reserveManualEmailSend, releaseManualEmailReservations, cooldownResponse } from '@/lib/manualEmailLog';
 import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
 
+async function fetchPersonalNote(supabase: ReturnType<typeof createClient>, galleryId: string): Promise<string | null> {
+  try {
+    const { data } = await supabase.from('galleries').select('personal_note').eq('id', galleryId).single();
+    return (data as any)?.personal_note ?? null;
+  } catch { return null; }
+}
+
 // שולחת שוב את מייל ההזמנה (קישור + קוד גישה) ללקוחה הקיימת של הגלריה - שימושי
 // כשהלקוחה מדווחת שהיא לא מצאה/מחקה את המייל המקורי. רץ עם session הצלם (לא
 // service key), אותו דפוס בעלות כמו app/api/galleries/[id]/route.ts.
@@ -29,7 +36,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: gallery } = await supabase
     .from('galleries')
-    .select('id, personal_note, additional_invite_emails, clients(full_name, email, access_code)')
+    .select('id, additional_invite_emails, clients(full_name, email, access_code)')
     .eq('id', params.id)
     .eq('photographer_id', photographer.id)
     .single();
@@ -69,7 +76,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
       accessCode: client.access_code,
       replyTo: user.email,
-      personalNote: (gallery as any).personal_note,
+      personalNote: await fetchPersonalNote(supabase, gallery.id),
     });
     results.push({ to, sent: result.sent, ...(result.error ? { error: result.error } : {}) });
   }
