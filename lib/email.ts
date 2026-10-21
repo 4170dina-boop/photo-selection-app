@@ -538,8 +538,8 @@ export async function sendGalleryInviteEmail(params: GalleryInviteParams): Promi
     headerText: params.businessName,
     bodyHtml: `
       <p style="margin: 0 0 8px;">${tm(lang, 'mail.hi', { name: params.clientName })}</p>
+      ${params.personalNote ? `<p style="margin: 4px 0 8px; font-style: italic; color: #5a4f44;">${escapeHtml(params.personalNote)}</p>` : ''}
       <p style="margin: 0 0 8px;">${tm(lang, 'mail.invite.ready', { business: params.businessName })}</p>
-      ${params.personalNote ? `<p style="margin: 8px 0; font-style: italic; color: #5a4f44;">${escapeHtml(params.personalNote)}</p>` : ''}
       ${accessCodeBadge(params.accessCode, lang)}
       <p style="margin: 12px 0 0; font-size: 13px; color: #6b6156;">
         ${tm(lang, 'mail.invite.howto')}
@@ -636,8 +636,8 @@ export async function sendFinalPhotosReadyEmail(params: FinalPhotosReadyParams):
     headerText: params.businessName,
     bodyHtml: `
       <p style="margin: 0 0 8px;">${tm(lang, 'mail.hi', { name: params.clientName })}</p>
+      ${params.personalNote ? `<p style="margin: 4px 0 8px; font-style: italic; color: #5a4f44;">${escapeHtml(params.personalNote)}</p>` : ''}
       <p style="margin: 0 0 8px;">${tm(lang, 'mail.final.ready', { business: params.businessName })}</p>
-      ${params.personalNote ? `<p style="margin: 8px 0; font-style: italic; color: #5a4f44;">${escapeHtml(params.personalNote)}</p>` : ''}
       <p style="margin: 0; font-size: 13px; color: #6b6156;">${tm(lang, 'mail.final.count', { count: params.count })}</p>
     `,
     ctaText: t(lang, 'mail.enterCta'),

@@ -411,8 +411,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
           <tr>
             <td style="padding: 28px; text-align: center; color: #2a2420; font-size: 15px; line-height: 1.7;">
               <p style="margin: 0 0 8px;">היי ${clientName || ''}! 💛</p>
+              ${personalNote ? `<p style="margin: 4px 0 8px; font-style: italic; color: #5a4f44;">${personalNote.replace(/</g, '&lt;')}</p>` : ''}
               <p style="margin: 0 0 8px;">התמונות הסופיות שלך אצל <b>${businessName || 'הגלריה שלך'}</b> מוכנות - ${count} תמונות מחכות בגלריה.</p>
-              ${personalNote ? `<p style="margin: 8px 0; font-style: italic; color: #5a4f44;">${personalNote.replace(/</g, '&lt;')}</p>` : ''}
               <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 24px auto 0;">
                 <tr>
                   <td style="border-radius: 8px; background: linear-gradient(135deg, #e3b3ac, #c98f89);">
@@ -434,8 +434,8 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   // בלי לגרום לצלמת להקליד הודעה מאפס.
   async function handleCopyDeliveryMessage() {
     const galleryUrl = `${window.location.origin}/gallery/${galleryId}`;
-    const notePart = personalNote ? `\n\n${personalNote}` : '';
-    const message = `היי ${clientName || ''}! 💛\n\nהתמונות הסופיות שלך אצל ${businessName || 'הגלריה שלך'} מוכנות - ${deliveredPhotos.length} תמונות מחכות בגלריה.${notePart}\n\nקישור: ${galleryUrl}`;
+    const notePart = personalNote ? `\n${personalNote}` : '';
+    const message = `היי ${clientName || ''}! 💛${notePart}\n\nהתמונות הסופיות שלך אצל ${businessName || 'הגלריה שלך'} מוכנות - ${deliveredPhotos.length} תמונות מחכות בגלריה.\n\nקישור: ${galleryUrl}`;
 
     try {
       const html = buildDeliveryEmailHtml(galleryUrl, deliveredPhotos.length);
