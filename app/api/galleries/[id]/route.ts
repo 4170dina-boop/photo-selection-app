@@ -204,7 +204,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         .update({
           expires_at: expiresAt,
           photographer_notes: photographerNotes?.trim() || null,
-          personal_note: personalNote?.trim() || null,
           reminder_days: reminderDays,
           additional_invite_emails: additionalInviteEmails.length > 0 ? additionalInviteEmails : null,
           // תאריך תוקף חדש = תזכורת התפוגה החד-פעמית (cron/tick) צריכה לצאת שוב
@@ -253,6 +252,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
   if (!galleryUpdated) {
     return NextResponse.json({ error: 'הגלריה השתנתה בזמן השמירה - רענני את הדף ונסי שוב' }, { status: 409 });
+  }
+
+  // הקדשה/הערה - עמודה חסרה (מיגרציה שלא רצה) = best-effort, לא מכשיל את השמירה
+  if (personalNote !== undefined) {
+    try {
+      await supabase
+        .from('galleries')
+        .update({ personal_note: personalNote?.trim() || null })
+        .eq('id', gallery.id);
+    } catch {}
   }
 
   const { error: clientError } = await supabase
