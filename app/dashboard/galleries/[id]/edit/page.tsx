@@ -84,6 +84,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
   const [reminderMessage, setReminderMessage] = useState('');
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
+  const [saveSuccess, setSaveSuccess] = useState(false);
   const [notFound, setNotFound] = useState(false);
   const [businessName, setBusinessName] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
@@ -356,8 +357,9 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
         return;
       }
 
-      router.push('/dashboard/galleries');
-      router.refresh();
+      setSavedInvite({ clientName, clientGender, language, expiresAt });
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
     } catch {
       setError('שגיאת רשת - בדקי את החיבור ונסי שוב');
     } finally {
@@ -766,7 +768,7 @@ export default function EditGalleryPage({ params }: EditGalleryPageProps) {
 
         <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
           <button type="submit" disabled={saving} style={{ ...goldButtonStyle, opacity: saving ? 0.6 : 1 }}>
-            {saving ? 'שומרת...' : 'שמירת שינויים'}
+            {saving ? 'שומרת...' : saveSuccess ? '✓ נשמר בהצלחה' : 'שמירת שינויים'}
           </button>
           <button
             type="button"
