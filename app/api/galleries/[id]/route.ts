@@ -13,6 +13,7 @@ import {
 import { applyRowGuard } from '@/lib/rowGuard';
 import { fetchClientGender, parseGenderInput, saveClientGender } from '@/lib/gender';
 import { fetchGalleryLanguageOrDefault, parseLanguageInput, saveGalleryLanguage } from '@/lib/i18n/galleryLanguage';
+import { fetchPersonalNote, savePersonalNote } from '@/lib/personalNote';
 
 // עריכה/מחיקה של גלריה קיימת, בדיוק כמו app/api/galleries/route.ts (יצירה) -
 // רץ עם session הצלם (לא service key), כך שה-RLS הקיים כבר דואג שאי אפשר
@@ -61,13 +62,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const clientGender = await fetchClientGender(supabase, gallery.id);
   // שפת הגלריה והמיילים ללקוח/ה - עמודה חסרה = 'he' (lib/i18n/galleryLanguage.ts)
   const language = await fetchGalleryLanguageOrDefault(supabase, gallery.id);
-  // הקדשה/הערה - PostgREST עדיין לא מכיר את העמודה ב-schema cache
-  const { data: noteRow, error: noteError } = await supabase
-    .from('galleries')
-    .select('personal_note')
-    .eq('id', gallery.id)
-    .single();
-  const personalNote = noteError ? null : (noteRow as any)?.personal_note ?? null;
+  const personalNote = await fetchPersonalNote(supabase, gallery.id);
 
   return NextResponse.json({ ...gallery, client_gender: clientGender, language, personal_note: personalNote });
 }
@@ -251,16 +246,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'הגלריה השתנתה בזמן השמירה - רענני את הדף ונסי שוב' }, { status: 409 });
   }
 
-  // הקדשה/הערה - בנפרד כי PostgREST עלול לא להכיר את העמודה
-  if (personalNote !== undefined) {
-    const { error: noteError } = await supabase
-      .from('galleries')
-      .update({ personal_note: personalNote?.trim() || null } as any)
-      .eq('id', gallery.id);
-    if (noteError) {
-      console.error('personal_note update failed:', noteError.message);
-    }
-  }
+  await savePersonalNote(supabase, gallery.id, personalNote);
 
   const { error: clientError } = await supabase
     .from('clients')

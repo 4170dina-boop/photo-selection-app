@@ -3,6 +3,7 @@ import { createClient as createServerClient } from '@/lib/supabase/server';
 import { sendFinalPhotosReadyEmail } from '@/lib/email';
 import { reserveManualEmailSend, releaseManualEmailReservations, cooldownResponse } from '@/lib/manualEmailLog';
 import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
+import { fetchPersonalNote } from '@/lib/personalNote';
 
 // שליחה ידנית של התראה ללקוחה שהתמונות הסופיות מוכנות - בדיוק כמו
 // send-reminder/route.ts (אימות בעלות עם session הצלם, שליחה עם lib/email.ts),
@@ -71,10 +72,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     count,
     galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
     replyTo: user.email,
-    personalNote: await (async () => {
-      const { data, error } = await supabase.from('galleries').select('personal_note').eq('id', gallery.id).single();
-      return error ? null : (data as any)?.personal_note ?? null;
-    })(),
+    personalNote: await fetchPersonalNote(supabase, gallery.id),
   });
 
   if (!emailSent) {

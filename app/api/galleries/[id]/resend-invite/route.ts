@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { sendGalleryInviteEmail } from '@/lib/email';
 import { reserveManualEmailSend, releaseManualEmailReservations, cooldownResponse } from '@/lib/manualEmailLog';
 import { fetchGalleryLanguageOrDefault } from '@/lib/i18n/galleryLanguage';
+import { fetchPersonalNote } from '@/lib/personalNote';
 
 // שולחת שוב את מייל ההזמנה (קישור + קוד גישה) ללקוחה הקיימת של הגלריה - שימושי
 // כשהלקוחה מדווחת שהיא לא מצאה/מחקה את המייל המקורי. רץ עם session הצלם (לא
@@ -69,10 +70,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       galleryUrl: `${siteUrl}/gallery/${gallery.id}`,
       accessCode: client.access_code,
       replyTo: user.email,
-      personalNote: await (async () => {
-        const { data, error } = await supabase.from('galleries').select('personal_note').eq('id', gallery.id).single();
-        return error ? null : (data as any)?.personal_note ?? null;
-      })(),
+      personalNote: await fetchPersonalNote(supabase, gallery.id),
     });
     results.push({ to, sent: result.sent, ...(result.error ? { error: result.error } : {}) });
   }
