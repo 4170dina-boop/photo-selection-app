@@ -188,6 +188,8 @@ export default function CalendarPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deletedShootData, setDeletedShootData] = useState<{ clientId: string; shootDate: string; startTime: string; location: string; notes: string; galleryId: string } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     loadOptions(true);
@@ -444,6 +446,7 @@ export default function CalendarPage() {
     setForm(emptyForm(date < today ? today : date, clients));
     setFormError('');
     setNotice('');
+    setDeletedShootData(null);
     setConfirmingDelete(false);
   }
 
@@ -468,6 +471,7 @@ export default function CalendarPage() {
     });
     setFormError('');
     setNotice('');
+    setDeletedShootData(null);
     setConfirmingDelete(false);
   }
 
@@ -544,6 +548,7 @@ export default function CalendarPage() {
 
   async function handleDelete() {
     if (!form?.shootId) return;
+    const backup = { clientId: form.clientId, shootDate: form.shootDate, startTime: form.startTime, location: form.location, notes: form.notes, galleryId: form.galleryId };
     setSaving(true);
     const res = await fetch(`/api/shoots/${form.shootId}`, { method: 'DELETE' });
     setSaving(false);
@@ -552,9 +557,33 @@ export default function CalendarPage() {
       setFormError(data.error ?? 'מחיקת הצילום נכשלה');
       return;
     }
+    setDeletedShootData(backup);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = setTimeout(() => { setDeletedShootData(null); setNotice(''); }, 10000);
     setNotice('הצילום נמחק');
     setForm(null);
     setConfirmingDelete(false);
+    refreshAll();
+  }
+
+  async function handleUndoDelete() {
+    if (!deletedShootData) return;
+    const d = deletedShootData;
+    setDeletedShootData(null);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setSaving(true);
+    const res = await fetch('/api/shoots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId: d.clientId, shootDate: d.shootDate, startTime: d.startTime, location: d.location, notes: d.notes, galleryId: d.galleryId || null, sendConfirmation: false }),
+    });
+    setSaving(false);
+    if (!res.ok) {
+      setNotice('שחזור הצילום נכשל');
+      return;
+    }
+    setNotice('הצילום שוחזר בהצלחה');
+    setTimeout(() => setNotice(''), 3000);
     refreshAll();
   }
 
@@ -733,6 +762,17 @@ export default function CalendarPage() {
             )}
           </div>
         </form>
+      )}
+
+      {notice && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: theme.panel, border: `1px solid ${theme.border}`, borderRadius: 10, padding: '0.75rem 1rem', fontSize: 14 }}>
+          <span>{notice}</span>
+          {deletedShootData && (
+            <button onClick={handleUndoDelete} disabled={saving} style={{ ...outlineButtonStyle, padding: '0.3rem 0.7rem', fontSize: 12 }}>
+              ↩ שחזור
+            </button>
+          )}
+        </div>
       )}
 
       <div style={panelStyle}>
