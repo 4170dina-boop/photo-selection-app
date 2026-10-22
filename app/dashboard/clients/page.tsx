@@ -19,6 +19,34 @@ export default function ClientsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   // הלקוחה שהבלוק "תאריכים חשובים" שלה פתוח (אחת בכל פעם)
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [confirmingDeleteKey, setConfirmingDeleteKey] = useState<string | null>(null);
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [deleteMessage, setDeleteMessage] = useState('');
+
+  async function handleDeleteClient(c: ClientSummary) {
+    if (c.galleryCount > 0 || c.shootCount > 0) {
+      setDeleteMessage(`אי אפשר למחוק את ${c.name || 'הלקוחה'} — יש לה ${c.galleryCount ? `${c.galleryCount} גלריות` : ''}${c.galleryCount && c.shootCount ? ' ו-' : ''}${c.shootCount ? `${c.shootCount} צילומים` : ''}. מחקי אותם קודם.`);
+      setConfirmingDeleteKey(null);
+      setTimeout(() => setDeleteMessage(''), 5000);
+      return;
+    }
+    setDeletingKey(c.key);
+    let failed = false;
+    for (const id of c.clientIds) {
+      const res = await fetch(`/api/clients/${id}`, { method: 'DELETE' });
+      if (!res.ok) failed = true;
+    }
+    setDeletingKey(null);
+    setConfirmingDeleteKey(null);
+    if (failed) {
+      setDeleteMessage('מחיקת הלקוחה נכשלה');
+      setTimeout(() => setDeleteMessage(''), 4000);
+    } else {
+      setClients((prev) => prev.filter((x) => x.key !== c.key));
+      setDeleteMessage(`${c.name || 'הלקוחה'} נמחקה`);
+      setTimeout(() => setDeleteMessage(''), 3000);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -66,6 +94,12 @@ export default function ClientsPage() {
         style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', marginBottom: '1rem' }}
       />
 
+      {deleteMessage && (
+        <p style={{ background: deleteMessage.includes('נכשלה') || deleteMessage.includes('אי אפשר') ? theme.errorBg : theme.panel, color: deleteMessage.includes('נכשלה') || deleteMessage.includes('אי אפשר') ? theme.errorText : theme.text, padding: '0.6rem 1rem', borderRadius: 8, marginBottom: '0.75rem', fontSize: 13, border: `1px solid ${theme.border}` }}>
+          {deleteMessage}
+        </p>
+      )}
+
       {clients.length === 0 ? (
         <p style={{ color: theme.textMuted }}>
           עדיין אין לקוחות. לקוחה נוספת אוטומטית כשאת יוצרת לה{' '}
@@ -93,6 +127,7 @@ export default function ClientsPage() {
                 <th style={th}>שולם</th>
                 <th style={th}>יתרה לתשלום</th>
                 <th style={th}>תאריכים חשובים</th>
+                <th style={th}></th>
               </tr>
             </thead>
             <tbody>
@@ -120,10 +155,39 @@ export default function ClientsPage() {
                       📅 {expandedKey === c.key ? 'סגירה' : 'תאריכים'}
                     </button>
                   </td>
+                  <td style={td}>
+                    {confirmingDeleteKey === c.key ? (
+                      <span style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', fontSize: 12 }}>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteClient(c)}
+                          disabled={deletingKey === c.key}
+                          style={{ ...outlineButtonStyle, padding: '0.25rem 0.5rem', fontSize: 11, color: theme.errorText, borderColor: theme.errorText }}
+                        >
+                          {deletingKey === c.key ? '...' : 'כן'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingDeleteKey(null)}
+                          style={{ ...outlineButtonStyle, padding: '0.25rem 0.5rem', fontSize: 11 }}
+                        >
+                          לא
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setConfirmingDeleteKey(c.key); setDeleteMessage(''); }}
+                        style={{ background: 'none', border: 'none', color: theme.textFaint, cursor: 'pointer', fontSize: 12, padding: 0 }}
+                      >
+                        🗑
+                      </button>
+                    )}
+                  </td>
                 </tr>
                 {expandedKey === c.key && (
                   <tr>
-                    <td colSpan={8} style={{ padding: '0 0.5rem 0.75rem', background: theme.panelInput }}>
+                    <td colSpan={9} style={{ padding: '0 0.5rem 0.75rem', background: theme.panelInput }}>
                       <ClientDates supabase={supabase} clientIds={c.clientIds} clientName={c.name} />
                     </td>
                   </tr>
